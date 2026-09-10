@@ -45,7 +45,7 @@ For best rework behavior (from the SMD hot-plate skill):
 - **Soak:** plate at **~150 °C**, board on top, **60–90 s**. Start timing when the plate
   *reaches* 150 °C, not at switch-on.
 - **Reflow:** raise to **~250 °C**, watch paste turn shiny and ICs sink into place
-  (usually 30–60 s).
+  (usually 30–60 s). I did 260 °C, since my hot plate's temperature doesn't match the pcb temperature. But be carefull not to destroy your ESP32.
 - **Cool-down:** kill the heat (or slide the board onto a wooden block). **Never quench**
   (no compressed air / wet cloth) — thermal shock cracks QFN and ceramic caps.
 - Total plate time ~2–3.5 min; **time above 217 °C under ~90 s**.
