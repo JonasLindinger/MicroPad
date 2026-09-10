@@ -30,9 +30,9 @@ Tips:
 
 ## 2. Required hardware (off-PCB)
 
-- 4× M3 screws (length matched to case thickness, e.g. M3×8–12)
-- 4× M3 heat-set inserts (or self-tapping M3 screws into printed holes)
-- Optional: rubber feet, battery (JST-PH 2-pin connector, 1S Li-Ion ~3.7 V)
+- 7× M3 screws 7-8mm long (i think)
+- 7× M3 heat-set inserts
+- 4x M2 self tapping 6-8mm screws for E-Ink mount
 
 ## 3. Assembly steps
 
