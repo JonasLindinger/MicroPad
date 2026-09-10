@@ -6,7 +6,7 @@
 <title>MicroPad Config</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/static/style.css?v=2">
+<link rel="stylesheet" href="/static/style.css?v=3">
 </head>
 <body>
 <div id="app">
@@ -106,13 +106,37 @@
             <button id="btn-keymap-back" class="btn btn-primary btn-sm">Zurück zu den Seiten</button>
           </div>
         </div>
-        <p class="muted" style="margin:0 0 14px">
-          Jede Taste ist frei belegbar – es gibt keine fest verdrahtete Enter-, Back- oder Home-Taste mehr.
-          Auch die Drehrichtung des Encoders lässt sich ändern (z.&nbsp;B. auf eine Aktion statt Scrollen).
-          Die Belegung wird mit der Konfiguration zu Home Assistant hochgeladen; das Pad übernimmt sie ohne
-          Neustart und ohne Neu-Flashen.
+        <p class="muted" style="margin:0 0 16px">
+          Klicke eine Taste an, um ihre Aktion zu wählen. Belegte Tasten sind farbig hervorgehoben.
+          Es gibt keine fest verdrahteten Tasten mehr – auch die Encoder-Drehrichtung ist frei belegbar.
+          Die Belegung geht mit dem Upload zu Home Assistant; das Pad übernimmt sie ohne Neustart und ohne Neu-Flashen.
         </p>
-        <div id="keymap-list" class="keymap-list"></div>
+
+        <div class="keymap-layout">
+          <!-- Das Pad -->
+          <div class="pad-device">
+            <div class="pad-screen">
+              <span class="pad-screen-title">MicroPad</span>
+              <span class="pad-screen-dots">
+                <i class="pd"></i><i class="pd pd-b"></i><i class="pd"></i>
+              </span>
+            </div>
+            <div class="pad-body">
+              <div class="pad-grid" id="pad-grid"></div>
+              <div class="pad-encoder">
+                <button class="enc-knob" data-key="r0c3" title="Encoder drücken (R1C4)">
+                  <span class="enc-mark"></span>
+                </button>
+                <button class="enc-dir" data-key="enc_up" title="Rechts drehen">↻</button>
+                <button class="enc-dir" data-key="enc_down" title="Links drehen">↺</button>
+                <div class="enc-hint">drücken&nbsp;=&nbsp;R1C4</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Aktionen der gewählten Taste -->
+          <aside class="key-detail" id="key-detail"></aside>
+        </div>
         <datalist id="keymap-entities"></datalist>
       </div>
     </section>
@@ -190,6 +214,6 @@
   </div>
 </div>
 
-<script src="/static/app.js?v=2"></script>
+<script src="/static/app.js?v=3"></script>
 </body>
 </html>

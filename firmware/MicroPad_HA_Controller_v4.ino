@@ -1321,8 +1321,13 @@ void executeBinding(const KeyBinding& b, int step) {
   if (bindingIs(b, "home"))          { goHome(); return; }
   if (bindingIs(b, "settings"))      { startWifiPortal(); return; }
   if (bindingIs(b, "scroll"))        { applyScroll(step); return; }
-  if (bindingIs(b, "scroll_up"))     { applyScroll(1); return; }
-  if (bindingIs(b, "scroll_down"))   { applyScroll(-1); return; }
+  // Item 0 is drawn at the TOP of the list, so moving the selection UP means
+  // DECREASING the index. These two were swapped, which made "Auswahl hoch"
+  // scroll down and "Auswahl runter" scroll up.
+  // (The encoder keeps its own convention: turning right/CW = index +, i.e.
+  // down the list - that is what "scroll" above does.)
+  if (bindingIs(b, "scroll_up"))     { applyScroll(-1); return; }
+  if (bindingIs(b, "scroll_down"))   { applyScroll(1); return; }
 
   if (bindingIs(b, "navigate")) {
     if (b.target[0]) { openLoading(b.target); publishEvent("navigate", NULL, -9999, b.target); }

@@ -12,6 +12,7 @@ const state = {
   keyActions: [],
   keymapDefaults: {},
   view: "pages",          // "pages" | "keys"
+  keymapSel: "r0c0",      // currently selected key in the pad view
 };
 
 const icons = {
@@ -46,8 +47,8 @@ async function init(){
     state.pages = data.pages || [];
     state.settings = data.settings || {};
     state.entities = buildEntities(data.entities || []);
-    state.keymap = data.keymap || {};
     const meta = await api("/api/meta");
+    state.keymap = Object.assign({}, meta.keymap_defaults || {}, data.keymap || {});
     state.itemTypes = meta.item_types || [];
     state.keymapKeys = meta.keymap_keys || [];
     state.keyActions = meta.key_actions || [];
@@ -489,12 +490,50 @@ const keyNeedsEntity = new Set(["toggle","on","off","press"]);
 const keyNeedsPage   = new Set(["navigate"]);
 
 const keyActionLabels = {
-  none:"— nichts —", enter:"Aktivieren (Item)", back:"Zurück", home:"Home",
-  settings:"WLAN-Einrichtung", scroll:"Scrollen (Encoder)", scroll_up:"Auswahl hoch",
+  none:"Keine Aktion", enter:"Aktivieren", back:"Zurück", home:"Home",
+  settings:"WLAN-Einrichtung", scroll:"Scrollen", scroll_up:"Auswahl hoch",
   scroll_down:"Auswahl runter", navigate:"Seite öffnen", toggle:"Umschalten",
-  on:"Einschalten", off:"Ausschalten", press:"Skript/Button/Szene starten",
+  on:"Einschalten", off:"Ausschalten", press:"Skript/Button/Szene",
 };
 function actionLabel(a){ return keyActionLabels[a] || a; }
+
+// Short text printed on the keycap itself.
+const keyActionShort = {
+  none:"", enter:"Aktivieren", back:"Zurück", home:"Home", settings:"WLAN",
+  scroll:"Scrollen", scroll_up:"↑ Auswahl", scroll_down:"↓ Auswahl",
+  navigate:"Seite", toggle:"Umschalten", on:"Einschalten", off:"Ausschalten",
+  press:"Starten",
+};
+
+const keyActionGroups = [
+  {title:"Navigation",     actions:["enter","back","home","navigate"]},
+  {title:"Scrollen",       actions:["scroll","scroll_up","scroll_down"]},
+  {title:"Gerät schalten", actions:["toggle","on","off","press"]},
+  {title:"System",         actions:["settings","none"]},
+];
+
+const MATRIX_IDS = ["r0c0","r0c1","r0c2","r0c3","r1c0","r1c1","r1c2","r1c3","r2c0","r2c1","r2c2","r2c3"];
+
+function keyInfo(id){
+  return (state.keymapKeys||[]).find(k=>k.id===id) || {id:id, label:id};
+}
+
+function shortEntity(e){
+  if(!e) return "";
+  const ent = (state.entities||{})[e];
+  const name = ent ? (ent.name || e) : e;
+  return name.length > 16 ? name.slice(0,15)+"…" : name;
+}
+
+// What a key currently does, as one readable line ("" = nothing bound).
+function bindingSummary(id){
+  const b = (state.keymap||{})[id] || {action:"none"};
+  const act = b.action || "none";
+  if(act === "none") return "";
+  if(keyNeedsEntity.has(act)) return keyActionShort[act] + (b.entity ? ": " + shortEntity(b.entity) : "");
+  if(keyNeedsPage.has(act))   return keyActionShort[act] + (b.target_page ? ": " + b.target_page : "");
+  return keyActionShort[act] || act;
+}
 
 function pageOptions(sel){
   const out = ['<option value="">(keine)</option>'];
@@ -505,39 +544,38 @@ function pageOptions(sel){
 }
 
 function renderKeymap(){
-  const list = $("keymap-list");
-  if(!list) return;
-  list.innerHTML = (state.keymapKeys||[]).map(k=>{
-    const b = (state.keymap||{})[k.id] || {action:"none"};
-    const act = b.action || "none";
-    const opts = (state.keyActions||["none"]).map(a=>
-      `<option value="${a}"${a===act?" selected":""}>${esc(actionLabel(a))}</option>`).join("");
-    const showEnt = keyNeedsEntity.has(act), showPage = keyNeedsPage.has(act);
-    return `<div class="keymap-row" data-key="${esc(k.id)}">
-      <div class="keymap-key">${esc(k.label)}</div>
-      <select class="keymap-action">${opts}</select>
-      <input class="keymap-entity${showEnt?"":" hidden"}" list="keymap-entities"
-             value="${esc(b.entity||"")}" placeholder="Entität, z. B. switch.steckdose">
-      <select class="keymap-target${showPage?"":" hidden"}">${pageOptions(b.target_page)}</select>
-    </div>`;
+  const grid = $("pad-grid");
+  if(!grid) return;
+  if(!state.keymapSel) state.keymapSel = "r0c0";
+  const sel = state.keymapSel;
+
+  grid.innerHTML = MATRIX_IDS.map(id=>{
+    const info = keyInfo(id);
+    const sum = bindingSummary(id);
+    const bound = sum !== "";
+    const slot = esc(String(info.label||id).split(" (")[0]);
+    return `<button class="pad-key${bound?" bound":""}${id===sel?" sel":""}" data-key="${esc(id)}"
+              title="${esc(info.label||id)}${bound?" — "+esc(sum):""}">
+        <span class="pk-slot">${slot}</span>
+        <span class="pk-action">${bound ? esc(sum) : "—"}</span>
+      </button>`;
   }).join("");
 
-  list.querySelectorAll(".keymap-row").forEach(row=>{
-    const sel = row.querySelector(".keymap-action");
-    const ent = row.querySelector(".keymap-entity");
-    const tgt = row.querySelector(".keymap-target");
-    sel.addEventListener("change", ()=>{
-      ent.classList.toggle("hidden", !keyNeedsEntity.has(sel.value));
-      tgt.classList.toggle("hidden", !keyNeedsPage.has(sel.value));
-      saveKeymap();
-    });
-    ent.addEventListener("change", saveKeymap);
-    ent.addEventListener("blur", saveKeymap);
-    tgt.addEventListener("change", saveKeymap);
+  // Encoder knob + both directions, same highlight rules.
+  document.querySelectorAll("#pad-grid .pad-key, .enc-dir, .enc-knob").forEach(el=>{
+    const id = el.dataset.key;
+    if(!id) return;
+    const bound = bindingSummary(id) !== "";
+    if(el.classList.contains("enc-dir") || el.classList.contains("enc-knob")){
+      el.classList.toggle("bound", bound);
+      el.classList.toggle("sel", id === sel);
+    }
+    el.onclick = ()=>{ state.keymapSel = id; renderKeymap(); };
   });
 
-  // Offer the known entities as suggestions (the same list the item editor
-  // uses); a plain free-text field would mean typing entity ids by hand.
+  renderKeyDetail();
+
+  // Entity suggestions for the key bindings (same list the item editor uses).
   const dl = $("keymap-entities");
   if(dl){
     dl.innerHTML = Object.values(state.entities||{}).slice(0,600).map(e=>
@@ -545,31 +583,87 @@ function renderKeymap(){
   }
 }
 
-function collectKeymap(){
-  const km = {};
-  document.querySelectorAll(".keymap-row").forEach(row=>{
-    const action = row.querySelector(".keymap-action").value;
-    const ent = row.querySelector(".keymap-entity").value.trim();
-    const tgt = row.querySelector(".keymap-target").value;
-    const entry = {action};
-    if(keyNeedsEntity.has(action) && ent) entry.entity = ent;
-    if(keyNeedsPage.has(action) && tgt) entry.target_page = tgt;
-    km[row.dataset.key] = entry;
+// Right-hand panel: shows every available action for the selected key.
+function renderKeyDetail(){
+  const el = $("key-detail");
+  if(!el) return;
+  const id = state.keymapSel || "r0c0";
+  const info = keyInfo(id);
+  const b = (state.keymap||{})[id] || {action:"none"};
+  const act = b.action || "none";
+
+  const extra = [b.entity, b.target_page].filter(Boolean).map(esc).join(" · ");
+  el.innerHTML = `
+    <div class="kd-head">
+      <div class="kd-title">${esc(info.label || id)}</div>
+      <div class="kd-sub">Belegt mit: ${esc(actionLabel(act))}${extra ? " · "+extra : ""}</div>
+    </div>
+    ${keyActionGroups.map(g=>`
+      <div class="kd-group">
+        <div class="kd-group-title">${g.title}</div>
+        <div class="kd-chips">
+          ${g.actions.map(a=>`<button class="chip${a===act?" on":""}" data-action="${a}">${esc(actionLabel(a))}</button>`).join("")}
+        </div>
+      </div>`).join("")}
+    ${keyNeedsEntity.has(act) ? `
+      <div class="kd-field">
+        <label>Entität</label>
+        <input id="kd-entity" list="keymap-entities" value="${esc(b.entity||"")}"
+               placeholder="z. B. switch.steckdose">
+      </div>` : ""}
+    ${keyNeedsPage.has(act) ? `
+      <div class="kd-field">
+        <label>Zielseite</label>
+        <select id="kd-target">${pageOptions(b.target_page)}</select>
+      </div>` : ""}
+  `;
+
+  el.querySelectorAll(".chip").forEach(ch=>{
+    ch.onclick = ()=> setKeyAction(id, ch.dataset.action);
   });
-  return km;
+  const ent = el.querySelector("#kd-entity");
+  if(ent){
+    const commit = ()=> setKeyEntity(id, ent.value.trim());
+    ent.addEventListener("change", commit);
+    ent.addEventListener("blur", commit);
+  }
+  const tgt = el.querySelector("#kd-target");
+  if(tgt) tgt.addEventListener("change", ()=> setKeyTarget(id, tgt.value));
 }
 
-// Read the map straight from the DOM when the editor is on screen, otherwise
-// fall back to the stored copy (e.g. before it was ever opened).
-function currentKeymap(){
-  return document.querySelector(".keymap-row") ? collectKeymap() : (state.keymap||{});
+function setKeyAction(id, action){
+  if(!state.keymap) state.keymap = {};
+  const prev = state.keymap[id] || {};
+  const entry = {action};
+  if(keyNeedsEntity.has(action) && prev.entity) entry.entity = prev.entity;
+  if(keyNeedsPage.has(action) && prev.target_page) entry.target_page = prev.target_page;
+  state.keymap[id] = entry;
+  renderKeymap();
+  saveKeymap();
+}
+function setKeyEntity(id, v){
+  if(!state.keymap) state.keymap = {};
+  const e = Object.assign({action:"none"}, state.keymap[id] || {});
+  e.entity = v;
+  state.keymap[id] = e;
+  renderKeymap();
+  saveKeymap();
+}
+function setKeyTarget(id, v){
+  if(!state.keymap) state.keymap = {};
+  const e = Object.assign({action:"none"}, state.keymap[id] || {});
+  e.target_page = v;
+  state.keymap[id] = e;
+  renderKeymap();
+  saveKeymap();
 }
 
 async function saveKeymap(){
-  state.keymap = collectKeymap();
-  try { await api("/api/config","POST",{keymap:state.keymap}); }
+  try { await api("/api/config","POST",{keymap:state.keymap||{}}); }
   catch(e){ toast("Tastenbelegung speichern fehlgeschlagen: "+e.message,"error"); }
 }
+
+function currentKeymap(){ return state.keymap || {}; }
 
 function resetKeymap(){
   state.keymap = JSON.parse(JSON.stringify(state.keymapDefaults||{}));

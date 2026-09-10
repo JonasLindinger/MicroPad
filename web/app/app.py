@@ -86,7 +86,13 @@ def _client(settings):
 # ---------------------------------------------------------------------------
 @app.get("/")
 def index():
-    return send_from_directory(STATIC_DIR, "index.html")
+    # Serve the shell with no-cache so the browser always picks up the current
+    # asset versions (?v=N on style.css/app.js). Without this, a stale cached
+    # index.html keeps pointing at the previous JS and new UI elements appear
+    # dead until the user does a hard reload.
+    resp = send_from_directory(STATIC_DIR, "index.html")
+    resp.headers["Cache-Control"] = "no-cache, must-revalidate"
+    return resp
 
 
 @app.get("/api/meta")
