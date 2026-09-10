@@ -113,8 +113,10 @@ struct MenuItem {
   char name[32];
   char type[16];
   char entity[64];
-  char state[16];
-  char value[16];
+  // Sensor readings with a unit ("23.5 °C", "unavailable", "1234.5 kWh") do
+  // not fit in a 15-char field - the old size silently cut them off.
+  char state[24];
+  char value[24];
   char target_page[32];
   float minVal;
   float maxVal;
@@ -582,13 +584,39 @@ void drawPage(const RenderSnapshot& R) {
       if (sel) landFillRect(2, y, 292, ITEM_H - 2, GxEPD_BLACK);
       else landFillRect(2, y + ITEM_H - 2, 292, 1, GxEPD_LIGHTGREY);
 
-      char line[48];
+      char line[64];
       const MenuItem& it = R.page.items[idx];
-      const char* st = it.state[0] ? it.state : "";
+      const char* st  = it.state[0] ? it.state : "";
+      const char* val = it.value[0] ? it.value : st;
+
+      // Which reading (if any) is appended as "Name: value".
+      //   light/switch  -> state  (on/off)
+      //   number        -> value  (setpoint, editable)
+      //   media_player  -> value  (e.g. volume) or state
+      //   sensor        -> state  (read-only readout, unit included by the
+      //                            generator when one is configured)
+      // Anything without a reading (category, script, button, settings, back)
+      // simply shows its name.
+      const char* shown = "";
       if (strcmp(it.type, "light") == 0 || strcmp(it.type, "switch") == 0) {
-        snprintf(line, sizeof(line), "%s: %s", it.name, st);
+        shown = st;
+      } else if (strcmp(it.type, "sensor") == 0) {
+        shown = st;
       } else if (strcmp(it.type, "number") == 0 || strcmp(it.type, "media_player") == 0) {
-        snprintf(line, sizeof(line), "%s: %s", it.name, it.value[0] ? it.value : st);
+        shown = val;
+      }
+
+      if (shown[0]) {
+        // The 9pt font fits roughly 26 characters across the 296 px panel.
+        // Shorten the NAME rather than the reading, so the value - the part
+        // that actually changes - stays readable.
+        const int MAX_CHARS = 26;
+        int vlen = (int)strlen(shown);
+        int room = MAX_CHARS - vlen - 2;
+        if (room < 6) room = 6;
+        char nm[40];
+        snprintf(nm, sizeof(nm), "%.*s", room, it.name);
+        snprintf(line, sizeof(line), "%s: %s", nm, shown);
       } else {
         snprintf(line, sizeof(line), "%s", it.name);
       }
@@ -1132,6 +1160,10 @@ void activateItem() {
   else if (strcmp(it.type, "script") == 0 || strcmp(it.type, "button") == 0) publishEvent("press", it.entity, -9999, NULL);
   else if (strcmp(it.type, "settings") == 0 || strcmp(it.type, "wifimanager") == 0) startWifiPortal();
   else if (strcmp(it.type, "back") == 0) goBack();
+  // Read-only types: a sensor has no writable service, so pressing ENTER on
+  // it must not open the edit overlay (which would then publish an "edit"
+  // event Home Assistant could not apply).
+  else if (strcmp(it.type, "sensor") == 0) { /* display only */ }
   else if (it.editable || strcmp(it.type, "number") == 0 || strcmp(it.type, "media_player") == 0) {
     inEditMode = true;
     editItemIndex = currentPage.selected;
