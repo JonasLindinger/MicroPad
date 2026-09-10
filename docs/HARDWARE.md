@@ -18,8 +18,6 @@ assignment (verified from the KiCad PCB netlist against the firmware).
   encoder **SW12** (EC11-style, with integrated push)
 - **Power:** USB-C in, single-cell Li-Ion via charger, slide power switch, LDO 3.3 V
 
-![PCB render](../PCB/Parts.png)
-
 ## 2. Block diagram
 
 ```
