@@ -1140,36 +1140,12 @@ void activateItem() {
   }
 }
 
-// Scroll coalescing: encoder ticks can arrive far faster than the panel can
-// refresh (~450 ms partial update), so drawing on every tick would build an
-// unpayable backlog. Each tick records that the selection moved; loop()
-// renders once when scrolling settles (SCROLL_SETTLE_MS) or at a hard cap
-// (SCROLL_MAX_MS) during a continuous turn. Keep the settle window short -
-// it is pure added latency on every scroll step.
-#define SCROLL_SETTLE_MS 100
-#define SCROLL_MAX_MS    700
-bool scrollPending = false;
-unsigned long scrollPendingMs = 0;
-
-void requestScrollDraw() {
-  scrollPending = true;
-  scrollPendingMs = millis();
-}
-
-// Called from loop(): renders the pending scroll state exactly once, when
-// the user stopped scrolling or when the display would otherwise lag too far
-// behind a continuous turn. Returns true if a render was triggered.
-bool serviceScrollDraw() {
-  if (!scrollPending) return false;
-  unsigned long now = millis();
-  if (now - scrollPendingMs >= SCROLL_SETTLE_MS || now - scrollPendingMs >= SCROLL_MAX_MS) {
-    scrollPending = false;
-    requestDraw();
-    return true;
-  }
-  return false;
-}
-
+// Scrolling requests a refresh on every encoder tick, exactly like the old
+// blocking firmware did - no added settle delay. Coalescing is handled by the
+// render task instead: a tick only publishes a snapshot (a cheap memcpy) and
+// the task always draws the NEWEST snapshot when it becomes free, so a fast
+// turn can never build a backlog of stale frames. Any latency here would be
+// felt directly on every step, so there is none.
 void handleInput() {
   int delta = encoderTicks - lastEncoderTicks;
   lastEncoderTicks = encoderTicks;
@@ -1181,13 +1157,13 @@ void handleInput() {
       editValue += delta * it.step;
       if (editValue < it.minVal) editValue = it.minVal;
       if (editValue > it.maxVal) editValue = it.maxVal;
-      requestScrollDraw();
+      requestDraw();
     } else {
       int old = currentPage.selected;
       currentPage.selected += delta;
       if (currentPage.selected < 0) currentPage.selected = 0;
       if (currentPage.selected >= currentPage.itemCount) currentPage.selected = currentPage.itemCount - 1;
-      if (currentPage.selected != old && currentPage.itemCount > 0) requestScrollDraw();
+      if (currentPage.selected != old && currentPage.itemCount > 0) requestDraw();
     }
   }
 
@@ -1377,11 +1353,6 @@ void loop() {
   // NOTE: no blocking draw here any more. The e-paper refresh runs on core 0
   // in renderTaskLoop(); this loop only sets renderRequested, so buttons are
   // scanned continuously and presses are never swallowed mid-refresh.
-  // The only draw we still gate here is scrolling: encoder ticks are far
-  // faster than the panel, so the display catches up once after the user
-  // stops turning (or at the SCROLL_MAX_MS cap during continuous turning),
-  // instead of queueing one refresh per tick.
-  serviceScrollDraw();
 
   if (!active) {
     // Never sleep while a refresh is in flight - the display would be left
@@ -1390,10 +1361,9 @@ void loop() {
     while (renderBusy && millis() - waitStart < 1000) delay(1);
 
     // Wake-loop brake: never go straight back to sleep right after a wake,
-    // and never while scrolling still has a pending refresh. Otherwise a
-    // bouncy key / floating encoder pin could bounce us between sleep and
-    // wake and the pad would look frozen.
-    if (millis() >= minAwakeUntilMs && !scrollPending) {
+    // or a bouncy key / floating encoder pin could bounce us between sleep
+    // and wake and the pad would look frozen.
+    if (millis() >= minAwakeUntilMs) {
       DBG("going to sleep\n");
       enterLightSleep();
     }
