@@ -124,6 +124,39 @@ def generate_keymap_payload(keymap):
                       ensure_ascii=False, separators=(", ", ": "))
 
 
+def effective_keymap_for_page(pages, page_id, global_keymap=None):
+    """Key map that actually applies on `page_id`.
+
+    tree inheritance: start from the global map (or defaults), then walk the
+    parent chain from the ROOT down to the page and let each page's own
+    `keymap` overrides win. A page that defines no keymap therefore inherits
+    its parent's bindings unchanged - the "subpage inherits, override per
+    page" behaviour.
+
+    NOTE: the firmware's applyKeymap() keeps any key NOT mentioned in the
+    message at its current binding, so the automation MUST send the FULL
+    effective map (all keys), never a partial diff, or stale bindings from a
+    previously visited page would survive.
+    """
+    by_id = {p["id"]: p for p in pages}
+    # parent chain root -> ... -> page_id (dedupe against cycles)
+    chain = []
+    seen = set()
+    cur = page_id
+    while cur and cur in by_id and cur not in seen:
+        chain.append(cur)
+        seen.add(cur)
+        cur = by_id[cur].get("parent") or ""
+    chain.reverse()
+
+    km = dict(global_keymap or {})
+    for pid in chain:
+        page_km = by_id[pid].get("keymap") or {}
+        for key, entry in page_km.items():
+            km[key] = entry
+    return normalize_keymap(km)
+
+
 # ---------------------------------------------------------------------------
 # Page payload builders
 # ---------------------------------------------------------------------------
@@ -203,11 +236,30 @@ def _republish_action(republish_pages):
     }
 
 
+def _effective_keymaps(pages, keymap):
+    """All per-page effective key maps: {page_id: normalized_full_map}."""
+    out = {}
+    for p in pages:
+        out[p["id"]] = effective_keymap_for_page(pages, p["id"], keymap)
+    return out
+
+
+def _publish_page_and_km(page, km):
+    """Publish the page payload and the page's effective key map."""
+    return [
+        {"service": "mqtt.publish", "data": {
+            "topic": "micropad/page/current", "payload": generate_page_payload(page)}},
+        {"service": "mqtt.publish", "data": {
+            "topic": "micropad/keymap", "payload": generate_keymap_payload(km)}},
+    ]
+
+
 def build_automation_dict(pages, keymap=None):
     """Build the MicroPad automation as a Python dict matching the HA schema
     (the structure both the YAML editor and the Config API expect)."""
     km = normalize_keymap(keymap)
     km_actions = {b.get("action") for b in km.values()}
+    eff_km = _effective_keymaps(pages, keymap)
 
     variables = {
         "action": "{{ trigger.payload_json.action }}",
@@ -227,13 +279,7 @@ def build_automation_dict(pages, keymap=None):
             conditions.append(f"{{{{ target_page == '{page['id']}' }}}}")
         branches.append({
             "conditions": conditions,
-            "sequence": [{
-                "service": "mqtt.publish",
-                "data": {
-                    "topic": "micropad/page/current",
-                    "payload": generate_page_payload(page),
-                }
-            }]
+            "sequence": _publish_page_and_km(page, eff_km[page["id"]]),
         })
 
     # TOGGLE / ON / OFF — every action that changes an entity's state.
@@ -349,9 +395,25 @@ def build_automation_dict(pages, keymap=None):
 
     # KEYMAP — the pad asks for its button mapping on every connect and also
     # subscribes to the (retained) topic, so keys can be re-bound from the
-    # config page without ever re-flashing the device.
-    branches.append({
-        "conditions": ["{{ action == 'keymap' }}"],
+    # config page without ever re-flashing the device. The mapping is now
+    # per-page: the answer depends on the page_id the pad reports, so each
+    # page's effective (inherited+overridden) map gets served. An unknown /
+    # empty page_id falls back to the global map.
+    km_cases = []
+    for p in pages:
+        km_cases.append({
+            "conditions": [f"{{{{ page_id == '{p['id']}' }}}}"],
+            "sequence": [{
+                "service": "mqtt.publish",
+                "data": {
+                    "topic": "micropad/keymap",
+                    "retain": True,
+                    "payload": generate_keymap_payload(eff_km[p["id"]]),
+                },
+            }],
+        })
+    km_cases.append({
+        "conditions": [],
         "sequence": [{
             "service": "mqtt.publish",
             "data": {
@@ -360,6 +422,10 @@ def build_automation_dict(pages, keymap=None):
                 "payload": generate_keymap_payload(km),
             },
         }],
+    })
+    branches.append({
+        "conditions": ["{{ action == 'keymap' }}"],
+        "sequence": [{"choose": km_cases}],
     })
 
     return {
@@ -425,6 +491,28 @@ def validate_pages(pages):
         if pid in seen:
             errors.append(f"Duplicate page id '{pid}'. Page ids must be unique.")
         seen.add(pid)
+
+    valid_key_ids = {k["id"] for k in KEYMAP_KEYS}
+    for page in pages:
+        pid = page["id"]
+
+        if page.get("keymap") is not None:
+            if not isinstance(page["keymap"], dict):
+                errors.append(f"Page '{pid}': keymap must be an object of key → action entries.")
+            else:
+                for kid, entry in page["keymap"].items():
+                    if kid not in valid_key_ids:
+                        errors.append(f"Page '{pid}' keymap: unknown key '{kid}'.")
+                    if not isinstance(entry, dict):
+                        errors.append(f"Page '{pid}' keymap key '{kid}': entry must be an object.")
+                        continue
+                    action = entry.get("action") or "none"
+                    if action not in KEY_ACTION_TYPES:
+                        errors.append(f"Page '{pid}' keymap key '{kid}': unknown action '{action}'.")
+                    if action in KEY_ACTIONS_NEED_ENTITY and not entry.get("entity"):
+                        errors.append(f"Page '{pid}' keymap key '{kid}': action '{action}' needs an entity.")
+                    if action in KEY_ACTIONS_NEED_PAGE and not entry.get("target_page"):
+                        errors.append(f"Page '{pid}' keymap key '{kid}': action '{action}' needs a target_page.")
 
     for page in pages:
         pid = page["id"]
