@@ -12,6 +12,7 @@ const state = {
   keyActions: [],
   keymapDefaults: {},
   view: "pages",          // "pages" | "keys"
+  keymapScope: "global",  // "global" | "page"
   keymapSel: "r0c0",      // currently selected key in the pad view
 };
 
@@ -134,22 +135,55 @@ function selectPage(idx){
   state.selectedPage = idx;
   renderAll();
 }
+
+// ---------- Page tree ----------
+// Sort pages so parents come before children; render with indentation so the
+// tree structure (home → ha → licht ...) is visible and editable.
+function pageChildren(parentId){
+  return state.pages.filter(p => (p.parent || "") === parentId);
+}
+function pageDepth(id, seen){
+  seen = seen || new Set();
+  if(seen.has(id)) return 0;          // cycle guard
+  seen.add(id);
+  const p = state.pages.find(x => x.id === id);
+  if(!p || !p.parent) return 0;
+  return 1 + pageDepth(p.parent, seen);
+}
 function renderPageList(){
   const list = $("page-list");
   list.innerHTML = "";
-  state.pages.forEach((p, i)=>{
+  const roots = pageChildren("");
+  const ordered = [];
+  function walk(items){
+    items.forEach(p => {
+      ordered.push(p);
+      walk(pageChildren(p.id));
+    });
+  }
+  walk(roots);
+  // Fallback: pages whose parent is missing from state still show at root
+  const known = new Set(state.pages.map(p => p.id));
+  state.pages.forEach(p => {
+    if(!known.has(p.parent || "") && !ordered.includes(p)) ordered.push(p);
+  });
+
+  ordered.forEach(p => {
+    const i = state.pages.indexOf(p);
+    const depth = pageDepth(p.id);
     const row = document.createElement("div");
-    row.className = "page-item" + (i===state.selectedPage?" active":"");
+    row.className = "page-item" + (i===state.selectedPage? " active":"");
+    row.style.paddingLeft = (12 + depth * 16) + "px";
+    const prefix = depth > 0 ? "└ " : "";
     row.innerHTML = `
       <div class="p-icon">${icons[p.items[0]?.type]||"▦"}</div>
-      <div class="p-text"><div class="p-name">${esc(p.title||p.id)}</div>
+      <div class="p-text"><div class="p-name">${esc(prefix + (p.title||p.id))}</div>
       <div class="p-id">${esc(p.id)}</div></div>
       <button class="p-del" title="Seite löschen">✕</button>`;
     row.onclick = (e)=>{ if(e.target.classList.contains("p-del"))return; selectPage(i); };
     row.querySelector(".p-del").onclick = async (e)=>{
       e.stopPropagation();
       if(!confirm(`Seite "${p.id}" löschen?`))return;
-      const target = state.pages[i].target; // undefined - just remove
       state.pages.splice(i,1);
       if(state.selectedPage>=state.pages.length) state.selectedPage=state.pages.length-1;
       await persistPages();
@@ -173,6 +207,16 @@ function renderEditor(){
   ps.innerHTML = '<option value="">(keine)</option>';
   state.pages.forEach((pp,i)=>{ if(i!==state.selectedPage){ ps.insertAdjacentHTML("beforeend",`<option value="${esc(pp.id)}">${esc(pp.id)}</option>`); } });
   ps.value = p.parent||"";
+  // page key map summary
+  const pks = $("page-key-summary");
+  if(pks){
+    const ov = pageKeymapOverrides(p);
+    const n = Object.keys(ov).length;
+    const parentTitle = p.parent ? (state.pages.find(x=>x.id===p.parent)?.title || p.parent) : "global";
+    pks.textContent = n === 0
+      ? `Erbt komplett von „${esc(parentTitle)}“ – keine eigenen Belegungen.`
+      : `${n} Taste(n) überschrieben · Rest erbt von „${esc(parentTitle)}“.`;
+  }
   // items
   $("item-count").textContent = p.items.length;
   $("item-empty").classList.toggle("hidden", p.items.length>0);
@@ -525,9 +569,69 @@ function shortEntity(e){
   return name.length > 16 ? name.slice(0,15)+"…" : name;
 }
 
+// ---------- Per-page key map (tree inheritance) ----------
+// The effective map of a page = global map, overridden by every page on the
+// parent chain (root first). Mirrors core.effective_keymap_for_page().
+function pageKeymapOverrides(page){
+  return (page && typeof page.keymap === "object" && page.keymap) ? page.keymap : {};
+}
+function parentChain(pageId, seen){
+  seen = seen || new Set();
+  if(seen.has(pageId)) return [];
+  seen.add(pageId);
+  const p = state.pages.find(x => x.id === pageId);
+  if(!p) return [];
+  return [p, ...parentChain(p.parent, seen)];
+}
+function effectiveKeymapForPage(page){
+  const chain = parentChain(page.id).reverse();   // root → … → page
+  // start from the global map, then apply page overrides root-first
+  let map = {};
+  Object.keys(state.keymapDefaults||{}).forEach(k=>{ map[k] = Object.assign({action:"none"}, state.keymapDefaults[k]); });
+  Object.keys(state.keymap||{}).forEach(k=>{ map[k] = Object.assign({action:"none"}, state.keymap[k]); });
+  chain.forEach(p=>{
+    const ov = pageKeymapOverrides(p);
+    Object.keys(ov).forEach(k=>{
+      const entry = ov[k];
+      map[k] = (entry && typeof entry === "object")
+        ? Object.assign({action:"none"}, entry) : {action:"none"};
+    });
+  });
+  // always complete: every key present (mirrors normalize_keymap defaults)
+  (state.keymapKeys||[]).forEach(k=>{ if(!map[k.id]) map[k.id] = {action:"none"}; });
+  return map;
+}
+
+// Which map the editor currently edits: the global one, or the effective map
+// of the selected page (changes become overrides on that page).
+function activeKeymap(){
+  if(state.keymapScope === "page" && state.selectedPage !== null){
+    const p = state.pages[state.selectedPage];
+    if(p) return effectiveKeymapForPage(p);
+  }
+  return state.keymap || {};
+}
+function keymapScopeTitle(){
+  if(state.keymapScope === "page" && state.selectedPage !== null){
+    const p = state.pages[state.selectedPage];
+    return p ? (p.title || p.id) : "Seite";
+  }
+  return "global";
+}
+// Reset an override back to "inherited": remove the key from the page map.
+function clearPageKeyOverride(id){
+  const p = state.pages[state.selectedPage];
+  if(!p || !p.keymap) return;
+  delete p.keymap[id];
+  if(Object.keys(p.keymap).length === 0) delete p.keymap;
+  persistPages();
+  renderKeymap();
+}
+
 // What a key currently does, as one readable line ("" = nothing bound).
 function bindingSummary(id){
-  const b = (state.keymap||{})[id] || {action:"none"};
+  const map = activeKeymap();
+  const b = map[id] || {action:"none"};
   const act = b.action || "none";
   if(act === "none") return "";
   if(keyNeedsEntity.has(act)) return keyActionShort[act] + (b.entity ? ": " + shortEntity(b.entity) : "");
@@ -548,14 +652,29 @@ function renderKeymap(){
   if(!grid) return;
   if(!state.keymapSel) state.keymapSel = "r0c0";
   const sel = state.keymapSel;
+  const inPageScope = state.keymapScope === "page" && state.selectedPage !== null;
+
+  // Scope UI
+  const scopeBtn = $("btn-keymap-scope");
+  const scopeHint = $("keymap-scope-hint");
+  if(scopeBtn){
+    scopeBtn.textContent = inPageScope
+      ? "Wechseln zu: global"
+      : "Wechseln zu: Seite (" + (state.selectedPage !== null ? esc(state.pages[state.selectedPage]?.title || state.pages[state.selectedPage]?.id || "?") : "–") + ")";
+  }
+  if(scopeHint){
+    scopeHint.textContent = inPageScope
+      ? "Tastenbelegung der Seite „" + (state.pages[state.selectedPage]?.title || state.pages[state.selectedPage]?.id || "") + "“ – erbt von der übergeordneten Seite und überschreibt sie hier."
+      : "Globale Belegung – gilt für alle Seiten, die keine eigene Belegung haben. Klicke „Wechseln zu: Seite“, um die Belegung einer einzelnen Seite anzupassen.";
+  }
 
   grid.innerHTML = MATRIX_IDS.map(id=>{
     const info = keyInfo(id);
     const sum = bindingSummary(id);
     const bound = sum !== "";
     const slot = esc(String(info.label||id).split(" (")[0]);
-    return `<button class="pad-key${bound?" bound":""}${id===sel?" sel":""}" data-key="${esc(id)}"
-              title="${esc(info.label||id)}${bound?" — "+esc(sum):""}">
+    return `<button class="pad-key${bound? " bound":""}${id===sel? " sel":""}" data-key="${esc(id)}"
+              title="${esc(info.label||id)}${bound? " — "+esc(sum):""}">
         <span class="pk-slot">${slot}</span>
         <span class="pk-action">${bound ? esc(sum) : "—"}</span>
       </button>`;
@@ -589,15 +708,19 @@ function renderKeyDetail(){
   if(!el) return;
   const id = state.keymapSel || "r0c0";
   const info = keyInfo(id);
-  const b = (state.keymap||{})[id] || {action:"none"};
+  const map = activeKeymap();
+  const b = map[id] || {action:"none"};
   const act = b.action || "none";
+  const inPageScope = state.keymapScope === "page" && state.selectedPage !== null;
+  const hasOverride = inPageScope && !!(state.pages[state.selectedPage]?.keymap || {})[id];
 
   const extra = [b.entity, b.target_page].filter(Boolean).map(esc).join(" · ");
   el.innerHTML = `
     <div class="kd-head">
       <div class="kd-title">${esc(info.label || id)}</div>
-      <div class="kd-sub">Belegt mit: ${esc(actionLabel(act))}${extra ? " · "+extra : ""}</div>
+      <div class="kd-sub">${inPageScope ? `Seite: ${esc(keymapScopeTitle())}` : "Global"} · Belegt mit: ${esc(actionLabel(act))}${extra ? " · "+extra : ""}</div>
     </div>
+    ${hasOverride ? `<button class="btn btn-ghost btn-sm kd-inherit">↺ Erben von übergeordneter Seite</button>` : ""}
     ${keyActionGroups.map(g=>`
       <div class="kd-group">
         <div class="kd-group-title">${g.title}</div>
@@ -618,6 +741,9 @@ function renderKeyDetail(){
       </div>` : ""}
   `;
 
+  const inh = el.querySelector(".kd-inherit");
+  if(inh) inh.onclick = ()=> clearPageKeyOverride(id);
+
   el.querySelectorAll(".chip").forEach(ch=>{
     ch.onclick = ()=> setKeyAction(id, ch.dataset.action);
   });
@@ -632,6 +758,18 @@ function renderKeyDetail(){
 }
 
 function setKeyAction(id, action){
+  if(state.keymapScope === "page" && state.selectedPage !== null){
+    const p = state.pages[state.selectedPage];
+    if(!p.keymap) p.keymap = {};
+    const prev = Object.assign({action:"none"}, p.keymap[id] || {});
+    const entry = {action};
+    if(keyNeedsEntity.has(action) && prev.entity) entry.entity = prev.entity;
+    if(keyNeedsPage.has(action) && prev.target_page) entry.target_page = prev.target_page;
+    p.keymap[id] = entry;
+    renderKeymap();
+    persistPages();
+    return;
+  }
   if(!state.keymap) state.keymap = {};
   const prev = state.keymap[id] || {};
   const entry = {action};
@@ -642,20 +780,24 @@ function setKeyAction(id, action){
   saveKeymap();
 }
 function setKeyEntity(id, v){
-  if(!state.keymap) state.keymap = {};
-  const e = Object.assign({action:"none"}, state.keymap[id] || {});
+  const target = (state.keymapScope === "page" && state.selectedPage !== null)
+    ? (state.pages[state.selectedPage].keymap = state.pages[state.selectedPage].keymap || {})
+    : (state.keymap = state.keymap || {});
+  const e = Object.assign({action:"none"}, target[id] || {});
   e.entity = v;
-  state.keymap[id] = e;
+  target[id] = e;
   renderKeymap();
-  saveKeymap();
+  if(state.keymapScope === "page") persistPages(); else saveKeymap();
 }
 function setKeyTarget(id, v){
-  if(!state.keymap) state.keymap = {};
-  const e = Object.assign({action:"none"}, state.keymap[id] || {});
+  const target = (state.keymapScope === "page" && state.selectedPage !== null)
+    ? (state.pages[state.selectedPage].keymap = state.pages[state.selectedPage].keymap || {})
+    : (state.keymap = state.keymap || {});
+  const e = Object.assign({action:"none"}, target[id] || {});
   e.target_page = v;
-  state.keymap[id] = e;
+  target[id] = e;
   renderKeymap();
-  saveKeymap();
+  if(state.keymapScope === "page") persistPages(); else saveKeymap();
 }
 
 async function saveKeymap(){
@@ -666,10 +808,29 @@ async function saveKeymap(){
 function currentKeymap(){ return state.keymap || {}; }
 
 function resetKeymap(){
+  if(state.keymapScope === "page" && state.selectedPage !== null){
+    const p = state.pages[state.selectedPage];
+    delete p.keymap;                 // forget overrides -> inherit everything
+    renderKeymap();
+    persistPages();
+    toast("Tastenbelegung dieser Seite zurückgesetzt (erbt alles)","info");
+    return;
+  }
   state.keymap = JSON.parse(JSON.stringify(state.keymapDefaults||{}));
   renderKeymap();
   saveKeymap();
   toast("Standardbelegung wiederhergestellt","info");
+}
+
+function toggleKeymapScope(){
+  state.keymapScope = (state.keymapScope === "page") ? "global" : "page";
+  renderKeymap();
+}
+
+function openPageKeymap(){
+  if(state.selectedPage === null){ toast("Erst eine Seite auswählen","info"); return; }
+  state.keymapScope = "page";
+  showKeys();
 }
 
 // ---------------- Wire up ----------------
@@ -694,6 +855,8 @@ document.addEventListener("DOMContentLoaded", ()=>{
   $("btn-keys").onclick = showKeys;
   $("btn-keymap-back").onclick = showPages;
   $("btn-keymap-defaults").onclick = resetKeymap;
+  $("btn-keymap-scope").onclick = toggleKeymapScope;
+  $("btn-page-keys").onclick = openPageKeymap;
 
   $("f-id").addEventListener("change", savePageMeta);
   $("f-title").addEventListener("change", savePageMeta);

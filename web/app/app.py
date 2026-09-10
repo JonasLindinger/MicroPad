@@ -26,7 +26,8 @@ from core import (build_ha_automation_config, build_automation_dict,
                   generate_automation_yaml, validate_pages,
                   parse_automation_to_pages, ITEM_TYPES,
                   generate_keymap_payload, normalize_keymap,
-                  KEYMAP_KEYS, KEY_ACTION_TYPES, DEFAULT_KEYMAP)
+                  effective_keymap_for_page, KEYMAP_KEYS, KEY_ACTION_TYPES,
+                  DEFAULT_KEYMAP)
 from ha_client import HAClient, SSHClient, HAClientError
 
 # ---------------------------------------------------------------------------
@@ -179,7 +180,8 @@ def generate():
         "errors": errors,
         "warnings": warnings,
         "yaml_automations": generate_automation_yaml(pages, keymap),
-        "keymap_payload": generate_keymap_payload(keymap),
+        "keymap_payload": generate_keymap_payload(
+            effective_keymap_for_page(pages, home["id"], keymap) if home else keymap),
         "api_config": api_config,
         "all_pages_payload": generate_all_pages_payload(pages) if pages else "",
         "home_page_payload": generate_page_payload(home) if home else "",
@@ -209,10 +211,12 @@ def upload_api():
         home = next((p for p in pages if p["id"] == "home"), pages[0] if pages else None)
         if home:
             c.publish_page(generate_page_payload(home))
-        # Push the key map straight away (retained), so re-bound keys work
-        # without waiting for the pad's next connect.
+        # Push the home page's key map straight away (retained), so re-bound
+        # keys work without waiting for the pad's next connect. Per-page maps
+        # are served by the automation on every navigate.
         try:
-            c.publish_keymap(generate_keymap_payload(keymap))
+            c.publish_keymap(generate_keymap_payload(
+                effective_keymap_for_page(pages, home["id"], keymap)))
         except HAClientError:
             pass
         return jsonify({"ok": True,
@@ -260,7 +264,8 @@ def upload_ssh():
                 if home:
                     _client(settings).publish_page(generate_page_payload(home))
                 try:
-                    _client(settings).publish_keymap(generate_keymap_payload(keymap))
+                    _client(settings).publish_keymap(generate_keymap_payload(
+                        effective_keymap_for_page(pages, home["id"], keymap)))
                 except HAClientError:
                     pass
                 message = ("Merged + uploaded via SSH, reloaded automations via API, "

@@ -6,7 +6,7 @@
 <title>MicroPad Config</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/static/style.css?v=3">
+<link rel="stylesheet" href="/static/style.css?v=4">
 </head>
 <body>
 <div id="app">
@@ -86,6 +86,16 @@
         </div>
       </div>
 
+      <div class="card page-key-card">
+        <div class="card-head">
+          <h2>Tastenbelegung dieser Seite</h2>
+          <button id="btn-page-keys" class="btn btn-ghost btn-sm">Bearbeiten</button>
+        </div>
+        <p class="muted" style="margin:0" id="page-key-summary">
+          Erbt die Tastenbelegung der übergeordneten Seite. Hier kannst du sie für diese Seite überschreiben.
+        </p>
+      </div>
+
       <div class="card items-card">
         <div class="card-head">
           <h2>Items <span id="item-count" class="pill"></span></h2>
@@ -102,14 +112,13 @@
         <div class="card-head">
           <h2>Tastenbelegung</h2>
           <div class="top-actions">
+            <button id="btn-keymap-scope" class="btn btn-ghost btn-sm">Wechseln zu: Seite</button>
             <button id="btn-keymap-defaults" class="btn btn-ghost btn-sm">Standard wiederherstellen</button>
             <button id="btn-keymap-back" class="btn btn-primary btn-sm">Zurück zu den Seiten</button>
           </div>
         </div>
-        <p class="muted" style="margin:0 0 16px">
-          Klicke eine Taste an, um ihre Aktion zu wählen. Belegte Tasten sind farbig hervorgehoben.
-          Es gibt keine fest verdrahteten Tasten mehr – auch die Encoder-Drehrichtung ist frei belegbar.
-          Die Belegung geht mit dem Upload zu Home Assistant; das Pad übernimmt sie ohne Neustart und ohne Neu-Flashen.
+        <p class="muted" style="margin:0 0 16px" id="keymap-scope-hint">
+          Globale Belegung – gilt für alle Seiten, die keine eigene Belegung haben.
         </p>
 
         <div class="keymap-layout">
@@ -214,6 +223,6 @@
   </div>
 </div>
 
-<script src="/static/app.js?v=3"></script>
+<script src="/static/app.js?v=4"></script>
 </body>
 </html>

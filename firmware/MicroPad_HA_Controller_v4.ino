@@ -26,6 +26,8 @@
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
 #include <esp_task_wdt.h>
+#include "tusb.h"  // tud_cdc_n_connected() -> USB-Host (PC) erkannt
+#include "USB.h"
 // GxEPD2 prints a diagnostic line ("_Update_Part : 449998") on EVERY panel
 // refresh when init() is given a non-zero diag bitrate. On this board Serial
 // is USB-CDC: with no host reading the port the TX buffer fills up and
@@ -511,6 +513,27 @@ void prepareInputsForSleep() {
   // like a device that has hung.
   pinMode(ENC_A, INPUT_PULLUP);
   pinMode(ENC_B, INPUT_PULLUP);
+}
+
+
+// -----------------------------------------------------------------------------
+// USB power detection
+// -----------------------------------------------------------------------------
+// When the pad is plugged into a USB host (PC/laptop) it must NOT fall asleep:
+// the user is likely flashing / developing and expects the device to stay
+// responsive. tud_cdc_n_connected(0) (TinyUSB) is true when a real USB
+// host has attached the USB-CDC device; a plain phone charger without data
+// lines reports false and the pad keeps its normal sleep behaviour.
+bool usbHostAttached() {
+#if ARDUINO_USB_CDC_ON_BOOT
+  // A real USB host (PC) has attached the native USB-CDC device: TinyUSB
+  // reports the session, and USBSerial additionally covers "serial monitor
+  // open". A plain phone charger without data lines reports false, so the
+  // normal battery-friendly sleep behaviour stays intact.
+  return tud_cdc_n_connected(0) || (bool)USBSerial;
+#else
+  return false;
+#endif
 }
 
 void enterLightSleep() {
@@ -1558,7 +1581,9 @@ void loop() {
   // in renderTaskLoop(); this loop only sets renderRequested, so buttons are
   // scanned continuously and presses are never swallowed mid-refresh.
 
-  if (!active) {
+  // Do not sleep while connected to a USB host (PC) - keep the device awake
+  // for flashing / development. Only the battery-powered case sleeps.
+  if (!active && !usbHostAttached()) {
     // Never sleep while a refresh is in flight - the display would be left
     // half-updated (and the SPI bus mid-transaction).
     unsigned long waitStart = millis();
