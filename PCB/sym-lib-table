@@ -1,0 +1,4 @@
+(sym_lib_table
+	(version 7)
+	(lib (name "MicroPad") (type "KiCad") (uri "/mnt/home/jonas/Projects/MicroPad/MicroPad") (options "") (descr ""))
+)

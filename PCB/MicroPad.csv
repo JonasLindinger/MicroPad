@@ -1,0 +1,32 @@
+Status,Reference,Qty,Value,Footprint,Datasheet
+In Liste,C1,1,220u,Capacitor_SMD:CP_Elec_6.3x7.7,
+hab ich,C7,1,10u,Capacitor_SMD:C_0805_2012Metric_Pad1.18x1.45mm_HandSolder,
+hab ich,"C8,C15",2,100n,Capacitor_SMD:C_0805_2012Metric_Pad1.18x1.45mm_HandSolder,
+hab ich,"C9,C10,C13,C14",4,1uF,Capacitor_SMD:C_0805_2012Metric_Pad1.18x1.45mm_HandSolder,
+In Liste,"C11,C12",2,"4,7uF",Capacitor_SMD:C_0805_2012Metric_Pad1.18x1.45mm_HandSolder,
+In Liste,D1,1,1N5822,Diode_THT:D_DO-201AD_P15.24mm_Horizontal,http://www.vishay.com/docs/88526/1n5820.pdf
+hab ich,"D4,D5,D6,D7,D8,D9,D10,D11,D12,D13,D14,D15",12,D,Diode_SMD:D_SMA,
+hab ich,D16,1,BLUE,LED_THT:LED_D3.0mm,
+hab ich,"D17,D19",2,GREEN,LED_THT:LED_D3.0mm,
+hab ich,D18,1,ORANGE,LED_THT:LED_D3.0mm,
+In Liste,F1,1,2A,Fuse:Fuse_0805_2012Metric_Pad1.15x1.40mm_HandSolder,
+In Liste,FB1,1,BLM21PG220,Inductor_SMD:L_0805_2012Metric_Pad1.05x1.20mm_HandSolder,
+hab ich,J2,1,USB_C_Receptacle_USB2.0_16P,Connector_USB:USB_C_Receptacle_GCT_USB4085,https://www.usb.org/sites/default/files/documents/usb_type-c.zip
+hab ich,J4,1,Programming header,Connector_PinHeader_2.54mm:PinHeader_2x03_P2.54mm_Vertical,
+hab ich,J5,1,SPI for E-Ink Display,Connector_PinHeader_2.54mm:PinHeader_1x08_P2.54mm_Vertical,
+,J6,1,B2B-PH-K-S (Battery),B2B-PH-K-S:JST_B2B-PH-K-S,
+hab ich,"J9,J10,J11,J12",4,Conn_01x02,Jumper:SolderJumper-2_P1.3mm_Open_TrianglePad1.0x1.5mm,
+hab ich,"R1,R2",2,5.1k,Resistor_SMD:R_0805_2012Metric_Pad1.20x1.40mm_HandSolder,
+hab ich,"R8,R10,R11",3,10k,Resistor_SMD:R_0805_2012Metric_Pad1.20x1.40mm_HandSolder,
+hab ich,R12,1,100,Resistor_SMD:R_0805_2012Metric_Pad1.20x1.40mm_HandSolder,
+In Liste,R13,1,330,Resistor_SMD:R_0805_2012Metric_Pad1.20x1.40mm_HandSolder,
+In Liste,"R14,R15,R16",3,"1,5k",Resistor_SMD:R_0805_2012Metric_Pad1.20x1.40mm_HandSolder,
+In Liste,R17,1,"1,8k",Resistor_SMD:R_0805_2012Metric_Pad1.20x1.40mm_HandSolder,
+hab ich,SW1,1,RESET,Button_Switch_THT:SW_PUSH_6mm,
+hab ich,SW2,1,BOOT,Button_Switch_THT:SW_PUSH_6mm,
+Amazon,"SW3,SW4,SW5,SW6,SW7,SW8,SW9,SW10,SW11,SW13,SW14",11,SWITCH,Button_Switch_Keyboard:SW_Cherry_MX_1.00u_PCB,
+hab ich,SW15,1,RotaryEncoder_Switch_MP,Rotary_Encoder:RotaryEncoder_Alps_EC11E-Switch_Vertical_H20mm_MountingHoles,
+In Liste,U1,1,BQ24075RGT,Package_DFN_QFN:VQFN-16-1EP_3x3mm_P0.5mm_EP1.6x1.6mm,http://www.ti.com/lit/ds/symlink/bq24075.pdf
+hab ich,U2,1,USBLC6-2SC6,Package_TO_SOT_SMD:SOT-23-6,https://www.st.com/resource/en/datasheet/usblc6-2.pdf
+hab ich,U3,1,ESP32-S3-WROOM-1,RF_Module:ESP32-S3-WROOM-1,https://www.espressif.com/sites/default/files/documentation/esp32-s3-wroom-1_wroom-1u_datasheet_en.pdf
+In Liste,U6,1,AP2112K-3.3,Package_TO_SOT_SMD:SOT-23-5,https://www.diodes.com/assets/Datasheets/AP2112.pdf

@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MicroPad Config</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div id="app">
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-mark">▣</div>
+      <div class="brand-text">
+        <span class="brand-title">MicroPad</span>
+        <span class="brand-sub">Config Generator</span>
+      </div>
+    </div>
+
+    <div class="side-conn">
+      <div id="conn-dot" class="conn-dot"></div>
+      <span id="conn-label">HA nicht verbunden</span>
+    </div>
+
+    <div class="side-label">Seiten</div>
+    <div id="page-list" class="page-list"></div>
+
+    <button id="btn-add-page" class="btn btn-ghost side-add">
+      <span>+</span> Neue Seite
+    </button>
+
+    <div class="side-foot">
+      <button id="btn-settings" class="btn btn-ghost"><span>⚙</span> Einstellungen</button>
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <main class="main">
+    <header class="topbar">
+      <div>
+        <h1 id="page-title-placeholder">Wähle oder erstelle eine Seite</h1>
+        <p id="page-id-hint" class="muted">Starte mit einer "home"-Seite, der Einstiegspunkt des Pads.</p>
+      </div>
+      <div class="top-actions">
+        <button id="btn-load-current" class="btn btn-ghost">Aktuelle Seite laden</button>
+        <button id="btn-download" class="btn btn-ghost">Download</button>
+        <button id="btn-generate" class="btn btn-primary">Generieren</button>
+        <button id="btn-upload" class="btn btn-accent">Zu HA hochladen ▸</button>
+      </div>
+    </header>
+
+    <!-- Empty state -->
+    <section id="empty-state" class="empty-state">
+      <div class="empty-illustration">
+        <div class="pad-icon">
+          <span class="pad-line"></span><span class="pad-line"></span><span class="pad-line"></span>
+          <span class="pad-row"></span><span class="pad-row"></span><span class="pad-row"></span>
+        </div>
+      </div>
+      <h2>Richte dein MicroPad ein</h2>
+      <p class="muted">Definiere Seiten und Items. Das Pad bekommt danach automatisch die neue Struktur über MQTT – ganz ohne Neu-Flashen.</p>
+      <div class="empty-actions">
+        <button id="btn-add-page-hero" class="btn btn-primary">+ Erste Seite anlegen</button>
+        <button id="btn-upload-hero" class="btn btn-ghost">↺ Von HA laden</button>
+      </div>
+    </section>
+
+    <!-- Page editor -->
+    <section id="editor" class="editor hidden">
+      <div class="page-meta card">
+        <div class="field">
+          <label>Seiten-ID</label>
+          <input id="f-id" type="text" placeholder="home">
+        </div>
+        <div class="field">
+          <label>Titel</label>
+          <input id="f-title" type="text" placeholder="Home">
+        </div>
+        <div class="field">
+          <label>Übergeordnete Seite</label>
+          <select id="f-parent" placeholder="(keine)"></select>
+        </div>
+      </div>
+
+      <div class="card items-card">
+        <div class="card-head">
+          <h2>Items <span id="item-count" class="pill"></span></h2>
+          <button id="btn-add-item" class="btn btn-primary btn-sm">+ Item</button>
+        </div>
+        <div id="item-list" class="item-list"></div>
+        <div id="item-empty" class="item-empty muted">Noch keine Items. Klicke „+ Item“.</div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<!-- Settings drawer -->
+<div id="drawer-overlay" class="overlay hidden"></div>
+<aside id="settings-drawer" class="drawer">
+  <div class="drawer-head">
+    <h2>Home Assistant</h2>
+    <button id="btn-close-drawer" class="icon-btn">✕</button>
+  </div>
+  <div class="drawer-body">
+    <div class="field">
+      <label>HA URL</label>
+      <input id="s-ha-url" type="text">
+    </div>
+    <div class="field">
+      <label>Access Token</label>
+      <input id="s-ha-token" type="password" autocomplete="off">
+      <div class="field-hint">Long-Lived Access Token aus Profil → Sicherheit.</div>
+    </div>
+    <div class="field">
+      <label>MQTT Broker IP</label>
+      <input id="s-mqtt" type="text">
+    </div>
+
+    <h3 class="drawer-sub">SSH-Upload (alternativ zur API)</h3>
+    <div class="field">
+      <label>SSH Host</label>
+      <input id="s-ssh-host" type="text">
+    </div>
+    <div class="field">
+      <label>SSH User</label>
+      <input id="s-ssh-user" type="text">
+    </div>
+    <div class="field">
+      <label>SSH Key Pfad</label>
+      <input id="s-ssh-key" type="text">
+    </div>
+    <div class="field">
+      <label>Remote Config-Pfad</label>
+      <input id="s-remote" type="text" placeholder="/srv/homeassistant/automations.yaml">
+    </div>
+
+    <div class="drawer-actions">
+      <button id="btn-test" class="btn btn-ghost">Verbindung testen</button>
+      <button id="btn-fetch-entities" class="btn btn-ghost">Entities laden</button>
+      <button id="btn-save-settings" class="btn btn-primary">Speichern</button>
+    </div>
+  </div>
+</aside>
+
+<!-- Item editor modal -->
+<div id="item-modal-bg" class="modal-bg hidden"></div>
+<div id="item-modal" class="modal hidden">
+  <div class="modal-head">
+    <h2 id="item-modal-title">Item</h2>
+    <button id="btn-close-modal" class="icon-btn">✕</button>
+  </div>
+  <div class="modal-body" id="item-form"></div>
+  <div class="modal-foot">
+    <button id="btn-item-cancel" class="btn btn-ghost">Abbrechen</button>
+    <button id="btn-item-save" class="btn btn-primary">Speichern</button>
+  </div>
+</div>
+
+<div id="toast-wrap" class="toast-wrap"></div>
+<div id="gen-overlay" class="gen-overlay hidden">
+  <div class="gen-panel">
+    <div class="gen-head"><h2>Ergebnis</h2>
+      <button id="btn-gen-close" class="icon-btn">✕</button></div>
+    <div class="gen-body"><pre id="gen-output"></pre></div>
+  </div>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
