@@ -1,5 +1,7 @@
 // =============================================================================
 // MicroPad Home Assistant Controller  v6 (Light Sleep, power-optimised)
+// v4 firmware: async render on core 0, input never blocked by the e-paper
+// refresh; portal is escapable; WDT disabled during sleep.
 // - No USB CDC conflicts: light sleep only.
 // - WiFi/MQTT disconnected before sleep, full reconnect on wake.
 // - Display keeps its image without refresh.
@@ -24,9 +26,34 @@
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
 #include <esp_task_wdt.h>
+// GxEPD2 prints a diagnostic line ("_Update_Part : 449998") on EVERY panel
+// refresh when init() is given a non-zero diag bitrate. On this board Serial
+// is USB-CDC: with no host reading the port the TX buffer fills up and
+// Serial.print BLOCKS - inside _waitWhileBusy(), i.e. the render task hangs
+// forever mid-refresh and the screen freezes. Compiling the diagnostic code
+// out entirely (we also call display.init(0)) is what makes navigation
+// reliable.
+#define DISABLE_DIAGNOSTIC_OUTPUT
 #include <GxEPD2_BW.h>
 #include <Fonts/FreeMonoBold12pt7b.h>
 #include <Fonts/FreeMonoBold9pt7b.h>
+
+// -----------------------------------------------------------------------------
+// Debug serial
+// -----------------------------------------------------------------------------
+// USB-CDC serial output BLOCKS the main loop once the TX buffer is full and
+// no host is reading the port. Every "event: {...}" print per button press
+// would therefore freeze the UI for ages when the pad is used without a
+// serial monitor attached - the exact "extrem laggy" symptom. Keep only
+// rare, low-volume messages on the wire; everything per-action goes behind
+// MICROPAD_DEBUG and is compiled out for normal use.
+#define MICROPAD_DEBUG 0
+
+#if MICROPAD_DEBUG
+#define DBG(...) Serial.print(__VA_ARGS__)
+#else
+#define DBG(...)
+#endif
 
 // -----------------------------------------------------------------------------
 // Pin definitions
@@ -75,9 +102,12 @@ bool wifiStarted = false;
 unsigned long lastInputMs = 0;
 unsigned long lastDrawMs = 0;
 unsigned long pageRequestSentMs = 0;
-bool dirty = true;
-bool loadingPage = false;
 String lastDisplayedRaw = "";
+
+// Coalescing flag: set by the main loop, consumed by the render task. Setting
+// it while a refresh is already in flight simply schedules one more pass with
+// the newest snapshot, so rapid input never queues up a backlog of refreshes.
+bool loadingPage = false;
 
 struct MenuItem {
   char name[32];
@@ -101,6 +131,56 @@ struct MenuPage {
   int selected = 0;
   int scrollOffset = 0;
 } currentPage;
+
+// -----------------------------------------------------------------------------
+// Render snapshot + task
+// -----------------------------------------------------------------------------
+// The e-paper refresh blocks for ~450 ms (SPI + panel waveform). Running it
+// inline meant the matrix scan stopped for that whole time: presses landed
+// nowhere, so actions could not be spammed and taps got swallowed.
+//
+// Instead the main loop (core 1) only fills a snapshot and publishes it, and
+// a dedicated task on core 0 does the slow refresh. Two snapshot buffers are
+// used so the main loop never writes the buffer that is currently on the
+// panel: it always writes "the other one" and then flips the published
+// index, which makes the hand-off race-free without any locking.
+struct RenderSnapshot {
+  MenuPage page;
+  bool loading;
+  bool indM, indW, indT;
+  bool inEdit;
+  int  editIdx;
+  float editVal;
+  bool portal;
+};
+
+RenderSnapshot renderBuf[2];
+volatile int renderReadIdx = 0;    // last complete snapshot (read by the task)
+volatile int renderDrawIdx = -1;   // buffer the task is currently drawing (-1 = idle)
+volatile bool renderRequested = false;
+volatile bool renderBusy = false;
+TaskHandle_t renderTaskHandle = NULL;
+bool showPortalScreen = false;
+unsigned long portalLastActivityMs = 0;
+const unsigned long PORTAL_TIMEOUT_MS = 300000; // auto-reboot after 5 min of portal inactivity
+
+// Wake-loop brake: after waking, stay awake at least this long before the
+// pad is allowed to sleep again. Prevents a bounce (floating pin / bouncy
+// key / USB activity) from ping-ponging between sleep and wake, which made
+// the device look dead.
+const unsigned long MIN_AWAKE_MS = 3000;
+unsigned long minAwakeUntilMs = 0;
+
+// MQTT reconnect throttle: a failed connect costs up to the socket timeout on
+// the main loop, so never retry faster than this. Without it, an unreachable
+// broker turns the loop into "block 1 s, run 2 ms, block 1 s, ..." and the
+// pad becomes completely unresponsive.
+const unsigned long MQTT_RETRY_MS = 5000;
+unsigned long nextMqttAttemptMs = 0;
+unsigned long nextWifiAttemptMs = 0;
+
+void drawPage(const RenderSnapshot& R);
+
 
 bool inEditMode = false;
 float editValue = 0;
@@ -146,7 +226,11 @@ char wifiPass[64]   = "";
 // Small FIFO instead of a single pending slot: boot now fires two events
 // back to back ("home" then "get_all_pages") and a single-slot pending
 // buffer would silently drop the first one before flushPending() got to it.
-#define PEND_QUEUE_SIZE 4
+// Spamming a toggle fires one event per press. With only 4 slots the queue
+// overflowed and dropped the OLDEST events, so Home Assistant executed fewer
+// toggles than the pad had already predicted on screen - the displayed state
+// then no longer matched reality. Keep enough headroom for a spam burst.
+#define PEND_QUEUE_SIZE 16
 struct PendingEvent {
   char action[16];
   char entity[64];
@@ -201,7 +285,7 @@ bool putCache(const char* id, const char* json) {
       // lot for this pad), and worst case just costs one extra round trip
       // next time that page is opened.
       idx = 0;
-      Serial.println("page cache full, evicting oldest");
+      DBG("page cache full, evicting oldest\n");
     }
     pageCache[idx].id = id;
     pageCache[idx].json = json;
@@ -268,6 +352,12 @@ void scanMatrix() {
       }
     }
   }
+  // Leave ALL rows high again, otherwise the last row (ROWS[2] = GPIO45)
+  // stays LOW for the whole rest of the loop iteration. A held key on that
+  // row would then keep its column LOW permanently, which corrupts the
+  // debounce state, fires spurious column ISRs (keyEvents drift), and can
+  // even re-trigger actviteItem() or a sleep/wake loop on the next pass.
+  for (int k = 0; k < 3; k++) digitalWrite(ROWS[k], HIGH);
 }
 
 void IRAM_ATTR onColumn() { keyEvents++; }
@@ -311,11 +401,22 @@ void prepareInputsForSleep() {
     digitalWrite(ROWS[r], LOW);
   }
   for (int c = 0; c < 4; c++) pinMode(COLS[c], INPUT_PULLUP);
+  // The encoder pins are wake sources too. They MUST be pulled up
+  // explicitly here: a floating pin would keep re-triggering the wake
+  // condition and bounce the pad in and out of sleep, which looks exactly
+  // like a device that has hung.
+  pinMode(ENC_A, INPUT_PULLUP);
+  pinMode(ENC_B, INPUT_PULLUP);
 }
 
 void enterLightSleep() {
-  if (mqttConnected) { mqtt.disconnect(); mqttConnected = false; }
-  if (wifiStarted) { WiFi.disconnect(true, true); wifiStarted = false; }
+  // KEEP the WiFi association and the MQTT session across light sleep.
+  // Tearing the radio down (the previous behaviour) meant every wake had to
+  // re-associate, get DHCP and redo the MQTT handshake before anything could
+  // happen - 1-3 seconds of dead time after each idle period, which is
+  // exactly what made the pad feel slow. With modem sleep enabled we still
+  // save power during the sleep, but the wake is immediate.
+  WiFi.setSleep(true);
 
   prepareInputsForSleep();
 
@@ -324,6 +425,20 @@ void enterLightSleep() {
   while (anyKeyPressed() && millis() - t < 2000) delay(10);
 
   detachInputInterrupts();
+
+  // The render task blocks on a notification when idle, but suspend it for
+  // the duration of the sleep anyway so nothing can touch the SPI bus. Drop
+  // any pending request first and make sure no refresh is mid-flight.
+  renderRequested = false;
+  unsigned long rw = millis();
+  while (renderBusy && millis() - rw < 1000) delay(1);
+  if (renderTaskHandle != NULL) vTaskSuspend(renderTaskHandle);
+
+  // The task watchdog would keep running during light sleep: any sleep
+  // longer than WDT_TIMEOUT_MS would panic-reboot the pad. Remove ourselves
+  // from the WDT before sleeping and re-add right after waking up.
+  esp_err_t wdtDel = esp_task_wdt_delete(NULL);
+  if (wdtDel != ESP_OK) DBG("wdt delete failed\n");
 
   esp_sleep_enable_gpio_wakeup();
   for (int c = 0; c < 4; c++) gpio_wakeup_enable((gpio_num_t)COLS[c], GPIO_INTR_LOW_LEVEL);
@@ -334,16 +449,36 @@ void enterLightSleep() {
   gpio_wakeup_enable((gpio_num_t)ENC_A, encA_level);
   gpio_wakeup_enable((gpio_num_t)ENC_B, encB_level);
 
-  Serial.println("light sleep");
-  Serial.flush();
+  DBG("light sleep\n");
   esp_light_sleep_start();
 
   esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
-  Serial.print("wake cause: "); Serial.println(cause);
+  DBG("wake cause: "); DBG((int)cause); DBG("\n");
+
+  // Back to full speed: modem sleep off so the next MQTT packet goes out
+  // immediately, and the render task running again.
+  WiFi.setSleep(false);
+  if (renderTaskHandle != NULL) vTaskResume(renderTaskHandle);
 
   attachInputInterrupts();
+
+  // Back from sleep: re-arm the watchdog as fast as possible.
+  esp_err_t wdtAdd = esp_task_wdt_add(NULL);
+  if (wdtAdd != ESP_OK) DBG("wdt re-add failed\n");
   resyncEncoder();
   lastInputMs = millis();
+
+  // The broker drops a client that stops sending keepalives while we sleep,
+  // so re-check the session right away. WiFi is still up, so a reconnect
+  // costs ~100 ms instead of seconds.
+  if (!mqtt.connected()) mqttConnected = false;
+  nextMqttAttemptMs = 0;   // allow an immediate (throttled) reconnect attempt
+
+  // Wake-loop brake: bouncy keys, floating encoder pins or USB activity can
+  // re-trigger a wake almost immediately. Without this the pad would ping-
+  // pong between sleep and wake and look completely dead. Force a minimum
+  // awake window so input is always serviced after a wake.
+  minAwakeUntilMs = millis() + MIN_AWAKE_MS;
 }
 
 // -----------------------------------------------------------------------------
@@ -393,22 +528,35 @@ void stampCentered(const char* text, const GFXfont* font, int centerY, bool inve
   stampText(text, font, lx, ly, invert);
 }
 
-void drawPage() {
+
+void drawPage(const RenderSnapshot& R) {
+  // Reads ONLY its own snapshot (which the main loop is not writing any
+  // more), so the input loop keeps running while this ~450 ms refresh is in
+  // flight.
   display.setPartialWindow(0, 0, 128, 296);
   display.firstPage();
   do {
     display.fillScreen(GxEPD_WHITE);
 
-    landFillRect(0, 0, 296, 22, GxEPD_BLACK);
-    int titleBase = baselineCentered(11, currentPage.title, &FreeMonoBold9pt7b);
-    stampText(currentPage.title, &FreeMonoBold9pt7b, 4, titleBase, true);
+    if (R.portal) {
+      stampCentered("WiFi Setup", &FreeMonoBold12pt7b, 15, false);
+      stampCentered("AP: MicroPad-Setup", &FreeMonoBold9pt7b, 45, false);
+      stampCentered("Pass: micropad123", &FreeMonoBold9pt7b, 70, false);
+      stampCentered("Open 192.168.4.1", &FreeMonoBold9pt7b, 95, false);
+      stampCentered("BACK = exit", &FreeMonoBold9pt7b, 115, false);
+      continue;
+    }
 
-    if (indicatorStateM) {
+    landFillRect(0, 0, 296, 22, GxEPD_BLACK);
+    int titleBase = baselineCentered(11, R.page.title, &FreeMonoBold9pt7b);
+    stampText(R.page.title, &FreeMonoBold9pt7b, 4, titleBase, true);
+
+    if (R.indM) {
       landFillRect(282, 5, 8, 8, GxEPD_WHITE);
-    } else if (indicatorStateW) {
+    } else if (R.indW) {
       landFillRect(282, 5, 8, 8, GxEPD_BLACK);
       landFillRect(284, 7, 4, 4, GxEPD_WHITE);
-    } else if (indicatorStateTrying) {
+    } else if (R.indT) {
       landFillRect(282, 5, 3, 3, GxEPD_WHITE);
       landFillRect(287, 10, 3, 3, GxEPD_WHITE);
     }
@@ -417,23 +565,25 @@ void drawPage() {
     const int VISIBLE = 4;
     const int START_Y = 28;
 
-    if (currentPage.selected < currentPage.scrollOffset) currentPage.scrollOffset = currentPage.selected;
-    if (currentPage.selected >= currentPage.scrollOffset + VISIBLE) currentPage.scrollOffset = currentPage.selected - VISIBLE + 1;
+    int scrollOffset = R.page.scrollOffset;
 
-    if (currentPage.itemCount == 0) {
-      stampCentered(loadingPage ? "Loading..." : "(empty page)", &FreeMonoBold9pt7b, 64, false);
+    if (R.page.selected < scrollOffset) scrollOffset = R.page.selected;
+    if (R.page.selected >= scrollOffset + VISIBLE) scrollOffset = R.page.selected - VISIBLE + 1;
+
+    if (R.page.itemCount == 0) {
+      stampCentered(R.loading ? "Loading..." : "(empty page)", &FreeMonoBold9pt7b, 64, false);
     }
 
-    for (int i = 0; i < VISIBLE && (currentPage.scrollOffset + i) < currentPage.itemCount; i++) {
-      int idx = currentPage.scrollOffset + i;
+    for (int i = 0; i < VISIBLE && (scrollOffset + i) < R.page.itemCount; i++) {
+      int idx = scrollOffset + i;
       int y = START_Y + i * ITEM_H;
-      bool sel = (idx == currentPage.selected);
+      bool sel = (idx == R.page.selected);
 
       if (sel) landFillRect(2, y, 292, ITEM_H - 2, GxEPD_BLACK);
       else landFillRect(2, y + ITEM_H - 2, 292, 1, GxEPD_LIGHTGREY);
 
       char line[48];
-      MenuItem& it = currentPage.items[idx];
+      const MenuItem& it = R.page.items[idx];
       const char* st = it.state[0] ? it.state : "";
       if (strcmp(it.type, "light") == 0 || strcmp(it.type, "switch") == 0) {
         snprintf(line, sizeof(line), "%s: %s", it.name, st);
@@ -447,16 +597,16 @@ void drawPage() {
       stampText(line, &FreeMonoBold9pt7b, 6, base, sel);
     }
 
-    if (currentPage.itemCount > VISIBLE) {
-      int barH = 80 * VISIBLE / currentPage.itemCount;
-      int barY = 28 + (80 - barH) * currentPage.scrollOffset / (currentPage.itemCount - VISIBLE);
+    if (R.page.itemCount > VISIBLE) {
+      int barH = 80 * VISIBLE / R.page.itemCount;
+      int barY = 28 + (80 - barH) * scrollOffset / (R.page.itemCount - VISIBLE);
       landFillRect(288, 28 + barY, 4, barH, GxEPD_BLACK);
     }
 
-    if (inEditMode && editItemIndex >= 0) {
+    if (R.inEdit && R.editIdx >= 0) {
       landFillRect(20, 40, 256, 48, GxEPD_BLACK);
       char buf[48];
-      snprintf(buf, sizeof(buf), "%s: %.0f", currentPage.items[editItemIndex].name, editValue);
+      snprintf(buf, sizeof(buf), "%s: %.0f", R.page.items[R.editIdx].name, R.editVal);
       int base = baselineCentered(64, buf, &FreeMonoBold12pt7b);
       stampText(buf, &FreeMonoBold12pt7b, 30, base, true);
     }
@@ -464,18 +614,81 @@ void drawPage() {
   } while (display.nextPage());
 }
 
+// -----------------------------------------------------------------------------
+// Render task + requestDraw
+// -----------------------------------------------------------------------------
+// Small settling gap between two panel refreshes. GxEPD2's own busy-wait
+// already blocks until the previous update finished, so this is only a short
+// safety margin before driving the controller again. Keep it small: every ms
+// here is felt directly as scroll latency.
+const unsigned long MIN_REFRESH_GAP_MS = 120;
+unsigned long lastRefreshEndMs = 0;
+
 void requestDraw() {
-  unsigned long now = millis();
-  if (now - lastDrawMs < DRAW_GATE_MS) { dirty = true; return; }
-  lastDrawMs = now;
-  dirty = false;
-  drawPage();
+  // Non-blocking: the caller (main loop) owns all page state, so it can fill
+  // a snapshot without interfering with the render task. The write always
+  // targets the buffer the task is NOT currently drawing (renderDrawIdx),
+  // and — if the task is idle — the one it is not about to read. Hand-off is
+  // race-free without any locking. Rapid input therefore coalesces into as
+  // many refreshes as the panel can physically do, and never blocks the loop.
+  int w;
+  if (renderBusy) w = 1 - renderDrawIdx;          // never the one being drawn
+  else            w = 1 - renderReadIdx;          // never the last published
+  RenderSnapshot& S = renderBuf[w];
+  memcpy(&S.page, &currentPage, sizeof(MenuPage));
+  S.loading = loadingPage;
+  S.indM = indicatorStateM;
+  S.indW = indicatorStateW;
+  S.indT = indicatorStateTrying;
+  S.inEdit = inEditMode;
+  S.editIdx = editItemIndex;
+  S.editVal = editValue;
+  S.portal = showPortalScreen;
+  renderReadIdx = w;      // publish (only now is the buffer read by the task)
+  renderRequested = true;
+  // Wake the render task explicitly. Previously it polled with delay(1),
+  // which never let core 0 idle and could prevent light sleep from engaging.
+  if (renderTaskHandle != NULL) xTaskNotifyGive(renderTaskHandle);
+}
+
+void renderTaskLoop(void* param) {
+  for (;;) {
+    if (!renderRequested) {
+      // Block until requestDraw() notifies us. The timeout is a safety net
+      // only: it guarantees a missed notification can never wedge the
+      // display, while normal operation costs zero CPU when idle - which is
+      // what allows the chip to enter light sleep cleanly.
+      ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(2000));
+      if (!renderRequested) continue;
+    }
+    // Never start a refresh straight after the previous one: give the panel
+    // controller its required recovery time, otherwise it can latch up and
+    // freeze the screen. Requests that arrive during the wait are simply
+    // coalesced into this next refresh.
+    if (lastRefreshEndMs != 0) {
+      unsigned long since = millis() - lastRefreshEndMs;
+      if (since < MIN_REFRESH_GAP_MS) {
+        vTaskDelay(pdMS_TO_TICKS(MIN_REFRESH_GAP_MS - since));
+      }
+    }
+    renderRequested = false;
+    renderBusy = true;
+    renderDrawIdx = renderReadIdx;
+    drawPage(renderBuf[renderDrawIdx]);
+    renderBusy = false;
+    lastRefreshEndMs = millis();
+    lastDrawMs = millis();
+  }
 }
 
 // -----------------------------------------------------------------------------
 // MQTT
 // -----------------------------------------------------------------------------
-void applyPageUpdate(const char* json) {
+// Applies a page payload to the live state (currentPage). With doDraw=true
+// (default for real navigation) a render is requested; with doDraw=false the
+// data is stored but the panel is NOT refreshed - used when the server
+// merely confirms what the optimistic prediction already shows.
+void applyPageUpdateData(const char* json, bool doDraw) {
   JsonDocument doc;
   DeserializationError err = deserializeJson(doc, json);
   if (err) { Serial.print("JSON parse failed: "); Serial.println(err.c_str()); return; }
@@ -514,8 +727,10 @@ void applyPageUpdate(const char* json) {
   else if (currentPage.selected >= currentPage.itemCount && currentPage.itemCount > 0) currentPage.selected = currentPage.itemCount - 1;
 
   appState = ST_LIST;
-  requestDraw();
+  if (doDraw) requestDraw();
 }
+
+void applyPageUpdate(const char* json) { applyPageUpdateData(json, true); }
 
 void parsePageJson(const char* json) { applyPageUpdate(json); }
 
@@ -526,6 +741,61 @@ void parsePageJson(const char* json) { applyPageUpdate(json); }
 // acts, so the display feels instant instead of waiting for the MQTT round
 // trip. The server's reply is authoritative: applyPageUpdate()/mqttCallback()
 // overwrites our prediction with the real state if it differs.
+//
+// To avoid a SECOND ~450 ms refresh for every toggle/edit (predict draw +
+// server-confirm draw), we remember what we predicted. If the server reply
+// for the same entity carries exactly that expected state/value, it is
+// applied to the page data WITHOUT re-rendering - the panel already shows it.
+// -----------------------------------------------------------------------------
+// Post-action resync
+// -----------------------------------------------------------------------------
+// Anything that changes a state (toggle/edit) is sent fire-and-forget, while
+// the panel already shows the predicted result. If an event or its reply is
+// lost anywhere along the way (queue overflow, the HA automation's
+// mode: queued limit, an MQTT hiccup), the pad would keep a wrong state
+// FOREVER - the page cache has already been updated by the prediction, so no
+// later diff would ever notice. Once the user stops acting for a moment we
+// therefore ask the server for the current page again and let its answer
+// overwrite the display. Cheap, and it makes the pad self-correcting.
+const unsigned long RESYNC_SETTLE_MS = 1000;   // quiet time after the last action
+const unsigned long RESYNC_RETRY_MS  = 2500;   // spacing between attempts
+const int           RESYNC_MAX_ATTEMPTS = 3;
+unsigned long lastActionMs = 0;
+unsigned long resyncSentMs = 0;
+int           resyncLeft   = 0;
+
+// Called by every optimistic action (toggle/edit).
+void noteAction() {
+  lastActionMs = millis();
+  resyncSentMs = 0;
+  resyncLeft = RESYNC_MAX_ATTEMPTS;
+}
+
+struct PendingPrediction {
+  bool active;
+  char entity[64];
+  char field[16];      // "state" or "value"
+  char expected[16];
+  uint32_t seq;        // actionSeq at the moment this prediction was made
+};
+PendingPrediction pendingPred;
+
+// Bumped on every user action. A prediction may only be applied WITHOUT a
+// redraw if no further action happened since: otherwise the arriving page is
+// the reply to an older action, and silently accepting it would leave the
+// panel showing something different from what the server actually has.
+uint32_t actionSeq = 0;
+
+void predictionClear() { pendingPred.active = false; }
+
+void predictionSet(const char* entity, const char* field, const char* expected) {
+  pendingPred.active = true;
+  pendingPred.seq = actionSeq;
+  strncpy(pendingPred.entity, entity ? entity : "", sizeof(pendingPred.entity));
+  strncpy(pendingPred.field, field, sizeof(pendingPred.field));
+  strncpy(pendingPred.expected, expected, sizeof(pendingPred.expected));
+}
+
 int findItemIndex(const char* entity) {
   if (!entity || !entity[0]) return -1;
   for (int i = 0; i < currentPage.itemCount; i++) {
@@ -540,8 +810,12 @@ void predictToggle(const char* entity) {
   if (i < 0) return;
   MenuItem& it = currentPage.items[i];
   // on  -> off ; anything else (off/unknown/unavailable) -> on
-  if (strcmp(it.state, "on") == 0) strncpy(it.state, "off", sizeof(it.state));
-  else strncpy(it.state, "on", sizeof(it.state));
+  const char* newState;
+  if (strcmp(it.state, "on") == 0) { strncpy(it.state, "off", sizeof(it.state)); newState = "off"; }
+  else { strncpy(it.state, "on", sizeof(it.state)); newState = "on"; }
+  actionSeq++;
+  predictionSet(entity, "state", newState);
+  noteAction();
   requestDraw();
 }
 
@@ -549,14 +823,17 @@ void predictToggle(const char* entity) {
 // exit edit mode and redraw.
 void predictValue(const char* entity, float v) {
   int i = findItemIndex(entity);
+  char buf[16];
   if (i >= 0) {
-    char buf[16];
     // step-aware formatting: whole values unless step is fractional
     MenuItem& it = currentPage.items[i];
     if (fabsf(it.step - (int)it.step) > 0.0001f) snprintf(buf, sizeof(buf), "%.1f", v);
     else snprintf(buf, sizeof(buf), "%.0f", v);
     strncpy(currentPage.items[i].value, buf, sizeof(currentPage.items[i].value));
   }
+  actionSeq++;
+  predictionSet(entity, "value", buf);
+  noteAction();
   inEditMode = false;
   editItemIndex = -1;
   requestDraw();
@@ -576,11 +853,13 @@ void handleAllPagesPayload(const char* json) {
   for (JsonObject page : pages) {
     const char* pid = page["page_id"] | "";
     if (!pid[0]) continue;
-    char buf[1024];
+    // Room for the largest page we can receive: a truncated serialization
+    // would cache invalid JSON and that page could then never be displayed.
+    char buf[2048];
     size_t n = serializeJson(page, buf, sizeof(buf));
     if (n > 0) { putCache(pid, buf); stored++; }
   }
-  Serial.print("pages/all: cached "); Serial.print(stored); Serial.println(" page(s)");
+  DBG("pages/all: cached "); DBG(stored); DBG(" page(s)\n");
 
   // If we're still sitting on a blank "Loading..." for a page that just
   // showed up in this batch (e.g. first boot, no per-page reply yet), show
@@ -608,6 +887,44 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   bool matches = (strcmp(pid, currentPage.id) == 0) || loadingPage || (currentPage.itemCount == 0 && currentPage.title[0] == '\0');
   if (!matches && appState == ST_LIST) return;
 
+  // Prediction-confirm shortcut: if this reply is for the page we are on and
+  // contains the exact state/value we optimistically predicted for the item
+  // we just acted on, the panel already shows it - applying the data without
+  // a second ~450 ms refresh is enough. The cache is still updated so the
+  // server stays authoritative for future navigation.
+  if (pendingPred.active && pendingPred.seq == actionSeq && strcmp(pid, currentPage.id) == 0) {
+    JsonArray arr = idDoc["items"].as<JsonArray>();
+    for (JsonObject item : arr) {
+      const char* ent = item["entity"] | "";
+      if (ent[0] && strcmp(ent, pendingPred.entity) == 0) {
+        bool confirmed = false;
+        if (strcmp(pendingPred.field, "state") == 0) {
+          const char* st = item["state"] | "";
+          confirmed = (strcmp(st, pendingPred.expected) == 0);
+        } else {
+          const char* val = item["value"] | "";
+          confirmed = (strcmp(val, pendingPred.expected) == 0);
+        }
+        if (confirmed) {
+          // Same content is already on the panel -> update data + cache only.
+          DBG("prediction confirmed, skip redraw\n");
+          pendingPred.active = false;
+          putCache(pid, json);
+          applyPageUpdateData(json, false);
+          return;
+        }
+        break;
+      }
+    }
+    // Server disagrees with our prediction (or item vanished): fall through
+    // and do a normal authoritative redraw.
+    pendingPred.active = false;
+  }
+
+  // An authoritative page for the page we are showing arrived: the pad has
+  // caught up with the server, so no further post-action resync is needed.
+  if (strcmp(pid, currentPage.id) == 0) resyncLeft = 0;
+
   // The server's copy is authoritative. If it's identical to what we
   // already had cached (e.g. what we just showed instantly from cache in
   // openLoading()), there's nothing new to draw - just clear the loading
@@ -625,7 +942,7 @@ void publishEvent(const char* action, const char* entity, float value, const cha
   if (pendCount >= PEND_QUEUE_SIZE) {
     // Queue full: drop the oldest rather than the newest, so the most
     // recent user action (or fetch request) always wins.
-    Serial.println("event queue full, dropping oldest pending event");
+    DBG("event queue full, dropping oldest pending event\n");
     pendHead = (pendHead + 1) % PEND_QUEUE_SIZE;
     pendCount--;
   }
@@ -643,25 +960,42 @@ void publishEvent(const char* action, const char* entity, float value, const cha
 
 void flushPending() {
   if (pendCount == 0 || !mqttConnected) return;
-  PendingEvent& pe = pendQueue[pendHead];
-  JsonDocument doc;
-  doc["action"] = pe.action;
-  if (pe.entity[0]) doc["entity"] = pe.entity;
-  if (pe.hasValue) doc["value"] = pe.value;
-  if (pe.target[0]) doc["target_page"] = pe.target;
-  doc["page_id"] = currentPage.id;
-  char buf[256];
-  serializeJson(doc, buf);
-  bool ok = mqtt.publish("micropad/event", buf);
-  Serial.print("event: "); Serial.println(buf);
-  if (ok) { pendHead = (pendHead + 1) % PEND_QUEUE_SIZE; pendCount--; }
+  // Drain several queued events per loop pass. Publishing one per pass was
+  // too slow for a spam burst: the queue backed up and started dropping
+  // events, which is how the pad's optimistic state drifted away from the
+  // real Home Assistant state.
+  const int MAX_EVENTS_PER_PASS = 4;
+  for (int n = 0; n < MAX_EVENTS_PER_PASS && pendCount > 0; n++) {
+    PendingEvent& pe = pendQueue[pendHead];
+    JsonDocument doc;
+    doc["action"] = pe.action;
+    if (pe.entity[0]) doc["entity"] = pe.entity;
+    if (pe.hasValue) doc["value"] = pe.value;
+    if (pe.target[0]) doc["target_page"] = pe.target;
+    doc["page_id"] = currentPage.id;
+    char buf[256];
+    serializeJson(doc, buf);
+    bool ok = mqtt.publish("micropad/event", buf);
+    DBG("event: "); DBG(buf); DBG("\n");
+    if (!ok) break;                     // keep it queued and retry next pass
+    pendHead = (pendHead + 1) % PEND_QUEUE_SIZE;
+    pendCount--;
+  }
 }
 
 bool connectMqtt() {
   mqtt.setServer(mqttServer, 1883);
   mqtt.setCallback(mqttCallback);
-  mqtt.setSocketTimeout(3);
-  mqtt.setBufferSize(2048);
+  // Short socket timeout: every MQTT call is executed on the main loop, so a
+  // long timeout means one unreachable broker freezes the whole UI for that
+  // long. 800 ms is enough on a LAN and keeps the loop responsive.
+  mqtt.setSocketTimeout(1);
+  mqtt.setKeepAlive(30);
+  // The boot-time "pages/all" answer contains EVERY page and easily exceeds
+  // 2 KB. With too small a buffer PubSubClient silently drops such a message,
+  // the page cache stays empty and every navigation then sits on
+  // "Loading..." - which looks exactly like the pad hanging.
+  mqtt.setBufferSize(4096);
   if (mqtt.connect("micropad", mqttUser, mqttPass)) {
     mqtt.subscribe("micropad/page/current");
     mqtt.subscribe("micropad/pages/all");
@@ -674,11 +1008,17 @@ bool connectMqtt() {
 void startNetwork() {
   if (wifiStarted || appState == ST_WIFI_PORTAL) return;
   WiFi.mode(WIFI_STA);
+  // Modem sleep makes the radio buffer/batch packets: every MQTT round trip
+  // then costs hundreds of milliseconds extra, which is exactly why opening
+  // a page felt slow. The pad is only awake for short bursts and fully
+  // disconnects before light sleep, so disabling it costs nothing meaningful
+  // in battery life but makes the UI feel instant while in use.
+  WiFi.setSleep(false);
   WiFi.setAutoReconnect(true);
   WiFi.persistent(false);
   WiFi.begin(wifiSSID, wifiPass);
   wifiStarted = true;
-  Serial.print("wifi start: "); Serial.println(wifiSSID);
+  DBG("wifi start: "); DBG(wifiSSID); DBG("\n");
 }
 
 // -----------------------------------------------------------------------------
@@ -722,16 +1062,34 @@ void startWifiPortal() {
   server.on("/", handleRoot);
   server.on("/save", HTTP_POST, handleSave);
   server.begin();
+  portalLastActivityMs = millis();
+  showPortalScreen = true;
+  requestDraw();
+}
 
-  display.setPartialWindow(0, 0, 128, 296);
-  display.firstPage();
-  do {
-    display.fillScreen(GxEPD_WHITE);
-    stampCentered("WiFi Setup", &FreeMonoBold12pt7b, 15, false);
-    stampCentered("AP: MicroPad-Setup", &FreeMonoBold9pt7b, 45, false);
-    stampCentered("Pass: micropad123", &FreeMonoBold9pt7b, 70, false);
-    stampCentered("Open 192.168.4.1", &FreeMonoBold9pt7b, 95, false);
-  } while (display.nextPage());
+// Leave the captive portal (BACK key): if WiFi credentials are already
+// stored, reconnect and carry on; otherwise just show an empty list.
+void exitPortal() {
+  showPortalScreen = false;
+  server.close();
+  WiFi.softAPdisconnect(true);
+  WiFi.mode(WIFI_STA);
+  appState = ST_LIST;
+  String ssid = prefs.getString("ssid", "");
+  if (ssid.length() > 0) {
+    strlcpy(wifiSSID, ssid.c_str(), sizeof(wifiSSID));
+    strlcpy(wifiPass, prefs.getString("pass", "").c_str(), sizeof(wifiPass));
+    wifiStarted = false;
+    startNetwork();
+  } else {
+    // No credentials yet: show an empty home page, nothing crashes.
+    currentPage.itemCount = 0;
+    strncpy(currentPage.id, "home", sizeof(currentPage.id));
+    strncpy(currentPage.title, "Home", sizeof(currentPage.title));
+    currentPage.parent[0] = '\0';
+  }
+  requestDraw();
+  Serial.println("portal exited");
 }
 
 // -----------------------------------------------------------------------------
@@ -782,6 +1140,36 @@ void activateItem() {
   }
 }
 
+// Scroll coalescing: encoder ticks can arrive far faster than the panel can
+// refresh (~450 ms partial update), so drawing on every tick would build an
+// unpayable backlog. Each tick records that the selection moved; loop()
+// renders once when scrolling settles (SCROLL_SETTLE_MS) or at a hard cap
+// (SCROLL_MAX_MS) during a continuous turn. Keep the settle window short -
+// it is pure added latency on every scroll step.
+#define SCROLL_SETTLE_MS 100
+#define SCROLL_MAX_MS    700
+bool scrollPending = false;
+unsigned long scrollPendingMs = 0;
+
+void requestScrollDraw() {
+  scrollPending = true;
+  scrollPendingMs = millis();
+}
+
+// Called from loop(): renders the pending scroll state exactly once, when
+// the user stopped scrolling or when the display would otherwise lag too far
+// behind a continuous turn. Returns true if a render was triggered.
+bool serviceScrollDraw() {
+  if (!scrollPending) return false;
+  unsigned long now = millis();
+  if (now - scrollPendingMs >= SCROLL_SETTLE_MS || now - scrollPendingMs >= SCROLL_MAX_MS) {
+    scrollPending = false;
+    requestDraw();
+    return true;
+  }
+  return false;
+}
+
 void handleInput() {
   int delta = encoderTicks - lastEncoderTicks;
   lastEncoderTicks = encoderTicks;
@@ -793,21 +1181,24 @@ void handleInput() {
       editValue += delta * it.step;
       if (editValue < it.minVal) editValue = it.minVal;
       if (editValue > it.maxVal) editValue = it.maxVal;
-      requestDraw();
+      requestScrollDraw();
     } else {
       int old = currentPage.selected;
       currentPage.selected += delta;
       if (currentPage.selected < 0) currentPage.selected = 0;
       if (currentPage.selected >= currentPage.itemCount) currentPage.selected = currentPage.itemCount - 1;
-      if (currentPage.selected != old && currentPage.itemCount > 0) requestDraw();
+      if (currentPage.selected != old && currentPage.itemCount > 0) requestScrollDraw();
     }
   }
 
   if (rising(BTN_HOME_R, BTN_HOME_C)) { lastInputMs = millis(); goHome(); }
   if (rising(BTN_BACK_R, BTN_BACK_C)) { lastInputMs = millis(); goBack(); }
   if (rising(BTN_SETTINGS_R, BTN_SETTINGS_C)) { lastInputMs = millis(); startWifiPortal(); }
-  if (rising(BTN_ENTER_R, BTN_ENTER_C)) { lastInputMs = millis(); activateItem(); }
-  else if (rising(BTN_ENTER2_R, BTN_ENTER2_C)) { lastInputMs = millis(); activateItem(); }
+  // Both ENTER keys are the same physical action: pressing either one (or
+  // both simultaneously) must produce exactly one activation. The old
+  // else-if fired only the first and could miss taps on the second key.
+  bool enterPressed = rising(BTN_ENTER_R, BTN_ENTER_C) || rising(BTN_ENTER2_R, BTN_ENTER2_C);
+  if (enterPressed) { lastInputMs = millis(); activateItem(); }
 }
 
 // -----------------------------------------------------------------------------
@@ -832,7 +1223,7 @@ void setup() {
   resyncEncoder();
 
   SPI.begin(39, -1, 38, -1);
-  display.init(115200);
+  display.init(0);   // 0 = diagnostics OFF (see DISABLE_DIAGNOSTIC_OUTPUT above)
   display.setRotation(0);
 
   esp_task_wdt_config_t wdtCfg = {};
@@ -844,6 +1235,23 @@ void setup() {
   esp_task_wdt_add(NULL);
 
   prefs.begin("micropad", false);
+
+  // Boot render task on core 0: it does all e-paper refreshes from now on.
+  // The main loop on core 1 keeps scanning input the whole time -> buttons
+  // are responsive even mid-refresh, actions can be spammed.
+  xTaskCreatePinnedToCore(renderTaskLoop, "renderTask", 8192, NULL, 1, &renderTaskHandle, 0);
+
+  // Initial frame (white list page / portal) before the first MQTT reply.
+  strncpy(currentPage.id, "home", sizeof(currentPage.id));
+  strncpy(currentPage.title, "Home", sizeof(currentPage.title));
+  currentPage.parent[0] = '\0';
+  currentPage.itemCount = 0;
+  indicatorStateTrying = true;
+  showPortalScreen = false;
+  requestDraw();
+  // Let core 0 paint it right away, so the user sees *something* instead of
+  // a blank panel during WiFi connect.
+  vTaskDelay(pdMS_TO_TICKS(20));
 
   String savedMqtt = prefs.getString("mqtt", "");
   if (savedMqtt.length() > 0) strlcpy(mqttServer, savedMqtt.c_str(), sizeof(mqttServer));
@@ -857,24 +1265,35 @@ void setup() {
 
   startNetwork();
   lastInputMs = millis();
-
-  // At cold boot we wait for the retained MQTT page; do not show stale cache
-  if (false) {
-    display.setPartialWindow(0, 0, 128, 296);
-    display.firstPage();
-    do {
-      display.fillScreen(GxEPD_WHITE);
-      stampCentered("Waiting for", &FreeMonoBold12pt7b, 45, false);
-      stampCentered("Home Assistant...", &FreeMonoBold9pt7b, 75, false);
-    } while (display.nextPage());
-  }
 }
 
 void loop() {
   esp_task_wdt_reset();
 
   if (appState == ST_WIFI_PORTAL) {
+    // Keep scanning the matrix even in the portal, otherwise the pad is
+    // bricked until reflash: BACK must be able to leave the portal again.
     server.handleClient();
+    scanMatrix();
+    scanMatrix();
+    if (rising(BTN_BACK_R, BTN_BACK_C)) {
+      commitStates();
+      exitPortal();
+      return;
+    }
+    commitStates();
+    // Any key/encoder activity resets the portal idle timer, so it won't
+    // reboot while the user is interacting.
+    int deltaP = encoderTicks - lastEncoderTicks;
+    lastEncoderTicks = encoderTicks;
+    if (deltaP != 0) portalLastActivityMs = millis();
+    for (int r = 0; r < 3; r++)
+      for (int c = 0; c < 4; c++)
+        if (sw[r][c]) portalLastActivityMs = millis();
+    if (millis() - portalLastActivityMs > PORTAL_TIMEOUT_MS) {
+      Serial.println("portal timeout, rebooting");
+      ESP.restart();
+    }
     delay(2);
     return;
   }
@@ -899,19 +1318,32 @@ void loop() {
 
   if (active) {
     if (!wifiStarted) startNetwork();
+    else if (WiFi.status() != WL_CONNECTED && millis() >= nextWifiAttemptMs) {
+      // Auto-reconnect gives up after a while (AP rebooted / out of range):
+      // re-kick it, throttled, so a dead radio can never spin the loop.
+      nextWifiAttemptMs = millis() + MQTT_RETRY_MS;
+      WiFi.begin(wifiSSID, wifiPass);
+    }
     if (WiFi.status() == WL_CONNECTED) {
       if (!mqttConnected) {
-        if (connectMqtt()) {
-          Serial.println("MQTT connected");
-          publishEvent("home", NULL, -9999, NULL);
-          if (!didFetchAllPages) {
-            // Once per boot: ask the server for every page it knows about,
-            // so navigating later can show cached content instantly instead
-            // of a blank "Loading..." screen. Re-fetching this on every
-            // sleep/wake reconnect isn't needed - the per-page cache stays
-            // current via the normal navigate/toggle/edit round trips.
-            publishEvent("get_all_pages", NULL, -9999, NULL);
-            didFetchAllPages = true;
+        // Throttled reconnect: a failed attempt occupies the main loop for
+        // up to the socket timeout, so never hammer it - otherwise an
+        // unreachable broker freezes the UI in a "block, run, block" loop.
+        if (millis() >= nextMqttAttemptMs) {
+          if (connectMqtt()) {
+            DBG("MQTT connected\n");
+            publishEvent("home", NULL, -9999, NULL);
+            if (!didFetchAllPages) {
+              // Once per boot: ask the server for every page it knows about,
+              // so navigating later can show cached content instantly instead
+              // of a blank "Loading..." screen. Re-fetching this on every
+              // sleep/wake reconnect isn't needed - the per-page cache stays
+              // current via the normal navigate/toggle/edit round trips.
+              publishEvent("get_all_pages", NULL, -9999, NULL);
+              didFetchAllPages = true;
+            }
+          } else {
+            nextMqttAttemptMs = millis() + MQTT_RETRY_MS;
           }
         }
       } else {
@@ -919,6 +1351,20 @@ void loop() {
         else {
           mqtt.loop();
           flushPending();
+
+          // Post-action resync: once the user has stopped toggling/editing
+          // for a moment, pull the authoritative page once more. This repairs
+          // any drift caused by a dropped event or a lost reply - without it
+          // the pad could stay out of sync with Home Assistant indefinitely.
+          if (resyncLeft > 0 && now - lastActionMs >= RESYNC_SETTLE_MS &&
+              (resyncSentMs == 0 || now - resyncSentMs >= RESYNC_RETRY_MS)) {
+            resyncLeft--;
+            resyncSentMs = now;
+            predictionClear();          // never let a stale guess swallow this
+            if (strcmp(currentPage.id, "home") == 0) publishEvent("home", NULL, -9999, NULL);
+            else publishEvent("navigate", NULL, -9999, currentPage.id);
+          }
+
           if (loadingPage && (now - pageRequestSentMs >= LOADING_RETRY_MS)) {
             pageRequestSentMs = now;
             publishEvent("navigate", NULL, -9999, currentPage.id);
@@ -928,26 +1374,29 @@ void loop() {
     }
   }
 
-  // Draw is blocking (~450ms partial refresh). During it, a button press
-  // would otherwise be lost because we can't scan. Detect via the keyEvents
-  // ISR counter: if it advanced during the draw, immediately re-scan and
-  // process so the tap that landed mid-refresh isn't swallowed.
-  if (dirty) {
-    const volatile int prevKeyEvents = keyEvents;
-    requestDraw();
-    if (keyEvents != prevKeyEvents) {
-      scanMatrix(); scanMatrix();
-      handleInput();
-      commitStates();
-    }
-  }
+  // NOTE: no blocking draw here any more. The e-paper refresh runs on core 0
+  // in renderTaskLoop(); this loop only sets renderRequested, so buttons are
+  // scanned continuously and presses are never swallowed mid-refresh.
+  // The only draw we still gate here is scrolling: encoder ticks are far
+  // faster than the panel, so the display catches up once after the user
+  // stops turning (or at the SCROLL_MAX_MS cap during continuous turning),
+  // instead of queueing one refresh per tick.
+  serviceScrollDraw();
 
-  if (!active && appState != ST_WIFI_PORTAL) {
-    Serial.println("going to sleep");
-    Serial.flush();
-    enterLightSleep();
-    // After wake we reconnect
-    startNetwork();
+  if (!active) {
+    // Never sleep while a refresh is in flight - the display would be left
+    // half-updated (and the SPI bus mid-transaction).
+    unsigned long waitStart = millis();
+    while (renderBusy && millis() - waitStart < 1000) delay(1);
+
+    // Wake-loop brake: never go straight back to sleep right after a wake,
+    // and never while scrolling still has a pending refresh. Otherwise a
+    // bouncy key / floating encoder pin could bounce us between sleep and
+    // wake and the pad would look frozen.
+    if (millis() >= minAwakeUntilMs && !scrollPending) {
+      DBG("going to sleep\n");
+      enterLightSleep();
+    }
   }
 
   delay(2);
