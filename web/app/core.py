@@ -53,6 +53,78 @@ def suggest_name(entity_id: str):
 
 
 # ---------------------------------------------------------------------------
+# Key map (which key does what)
+# ---------------------------------------------------------------------------
+# The pad has no hard-wired buttons any more: Home Assistant owns the mapping
+# and pushes it to the topic below (retained), so changing a key never needs a
+# re-flash. Bindable keys are the 12 matrix keys (r<row><col>, r0c3 being the
+# encoder press) plus the two encoder directions.
+KEY_ACTION_TYPES = ["none", "enter", "back", "home", "settings", "scroll",
+                    "scroll_up", "scroll_down", "navigate", "toggle", "on",
+                    "off", "press"]
+
+# Actions that need an entity / a target page.
+KEY_ACTIONS_NEED_ENTITY = {"toggle", "on", "off", "press"}
+KEY_ACTIONS_NEED_PAGE = {"navigate"}
+
+KEYMAP_KEYS = [
+    {"id": "r0c0", "label": "R1C1"},
+    {"id": "r0c1", "label": "R1C2"},
+    {"id": "r0c2", "label": "R1C3"},
+    {"id": "r0c3", "label": "R1C4 (encoder press)"},
+    {"id": "r1c0", "label": "R2C1"},
+    {"id": "r1c1", "label": "R2C2"},
+    {"id": "r1c2", "label": "R2C3"},
+    {"id": "r1c3", "label": "R2C4"},
+    {"id": "r2c0", "label": "R3C1"},
+    {"id": "r2c1", "label": "R3C2"},
+    {"id": "r2c2", "label": "R3C3"},
+    {"id": "r2c3", "label": "R3C4"},
+    {"id": "enc_up", "label": "Encoder right/up (turn)"},
+    {"id": "enc_down", "label": "Encoder left/down (turn)"},
+]
+
+# Classic layout: what the firmware used to hard-code.
+DEFAULT_KEYMAP = {
+    "r0c0": {"action": "home"},
+    "r0c3": {"action": "enter"},
+    "r1c3": {"action": "enter"},
+    "r2c2": {"action": "settings"},
+    "r2c3": {"action": "back"},
+    "enc_up": {"action": "scroll"},
+    "enc_down": {"action": "scroll"},
+}
+
+
+def normalize_keymap(keymap):
+    """Return a complete key map: every bindable key present, unknown keys
+    dropped, missing keys filled from the classic defaults."""
+    out = {}
+    km = keymap if isinstance(keymap, dict) else {}
+    for key in KEYMAP_KEYS:
+        kid = key["id"]
+        entry = km.get(kid) if isinstance(km.get(kid), dict) else None
+        if entry is None:
+            entry = dict(DEFAULT_KEYMAP.get(kid, {"action": "none"}))
+        action = entry.get("action") or "none"
+        if action not in KEY_ACTION_TYPES:
+            action = "none"
+        item = {"action": action}
+        if action in KEY_ACTIONS_NEED_ENTITY and entry.get("entity"):
+            item["entity"] = entry["entity"]
+        if action in KEY_ACTIONS_NEED_PAGE and entry.get("target_page"):
+            item["target_page"] = entry["target_page"]
+        out[kid] = item
+    return out
+
+
+def generate_keymap_payload(keymap):
+    """JSON payload for topic micropad/keymap."""
+    return json.dumps({"keymap": normalize_keymap(keymap)},
+                      ensure_ascii=False, separators=(", ", ": "))
+
+
+# ---------------------------------------------------------------------------
 # Page payload builders
 # ---------------------------------------------------------------------------
 def build_page_dict(page):
@@ -110,9 +182,33 @@ def generate_all_pages_payload(pages):
 # ---------------------------------------------------------------------------
 # Automation builder (YAML schema)
 # ---------------------------------------------------------------------------
-def build_automation_dict(pages):
+def _republish_action(republish_pages):
+    """A mqtt.publish action that re-sends the page the pad is currently on.
+
+    The pad predicts a state change locally the moment a key is pressed; the
+    server's republished page then overwrites that guess, so the display can
+    never drift away from Home Assistant."""
+    parts = ["{% if false %}{% endif %}"]
+    for page in republish_pages:
+        parts.append(f"{{% if page_id == '{page['id']}' %}}")
+        parts.append(generate_page_payload(page))
+        parts.append("{% endif %}")
+    return {
+        "service": "mqtt.publish",
+        "data": {
+            "topic": "micropad/page/current",
+            "retain": True,
+            "payload": "\n".join(parts),
+        },
+    }
+
+
+def build_automation_dict(pages, keymap=None):
     """Build the MicroPad automation as a Python dict matching the HA schema
     (the structure both the YAML editor and the Config API expect)."""
+    km = normalize_keymap(keymap)
+    km_actions = {b.get("action") for b in km.values()}
+
     variables = {
         "action": "{{ trigger.payload_json.action }}",
         "entity": "{{ trigger.payload_json.entity | default('') }}",
@@ -140,36 +236,40 @@ def build_automation_dict(pages):
             }]
         })
 
-    # TOGGLE
-    toggle_pages = [p for p in pages if any(
+    # TOGGLE / ON / OFF — every action that changes an entity's state.
+    # These are reachable both from an item on a page (toggle) and from any
+    # key bound to it in the key map.
+    state_pages = [p for p in pages if any(
         i["type"] in ("light", "switch") and i.get("entity") for i in p["items"])]
-    if toggle_pages:
-        payload_parts = ["{% if false %}{% endif %}"]
-        for page in toggle_pages:
-            payload_parts.append(f"{{% if page_id == '{page['id']}' %}}")
-            payload_parts.append(generate_page_payload(page))
-            payload_parts.append("{% endif %}")
-        branches.append({
-            "conditions": ["{{ action == 'toggle' }}"],
-            "sequence": [
-                {"service": "homeassistant.toggle", "target": {"entity_id": "{{ entity }}"}},
-                {
-                    "service": "mqtt.publish",
-                    "data": {
-                        "topic": "micropad/page/current",
-                        "retain": True,
-                        "payload": "\n".join(payload_parts),
-                    }
-                }
-            ]
-        })
+    for act, service in (("toggle", "homeassistant.toggle"),
+                         ("on", "homeassistant.turn_on"),
+                         ("off", "homeassistant.turn_off")):
+        if act not in km_actions and not (act == "toggle" and state_pages):
+            continue
+        seq = [{"service": service, "target": {"entity_id": "{{ entity }}"}}]
+        if state_pages:
+            seq.append(_republish_action(state_pages))
+        branches.append({"conditions": [f"{{{{ action == '{act}' }}}}"], "sequence": seq})
 
-    # PRESS
-    if any(i["type"] in ("script", "button") and i.get("entity")
-           for p in pages for i in p["items"]):
+    # PRESS — run a script, press a button or activate a scene. The entity
+    # domain decides which service is correct; the old version called
+    # script.turn_on for everything, which silently did nothing for button.*
+    # and scene.* entities.
+    if "press" in km_actions or any(
+            i["type"] in ("script", "button") and i.get("entity")
+            for p in pages for i in p["items"]):
         branches.append({
             "conditions": ["{{ action == 'press' }}"],
-            "sequence": [{"service": "script.turn_on", "target": {"entity_id": "{{ entity }}"}}]
+            "sequence": [{
+                "choose": [
+                    {"conditions": ["{{ entity.startswith('script.') }}"],
+                     "sequence": [{"service": "script.turn_on", "target": {"entity_id": "{{ entity }}"}}]},
+                    {"conditions": ["{{ entity.startswith('button.') }}"],
+                     "sequence": [{"service": "button.press", "target": {"entity_id": "{{ entity }}"}}]},
+                    {"conditions": ["{{ entity.startswith('scene.') }}"],
+                     "sequence": [{"service": "scene.turn_on", "target": {"entity_id": "{{ entity }}"}}]},
+                ]
+            }]
         })
 
     # EDIT (media_player volume + input_number/number slider)
@@ -247,6 +347,21 @@ def build_automation_dict(pages):
             }],
         })
 
+    # KEYMAP — the pad asks for its button mapping on every connect and also
+    # subscribes to the (retained) topic, so keys can be re-bound from the
+    # config page without ever re-flashing the device.
+    branches.append({
+        "conditions": ["{{ action == 'keymap' }}"],
+        "sequence": [{
+            "service": "mqtt.publish",
+            "data": {
+                "topic": "micropad/keymap",
+                "retain": True,
+                "payload": generate_keymap_payload(km),
+            },
+        }],
+    })
+
     return {
         "alias": "MicroPad Controller",
         "description": "Generated by MicroPad Config Generator",
@@ -258,9 +373,9 @@ def build_automation_dict(pages):
     }
 
 
-def build_ha_automation_config(pages):
+def build_ha_automation_config(pages, keymap=None):
     """Config-API variant: identical structure plus the automation id."""
-    config = build_automation_dict(pages)
+    config = build_automation_dict(pages, keymap)
     config["id"] = "micropad_controller"
     return config
 
@@ -271,11 +386,11 @@ def _yaml_str_representer(dumper, data):
     return dumper.represent_scalar("tag:yaml.org,2002:str", data)
 
 
-def generate_automation_yaml(pages):
+def generate_automation_yaml(pages, keymap=None):
     """Render the automation as YAML for automations.yaml / the UI."""
     import yaml
     yaml.add_representer(str, _yaml_str_representer)
-    automation = build_automation_dict(pages)
+    automation = build_automation_dict(pages, keymap)
     automation["id"] = "micropad_controller"
     return yaml.dump([automation], sort_keys=False, allow_unicode=True, width=1000)
 

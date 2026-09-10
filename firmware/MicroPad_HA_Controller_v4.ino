@@ -245,6 +245,108 @@ int pendHead = 0;
 int pendTail = 0;
 int pendCount = 0;
 
+// -----------------------------------------------------------------------------
+// Configurable key map
+// -----------------------------------------------------------------------------
+// No key is hard-wired any more. Home Assistant owns the mapping and sends it
+// as JSON on "micropad/keymap" (normally retained, so it arrives right after
+// the pad subscribes). The defaults below reproduce the classic layout, so a
+// pad with an older automation - or none at all - still works.
+//
+// Bindable "keys":
+//   r0c0 .. r2c3   the 12 matrix keys, row*4+col   (r0c3 is the encoder press)
+//   enc_up          encoder turned clockwise
+//   enc_down        encoder turned counter-clockwise
+//
+// Each entry: {"action": "...", "entity": "...", "target_page": "..."}
+//   none         do nothing
+//   enter        activate the selected item
+//   back         up one level
+//   home         jump to the home page
+//   settings     open the WiFi setup portal
+//   scroll       (encoder only) move the selection / change the edit value
+//   scroll_up    move the selection up one item
+//   scroll_down  move the selection down one item
+//   navigate     open target_page
+//   toggle       toggle entity
+//   on / off     turn entity on / off
+//   press        run entity (script, button, scene)
+#define KEY_MATRIX_COUNT 12
+#define KEY_ENC_UP       12
+#define KEY_ENC_DOWN     13
+#define KEY_COUNT        14
+
+struct KeyBinding {
+  char action[14];
+  char entity[64];
+  char target[32];
+};
+KeyBinding keymap[KEY_COUNT];
+
+void setBinding(int idx, const char* action, const char* entity = NULL, const char* target = NULL) {
+  if (idx < 0 || idx >= KEY_COUNT) return;
+  strncpy(keymap[idx].action, action, sizeof(keymap[idx].action) - 1);
+  keymap[idx].action[sizeof(keymap[idx].action) - 1] = '\0';
+  keymap[idx].entity[0] = '\0';
+  keymap[idx].target[0] = '\0';
+  if (entity && entity[0]) {
+    strncpy(keymap[idx].entity, entity, sizeof(keymap[idx].entity) - 1);
+    keymap[idx].entity[sizeof(keymap[idx].entity) - 1] = '\0';
+  }
+  if (target && target[0]) {
+    strncpy(keymap[idx].target, target, sizeof(keymap[idx].target) - 1);
+    keymap[idx].target[sizeof(keymap[idx].target) - 1] = '\0';
+  }
+}
+
+// Index of a key name as used in the JSON map, or -1 if unknown.
+int keyNameToIndex(const char* name) {
+  if (!name || !name[0]) return -1;
+  if (strcmp(name, "enc_up") == 0) return KEY_ENC_UP;
+  if (strcmp(name, "enc_down") == 0) return KEY_ENC_DOWN;
+  if (name[0] == 'r' && name[2] == 'c' && name[3] >= '0' && name[3] <= '3') {
+    int r = name[1] - '0';
+    int c = name[3] - '0';
+    if (r >= 0 && r < 3 && c >= 0 && c < 4) return r * 4 + c;
+  }
+  return -1;
+}
+
+bool bindingIs(const KeyBinding& b, const char* action) {
+  return strcmp(b.action, action) == 0;
+}
+
+void loadDefaultKeymap() {
+  for (int i = 0; i < KEY_COUNT; i++) setBinding(i, "none");
+  setBinding(BTN_HOME_R * 4 + BTN_HOME_C,         "home");
+  setBinding(BTN_BACK_R * 4 + BTN_BACK_C,         "back");
+  setBinding(BTN_SETTINGS_R * 4 + BTN_SETTINGS_C, "settings");
+  setBinding(BTN_ENTER_R * 4 + BTN_ENTER_C,       "enter");
+  setBinding(BTN_ENTER2_R * 4 + BTN_ENTER2_C,     "enter");   // encoder press
+  setBinding(KEY_ENC_UP,   "scroll");
+  setBinding(KEY_ENC_DOWN, "scroll");
+}
+
+// Apply a key map received from Home Assistant. Unknown keys are ignored and
+// any key the message does not mention keeps its current binding, so a partial
+// map can never brick the controls.
+void applyKeymap(const char* json) {
+  JsonDocument doc;
+  if (deserializeJson(doc, json)) { DBG("keymap: parse failed\n"); return; }
+  JsonObject km = doc["keymap"].as<JsonObject>();
+  if (km.isNull()) { DBG("keymap: no keymap object\n"); return; }
+  int applied = 0;
+  for (JsonPair kv : km) {
+    int idx = keyNameToIndex(kv.key().c_str());
+    if (idx < 0) continue;
+    JsonObject o = kv.value().as<JsonObject>();
+    if (o.isNull()) continue;
+    setBinding(idx, o["action"] | "none", o["entity"] | "", o["target_page"] | "");
+    applied++;
+  }
+  DBG("keymap applied: "); DBG(applied); DBG("\n");
+}
+
 bool indicatorStateM = false;
 bool indicatorStateW = false;
 bool indicatorStateTrying = false;
@@ -832,19 +934,26 @@ int findItemIndex(const char* entity) {
   return -1;
 }
 
+// Optimistically set an item on the current page to a known state ("on" /
+// "off"). Does nothing if that entity is not on the page - there is simply
+// nothing to show then, the event still gets published.
+void predictSetState(const char* entity, const char* desired) {
+  int i = findItemIndex(entity);
+  if (i < 0) return;
+  strncpy(currentPage.items[i].state, desired, sizeof(currentPage.items[i].state));
+  actionSeq++;
+  predictionSet(entity, "state", desired);
+  noteAction();
+  requestDraw();
+}
+
 // Optimistically flip a light/switch on the current page and redraw.
 void predictToggle(const char* entity) {
   int i = findItemIndex(entity);
   if (i < 0) return;
-  MenuItem& it = currentPage.items[i];
-  // on  -> off ; anything else (off/unknown/unavailable) -> on
-  const char* newState;
-  if (strcmp(it.state, "on") == 0) { strncpy(it.state, "off", sizeof(it.state)); newState = "off"; }
-  else { strncpy(it.state, "on", sizeof(it.state)); newState = "on"; }
-  actionSeq++;
-  predictionSet(entity, "state", newState);
-  noteAction();
-  requestDraw();
+  // on -> off ; anything else (off/unknown/unavailable) -> on
+  const char* newState = (strcmp(currentPage.items[i].state, "on") == 0) ? "off" : "on";
+  predictSetState(entity, newState);
 }
 
 // Optimistically show the edited value for a number/media_player item,
@@ -904,6 +1013,10 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
 
   if (strcmp(topic, "micropad/pages/all") == 0) {
     handleAllPagesPayload(json);
+    return;
+  }
+  if (strcmp(topic, "micropad/keymap") == 0) {
+    applyKeymap(json);
     return;
   }
   if (strcmp(topic, "micropad/page/current") != 0) return;
@@ -1027,6 +1140,7 @@ bool connectMqtt() {
   if (mqtt.connect("micropad", mqttUser, mqttPass)) {
     mqtt.subscribe("micropad/page/current");
     mqtt.subscribe("micropad/pages/all");
+    mqtt.subscribe("micropad/keymap");
     mqttConnected = true;
     return true;
   }
@@ -1178,35 +1292,81 @@ void activateItem() {
 // the task always draws the NEWEST snapshot when it becomes free, so a fast
 // turn can never build a backlog of stale frames. Any latency here would be
 // felt directly on every step, so there is none.
+// Move the selection (or the value being edited) - this is what the encoder
+// does by default and what the "scroll_up"/"scroll_down" actions reuse.
+void applyScroll(int delta) {
+  if (inEditMode && editItemIndex >= 0) {
+    MenuItem& it = currentPage.items[editItemIndex];
+    editValue += delta * it.step;
+    if (editValue < it.minVal) editValue = it.minVal;
+    if (editValue > it.maxVal) editValue = it.maxVal;
+    requestDraw();
+  } else {
+    int old = currentPage.selected;
+    currentPage.selected += delta;
+    if (currentPage.selected < 0) currentPage.selected = 0;
+    if (currentPage.selected >= currentPage.itemCount) currentPage.selected = currentPage.itemCount - 1;
+    if (currentPage.selected != old && currentPage.itemCount > 0) requestDraw();
+  }
+}
+
+// Run whatever a key is bound to. Every action either changes the display
+// locally (and predicts the new state) or publishes an MQTT event that the
+// Home Assistant automation turns into a service call.
+void executeBinding(const KeyBinding& b, int step) {
+  if (b.action[0] == '\0' || bindingIs(b, "none")) return;
+
+  if (bindingIs(b, "enter"))         { activateItem(); return; }
+  if (bindingIs(b, "back"))          { goBack(); return; }
+  if (bindingIs(b, "home"))          { goHome(); return; }
+  if (bindingIs(b, "settings"))      { startWifiPortal(); return; }
+  if (bindingIs(b, "scroll"))        { applyScroll(step); return; }
+  if (bindingIs(b, "scroll_up"))     { applyScroll(1); return; }
+  if (bindingIs(b, "scroll_down"))   { applyScroll(-1); return; }
+
+  if (bindingIs(b, "navigate")) {
+    if (b.target[0]) { openLoading(b.target); publishEvent("navigate", NULL, -9999, b.target); }
+    return;
+  }
+  if (!b.entity[0]) return;
+  if (bindingIs(b, "toggle")) { predictToggle(b.entity);        publishEvent("toggle", b.entity, -9999, NULL); return; }
+  if (bindingIs(b, "on"))     { predictSetState(b.entity, "on");  publishEvent("on",  b.entity, -9999, NULL); return; }
+  if (bindingIs(b, "off"))    { predictSetState(b.entity, "off"); publishEvent("off", b.entity, -9999, NULL); return; }
+  if (bindingIs(b, "press"))  { publishEvent("press", b.entity, -9999, NULL); return; }
+}
+
 void handleInput() {
   int delta = encoderTicks - lastEncoderTicks;
   lastEncoderTicks = encoderTicks;
 
   if (delta != 0) {
     lastInputMs = millis();
-    if (inEditMode && editItemIndex >= 0) {
-      MenuItem& it = currentPage.items[editItemIndex];
-      editValue += delta * it.step;
-      if (editValue < it.minVal) editValue = it.minVal;
-      if (editValue > it.maxVal) editValue = it.maxVal;
-      requestDraw();
+    const KeyBinding& b = (delta > 0) ? keymap[KEY_ENC_UP] : keymap[KEY_ENC_DOWN];
+    if (bindingIs(b, "scroll") || b.action[0] == '\0') {
+      // Default: move the selection by the full turn delta, so fast turning
+      // still scrolls fast.
+      applyScroll(delta);
     } else {
-      int old = currentPage.selected;
-      currentPage.selected += delta;
-      if (currentPage.selected < 0) currentPage.selected = 0;
-      if (currentPage.selected >= currentPage.itemCount) currentPage.selected = currentPage.itemCount - 1;
-      if (currentPage.selected != old && currentPage.itemCount > 0) requestDraw();
+      // Bound to a discrete action (volume, toggle, ...): fire once per step,
+      // capped so a fast flick cannot flood the event queue.
+      int steps = (delta > 0) ? delta : -delta;
+      if (steps > 4) steps = 4;
+      int sign = (delta > 0) ? 1 : -1;
+      for (int k = 0; k < steps; k++) executeBinding(b, sign);
     }
   }
 
-  if (rising(BTN_HOME_R, BTN_HOME_C)) { lastInputMs = millis(); goHome(); }
-  if (rising(BTN_BACK_R, BTN_BACK_C)) { lastInputMs = millis(); goBack(); }
-  if (rising(BTN_SETTINGS_R, BTN_SETTINGS_C)) { lastInputMs = millis(); startWifiPortal(); }
-  // Both ENTER keys are the same physical action: pressing either one (or
-  // both simultaneously) must produce exactly one activation. The old
-  // else-if fired only the first and could miss taps on the second key.
-  bool enterPressed = rising(BTN_ENTER_R, BTN_ENTER_C) || rising(BTN_ENTER2_R, BTN_ENTER2_C);
-  if (enterPressed) { lastInputMs = millis(); activateItem(); }
+  // Every matrix key now runs whatever Home Assistant bound to it. There are
+  // no hard-wired ENTER/BACK/HOME keys any more - the defaults just happen to
+  // reproduce the classic layout.
+  for (int r = 0; r < 3; r++) {
+    for (int c = 0; c < 4; c++) {
+      if (rising(r, c)) {
+        lastInputMs = millis();
+        executeBinding(keymap[r * 4 + c], 1);
+      }
+    }
+  }
 }
 
 // -----------------------------------------------------------------------------
@@ -1243,6 +1403,9 @@ void setup() {
   esp_task_wdt_add(NULL);
 
   prefs.begin("micropad", false);
+
+  // Classic layout until Home Assistant sends its own map.
+  loadDefaultKeymap();
 
   // Boot render task on core 0: it does all e-paper refreshes from now on.
   // The main loop on core 1 keeps scanning input the whole time -> buttons
@@ -1341,6 +1504,10 @@ void loop() {
           if (connectMqtt()) {
             DBG("MQTT connected\n");
             publishEvent("home", NULL, -9999, NULL);
+            // Ask for the key map as well. If the automation publishes it
+            // retained, the subscription already delivered it - requesting it
+            // too costs one tiny message and also covers a non-retained setup.
+            publishEvent("keymap", NULL, -9999, NULL);
             if (!didFetchAllPages) {
               // Once per boot: ask the server for every page it knows about,
               // so navigating later can show cached content instantly instead

@@ -7,6 +7,11 @@ const state = {
   itemTypes: [],
   entities: {},
   selectedPage: null,
+  keymap: {},
+  keymapKeys: [],
+  keyActions: [],
+  keymapDefaults: {},
+  view: "pages",          // "pages" | "keys"
 };
 
 const icons = {
@@ -41,8 +46,12 @@ async function init(){
     state.pages = data.pages || [];
     state.settings = data.settings || {};
     state.entities = buildEntities(data.entities || []);
+    state.keymap = data.keymap || {};
     const meta = await api("/api/meta");
     state.itemTypes = meta.item_types || [];
+    state.keymapKeys = meta.keymap_keys || [];
+    state.keyActions = meta.key_actions || [];
+    state.keymapDefaults = meta.keymap_defaults || {};
     populateSettings();
     renderAll();
   } catch(e){ toast("Kann Config nicht laden: "+e.message, "error"); }
@@ -101,9 +110,25 @@ async function persistPages(){
 // ---------------- Render ----------------
 function renderAll(){
   renderPageList();
-  renderEditor();
+  renderKeymap();
+  applyView();
   updateConnDot();
 }
+
+// The main column either shows the page editor or the key map editor.
+function applyView(){
+  const keys = state.view === "keys";
+  $("keymap-view").classList.toggle("hidden", !keys);
+  if (keys) {
+    $("editor").classList.add("hidden");
+    $("empty-state").classList.add("hidden");
+  } else {
+    renderEditor();          // restores empty-state / editor visibility
+  }
+}
+
+function showKeys(){ state.view = "keys"; renderAll(); }
+function showPages(){ state.view = "pages"; renderAll(); }
 function selectPage(idx){
   state.selectedPage = idx;
   renderAll();
@@ -418,7 +443,7 @@ function entityCount(){ return Object.keys(state.entities).length; }
 async function generate(){
   if(!state.pages.length){ toast("Keine Seiten definiert","error"); return; }
   try {
-    const r = await api("/api/generate","POST",{pages:state.pages});
+    const r = await api("/api/generate","POST",{pages:state.pages, keymap:currentKeymap()});
     if(!r.ok){ toast(r.errors.join("\n"),"error"); return; }
     $("gen-output").textContent = r.yaml_automations;
     $("gen-overlay").classList.remove("hidden");
@@ -429,7 +454,7 @@ async function upload(){
   if(!state.pages.length){ toast("Keine Seiten definiert","error"); return; }
   if(!confirm("Config zu Home Assistant hochladen und automatisch neu laden?"))return;
   try {
-    const r = await api("/api/upload/api","POST",{pages:state.pages});
+    const r = await api("/api/upload/api","POST",{pages:state.pages, keymap:currentKeymap()});
     toast(r.message||"Hochgeladen","success");
   } catch(e){ toast(e.message,"error"); }
 }
@@ -458,6 +483,101 @@ async function loadCurrentPage(){
   }
 }
 
+// ---------------- Key map editor ----------------
+// Which actions need an extra field.
+const keyNeedsEntity = new Set(["toggle","on","off","press"]);
+const keyNeedsPage   = new Set(["navigate"]);
+
+const keyActionLabels = {
+  none:"— nichts —", enter:"Aktivieren (Item)", back:"Zurück", home:"Home",
+  settings:"WLAN-Einrichtung", scroll:"Scrollen (Encoder)", scroll_up:"Auswahl hoch",
+  scroll_down:"Auswahl runter", navigate:"Seite öffnen", toggle:"Umschalten",
+  on:"Einschalten", off:"Ausschalten", press:"Skript/Button/Szene starten",
+};
+function actionLabel(a){ return keyActionLabels[a] || a; }
+
+function pageOptions(sel){
+  const out = ['<option value="">(keine)</option>'];
+  state.pages.forEach(p=>{
+    out.push(`<option value="${esc(p.id)}"${p.id===sel?" selected":""}>${esc(p.title||p.id)}</option>`);
+  });
+  return out.join("");
+}
+
+function renderKeymap(){
+  const list = $("keymap-list");
+  if(!list) return;
+  list.innerHTML = (state.keymapKeys||[]).map(k=>{
+    const b = (state.keymap||{})[k.id] || {action:"none"};
+    const act = b.action || "none";
+    const opts = (state.keyActions||["none"]).map(a=>
+      `<option value="${a}"${a===act?" selected":""}>${esc(actionLabel(a))}</option>`).join("");
+    const showEnt = keyNeedsEntity.has(act), showPage = keyNeedsPage.has(act);
+    return `<div class="keymap-row" data-key="${esc(k.id)}">
+      <div class="keymap-key">${esc(k.label)}</div>
+      <select class="keymap-action">${opts}</select>
+      <input class="keymap-entity${showEnt?"":" hidden"}" list="keymap-entities"
+             value="${esc(b.entity||"")}" placeholder="Entität, z. B. switch.steckdose">
+      <select class="keymap-target${showPage?"":" hidden"}">${pageOptions(b.target_page)}</select>
+    </div>`;
+  }).join("");
+
+  list.querySelectorAll(".keymap-row").forEach(row=>{
+    const sel = row.querySelector(".keymap-action");
+    const ent = row.querySelector(".keymap-entity");
+    const tgt = row.querySelector(".keymap-target");
+    sel.addEventListener("change", ()=>{
+      ent.classList.toggle("hidden", !keyNeedsEntity.has(sel.value));
+      tgt.classList.toggle("hidden", !keyNeedsPage.has(sel.value));
+      saveKeymap();
+    });
+    ent.addEventListener("change", saveKeymap);
+    ent.addEventListener("blur", saveKeymap);
+    tgt.addEventListener("change", saveKeymap);
+  });
+
+  // Offer the known entities as suggestions (the same list the item editor
+  // uses); a plain free-text field would mean typing entity ids by hand.
+  const dl = $("keymap-entities");
+  if(dl){
+    dl.innerHTML = Object.values(state.entities||{}).slice(0,600).map(e=>
+      `<option value="${esc(e.entity_id)}">${esc(e.name||"")}</option>`).join("");
+  }
+}
+
+function collectKeymap(){
+  const km = {};
+  document.querySelectorAll(".keymap-row").forEach(row=>{
+    const action = row.querySelector(".keymap-action").value;
+    const ent = row.querySelector(".keymap-entity").value.trim();
+    const tgt = row.querySelector(".keymap-target").value;
+    const entry = {action};
+    if(keyNeedsEntity.has(action) && ent) entry.entity = ent;
+    if(keyNeedsPage.has(action) && tgt) entry.target_page = tgt;
+    km[row.dataset.key] = entry;
+  });
+  return km;
+}
+
+// Read the map straight from the DOM when the editor is on screen, otherwise
+// fall back to the stored copy (e.g. before it was ever opened).
+function currentKeymap(){
+  return document.querySelector(".keymap-row") ? collectKeymap() : (state.keymap||{});
+}
+
+async function saveKeymap(){
+  state.keymap = collectKeymap();
+  try { await api("/api/config","POST",{keymap:state.keymap}); }
+  catch(e){ toast("Tastenbelegung speichern fehlgeschlagen: "+e.message,"error"); }
+}
+
+function resetKeymap(){
+  state.keymap = JSON.parse(JSON.stringify(state.keymapDefaults||{}));
+  renderKeymap();
+  saveKeymap();
+  toast("Standardbelegung wiederhergestellt","info");
+}
+
 // ---------------- Wire up ----------------
 document.addEventListener("DOMContentLoaded", ()=>{
   init();
@@ -476,6 +596,10 @@ document.addEventListener("DOMContentLoaded", ()=>{
   $("btn-download").onclick = download;
   $("btn-load-current").onclick = loadCurrentPage;
   $("btn-add-item").onclick = ()=>openItemModal(null);
+
+  $("btn-keys").onclick = showKeys;
+  $("btn-keymap-back").onclick = showPages;
+  $("btn-keymap-defaults").onclick = resetKeymap;
 
   $("f-id").addEventListener("change", savePageMeta);
   $("f-title").addEventListener("change", savePageMeta);

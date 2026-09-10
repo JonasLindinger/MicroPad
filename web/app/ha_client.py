@@ -94,6 +94,14 @@ class HAClient:
             "qos": 1,
         })
 
+    def publish_keymap(self, keymap_payload, retain=True):
+        return self.request("/api/services/mqtt/publish", method="POST", payload={
+            "topic": "micropad/keymap",
+            "payload": keymap_payload,
+            "retain": retain,
+            "qos": 1,
+        })
+
     def push_mqtt_sensor(self):
         # MQTT Last-Action sensor used by "Load current page from HA".
         payload = {

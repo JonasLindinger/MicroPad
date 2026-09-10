@@ -6,7 +6,7 @@
 <title>MicroPad Config</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/static/style.css">
+<link rel="stylesheet" href="/static/style.css?v=2">
 </head>
 <body>
 <div id="app">
@@ -47,6 +47,7 @@
       <div class="top-actions">
         <button id="btn-load-current" class="btn btn-ghost">Aktuelle Seite laden</button>
         <button id="btn-download" class="btn btn-ghost">Download</button>
+        <button id="btn-keys" class="btn btn-ghost">Tastenbelegung</button>
         <button id="btn-generate" class="btn btn-primary">Generieren</button>
         <button id="btn-upload" class="btn btn-accent">Zu HA hochladen ▸</button>
       </div>
@@ -92,6 +93,27 @@
         </div>
         <div id="item-list" class="item-list"></div>
         <div id="item-empty" class="item-empty muted">Noch keine Items. Klicke „+ Item“.</div>
+      </div>
+    </section>
+
+    <!-- Key map editor -->
+    <section id="keymap-view" class="editor hidden">
+      <div class="card">
+        <div class="card-head">
+          <h2>Tastenbelegung</h2>
+          <div class="top-actions">
+            <button id="btn-keymap-defaults" class="btn btn-ghost btn-sm">Standard wiederherstellen</button>
+            <button id="btn-keymap-back" class="btn btn-primary btn-sm">Zurück zu den Seiten</button>
+          </div>
+        </div>
+        <p class="muted" style="margin:0 0 14px">
+          Jede Taste ist frei belegbar – es gibt keine fest verdrahtete Enter-, Back- oder Home-Taste mehr.
+          Auch die Drehrichtung des Encoders lässt sich ändern (z.&nbsp;B. auf eine Aktion statt Scrollen).
+          Die Belegung wird mit der Konfiguration zu Home Assistant hochgeladen; das Pad übernimmt sie ohne
+          Neustart und ohne Neu-Flashen.
+        </p>
+        <div id="keymap-list" class="keymap-list"></div>
+        <datalist id="keymap-entities"></datalist>
       </div>
     </section>
   </main>
@@ -168,6 +190,6 @@
   </div>
 </div>
 
-<script src="/static/app.js"></script>
+<script src="/static/app.js?v=2"></script>
 </body>
 </html>

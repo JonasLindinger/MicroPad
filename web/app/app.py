@@ -24,7 +24,9 @@ from flask import Flask, jsonify, request, send_from_directory
 from core import (build_ha_automation_config, build_automation_dict,
                   generate_page_payload, generate_all_pages_payload,
                   generate_automation_yaml, validate_pages,
-                  parse_automation_to_pages, ITEM_TYPES)
+                  parse_automation_to_pages, ITEM_TYPES,
+                  generate_keymap_payload, normalize_keymap,
+                  KEYMAP_KEYS, KEY_ACTION_TYPES, DEFAULT_KEYMAP)
 from ha_client import HAClient, SSHClient, HAClientError
 
 # ---------------------------------------------------------------------------
@@ -35,10 +37,10 @@ STATIC_DIR = BASE_DIR / "static"
 DATA_FILE = Path(os.environ.get("MICROPAD_DATA_FILE", BASE_DIR / "config.json"))
 
 DEFAULT_SETTINGS = {
-    "ha_url": "http://192.168.0.100:8123",
+    "ha_url": "http://192.168.178.17:8123",
     "ha_token": "",
-    "mqtt_broker": "192.168.0.100",
-    "ssh_host": "192.168.0.100",
+    "mqtt_broker": "192.168.178.17",
+    "ssh_host": "192.168.178.17",
     "ssh_user": "root",
     "ssh_key": "/root/.ssh/id_ed25519",
     "remote_path": "/srv/homeassistant/automations.yaml",
@@ -56,14 +58,17 @@ def load_data():
             return json.loads(DATA_FILE.read_text(encoding="utf-8"))
         except Exception:
             pass
-    return {"settings": dict(DEFAULT_SETTINGS), "pages": [], "entities": []}
+    return {"settings": dict(DEFAULT_SETTINGS), "pages": [],
+            "entities": [], "keymap": {}}
 
 
-def save_data(settings, pages, entities=None):
+def save_data(settings, pages, entities=None, keymap=None):
     DATA_FILE.parent.mkdir(parents=True, exist_ok=True)
     data = {"settings": settings, "pages": pages}
     if entities is not None:
         data["entities"] = entities
+    if keymap is not None:
+        data["keymap"] = keymap
     DATA_FILE.write_text(json.dumps(data, indent=2, ensure_ascii=False),
                          encoding="utf-8")
     try:
@@ -86,7 +91,10 @@ def index():
 
 @app.get("/api/meta")
 def meta():
-    return jsonify({"item_types": ITEM_TYPES})
+    return jsonify({"item_types": ITEM_TYPES,
+                    "keymap_keys": KEYMAP_KEYS,
+                    "key_actions": KEY_ACTION_TYPES,
+                    "keymap_defaults": DEFAULT_KEYMAP})
 
 
 @app.get("/api/config")
@@ -105,7 +113,10 @@ def post_config():
         data["pages"] = body["pages"]
     if "entities" in body:
         data["entities"] = body["entities"]
-    save_data(data["settings"], data["pages"], data.get("entities"))
+    if "keymap" in body:
+        data["keymap"] = body["keymap"]
+    save_data(data["settings"], data["pages"], data.get("entities"),
+              data.get("keymap"))
     return jsonify({"ok": True})
 
 
@@ -130,7 +141,8 @@ def ha_entities():
     try:
         entities = c.fetch_entities()
         data["entities"] = entities
-        save_data(data["settings"], data.get("pages", []), entities)
+        save_data(data["settings"], data.get("pages", []), entities,
+                  data.get("keymap"))
         return jsonify({"ok": True, "entities": entities, "count": len(entities)})
     except HAClientError as e:
         return jsonify({"ok": False, "error": str(e)}), 400
@@ -148,18 +160,20 @@ def _validate():
 def generate():
     body = request.get_json(silent=True) or {}
     pages = body.get("pages", [])
+    keymap = body.get("keymap")
     errors, warnings = validate_pages(pages)
     if errors:
         return jsonify({"ok": False, "errors": errors, "warnings": warnings}), 400
-    automation = build_automation_dict(pages)
+    automation = build_automation_dict(pages, keymap)
     automation["id"] = "micropad_controller"
-    api_config = build_ha_automation_config(pages)
+    api_config = build_ha_automation_config(pages, keymap)
     home = next((p for p in pages if p["id"] == "home"), pages[0] if pages else None)
     return jsonify({
         "ok": True,
         "errors": errors,
         "warnings": warnings,
-        "yaml_automations": generate_automation_yaml(pages),
+        "yaml_automations": generate_automation_yaml(pages, keymap),
+        "keymap_payload": generate_keymap_payload(keymap),
         "api_config": api_config,
         "all_pages_payload": generate_all_pages_payload(pages) if pages else "",
         "home_page_payload": generate_page_payload(home) if home else "",
@@ -172,13 +186,14 @@ def upload_api():
     settings = data["settings"]
     body = request.get_json(silent=True) or {}
     pages = body.get("pages", [])
+    keymap = body.get("keymap")
     errors, _warnings = validate_pages(pages)
     if errors:
         return jsonify({"ok": False, "error": "Config invalid:\n" + "\n".join(errors)}), 400
 
     c = _client(settings)
     try:
-        config = build_ha_automation_config(pages)
+        config = build_ha_automation_config(pages, keymap)
         c.put_automation_config(config)
         c.reload_automations()
         try:
@@ -188,9 +203,15 @@ def upload_api():
         home = next((p for p in pages if p["id"] == "home"), pages[0] if pages else None)
         if home:
             c.publish_page(generate_page_payload(home))
+        # Push the key map straight away (retained), so re-bound keys work
+        # without waiting for the pad's next connect.
+        try:
+            c.publish_keymap(generate_keymap_payload(keymap))
+        except HAClientError:
+            pass
         return jsonify({"ok": True,
                         "message": "Uploaded via Config API, reloaded automations, "
-                                   "and published the home page to the pad."})
+                                   "published the home page and the key map to the pad."})
     except HAClientError as e:
         return jsonify({"ok": False, "error": str(e)}), 400
 
@@ -201,6 +222,7 @@ def upload_ssh():
     settings = data["settings"]
     body = request.get_json(silent=True) or {}
     pages = body.get("pages", [])
+    keymap = body.get("keymap")
     errors, _warnings = validate_pages(pages)
     if errors:
         return jsonify({"ok": False, "error": "Config invalid:\n" + "\n".join(errors)}), 400
@@ -214,7 +236,7 @@ def upload_ssh():
         ssh = SSHClient(settings.get("ssh_host"), settings.get("ssh_user"),
                         settings.get("ssh_key"), remote_path)
         existing = ssh.read_remote()
-        new_automation = build_automation_dict(pages)
+        new_automation = build_automation_dict(pages, keymap)
         new_automation["id"] = "micropad_controller"
         merged = merge_automation_yaml(existing, new_automation, "micropad_controller")
         tmp = Path(tempfile.mkstemp(suffix=".yaml", prefix="micropad_")[1])
@@ -231,6 +253,10 @@ def upload_ssh():
                 home = next((p for p in pages if p["id"] == "home"), pages[0] if pages else None)
                 if home:
                     _client(settings).publish_page(generate_page_payload(home))
+                try:
+                    _client(settings).publish_keymap(generate_keymap_payload(keymap))
+                except HAClientError:
+                    pass
                 message = ("Merged + uploaded via SSH, reloaded automations via API, "
                            "published home page.")
             except HAClientError:
@@ -337,12 +363,9 @@ def merge_automation_yaml(existing_text, new_automation, automation_id):
     return yaml.dump(merged, sort_keys=False, allow_unicode=True, width=1000)
 
 
-def generate_automation_yaml(pages):
-    import yaml
-    yaml.add_representer(str, _yaml_str_representer)
-    automation = build_automation_dict(pages)
-    automation["id"] = "micropad_controller"
-    return yaml.dump([automation], sort_keys=False, allow_unicode=True, width=1000)
+# NOTE: do NOT define a local generate_automation_yaml() here. A leftover copy
+# used to shadow the one imported from core (same name, older signature), so
+# the keymap argument never reached the real implementation.
 
 
 # ---------------------------------------------------------------------------

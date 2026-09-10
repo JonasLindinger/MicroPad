@@ -168,3 +168,19 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
 .gen-body pre{color:#e2e8f0;font-size:12px;padding:18px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;word-break:break-word}
 
 @media (min-width:901px){ .drawer{max-width:380px} }
+
+/* ---------------- Key map editor ---------------- */
+.keymap-list{display:flex;flex-direction:column;gap:8px}
+.keymap-row{
+  display:grid;grid-template-columns:150px 190px 1fr 1fr;gap:10px;align-items:center;
+  padding:8px 10px;border:1px solid var(--border,#e5e5e5);border-radius:10px;
+}
+.keymap-key{font-weight:600;font-size:13px;letter-spacing:.01em}
+.keymap-row select,.keymap-row input{
+  width:100%;padding:8px 10px;border-radius:8px;border:1px solid var(--border,#ddd);
+  background:transparent;font-size:13px;font-family:inherit;color:inherit;
+}
+.keymap-row .hidden{display:none}
+@media (max-width:900px){
+  .keymap-row{grid-template-columns:1fr 1fr}
+}
