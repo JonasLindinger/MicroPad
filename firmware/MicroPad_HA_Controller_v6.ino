@@ -1964,11 +1964,12 @@ void loop() {
     }
   } else if (isPowered()) {
     // Powered path: keep the radio ready (modem sleep OFF so MQTT latency
-    // is bounded) and refresh the indicator so the ⚡ glyph appears the
-    // instant VBUS rises. requestDraw() is a coalescing flag setter — safe
-    // to call every loop pass.
+    // is bounded). Do NOT call requestDraw() here - this branch runs on
+    // EVERY loop pass while USB power is present, and requestDraw() queues
+    // a panel refresh unconditionally: the display would refresh end-to-end
+    // forever (grey haze, never settles). The ⚡ indicator is handled by
+    // the debounced power poll instead, and everything else is event-driven.
     WiFi.setSleep(false);
-    requestDraw();
   }
 
   delay(2);
