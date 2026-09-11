@@ -693,6 +693,18 @@ void enterLightSleep() {
   unsigned long t = millis();
   while (anyKeyPressed() && millis() - t < 2000) delay(10);
 
+  // [Wake-storm fix] An idle that started while MQTT was down or mid page
+  // transition leaves stale pending events and a stale loading state in RAM.
+  // On wake these are flushed against the out-of-date page state and fire a
+  // burst of bogus multi-level navigations (e.g. navigate -> steckdosen while
+  // page_id still says home) - the "skips a whole page" symptom. There is
+  // nothing worth preserving across the idle: on reconnect the pad re-asks
+  // for home + keymap and the server is authoritative again. Drop it all so
+  // the wake starts clean.
+  pendHead = pendTail = pendCount = 0;
+  loadingPage = false;
+  pageRequestSentMs = 0;
+
   detachInputInterrupts();
 
   // The render task blocks on a notification when idle, but suspend it for
