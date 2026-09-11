@@ -101,6 +101,7 @@
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
 #include <esp_task_wdt.h>
+#include <esp_timer.h>
 // USB-host detection (usbHostAttached()): TinyUSB's tud_cdc_n_connected()
 // only exists in "USB Mode: USB-OTG (TinyUSB)" builds. With "Hardware CDC
 // and JTAG" (ARDUINO_USB_MODE=1) there is no TinyUSB stack, so the include
@@ -478,6 +479,16 @@ const unsigned long WDT_TIMEOUT_MS     = 20000;
 const unsigned long DRAW_GATE_MS       = 100;
 const unsigned long LOADING_RETRY_MS   = 4000;
 
+// [SCROLL-HOLD] Immediately after entering a new page the rotary encoder can
+// emit a stray +1 tick (mechanical coupling between the push-switch and the
+// detent shaft, or a spurious input edge right after wake). Applied blindly,
+// that ghost tick lands on the fresh page and makes every navigation look
+// like it "jumped one item further down". Suppress scroll input for a short
+// window after every page change so each page is entered cleanly on its
+// first row. Enter/back/home/navigate/press bindings are unaffected.
+const unsigned long PAGE_SCROLL_HOLD_MS = 250;
+unsigned long suppressScrollUntilMs = 0;
+
 // Forward declarations
 void parsePageJson(const char* json);
 void requestDraw();
@@ -524,6 +535,7 @@ bool putCache(const char* id, const char* json) {
 void openLoading(const char* id) {
   inEditMode = false;
   editItemIndex = -1;
+  suppressScrollUntilMs = millis() + PAGE_SCROLL_HOLD_MS;
 
   int idx = findCachedIndex(id);
   if (idx >= 0) {
@@ -718,6 +730,7 @@ void enterLightSleep() {
   gpio_wakeup_enable((gpio_num_t)ENC_B, encB_level);
 
   DBG("light sleep\n");
+  int64_t sleepStartUs = esp_timer_get_time();
   esp_light_sleep_start();
 
   esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
@@ -739,7 +752,20 @@ void enterLightSleep() {
   // The broker drops a client that stops sending keepalives while we sleep,
   // so re-check the session right away. WiFi is still up, so a reconnect
   // costs ~100 ms instead of seconds.
-  if (!mqtt.connected()) mqttConnected = false;
+  //
+  // For a sleep that outlived the MQTT keepalive (30 s; the 60 s idle
+  // timeout makes that essentially every sleep) the broker has already closed
+  // the session, but the local TCP socket can still report "connected".
+  // Trusting that stale socket makes the first publish after wake stall on
+  // the ~1 s socket timeout and THEN reconnect - the multi-second "first key
+  // press does nothing" lag. Drop the session outright: the next loop pass
+  // reconnects instantly (WiFi is still associated) and the press that woke
+  // us goes out right away instead of only after a dead-socket timeout. For
+  // short sleeps (< keepalive) the session is still valid, so leave it alone.
+  if (esp_timer_get_time() - sleepStartUs >= 30 * 1000000) {
+    if (mqtt.connected()) mqtt.disconnect();
+    mqttConnected = false;
+  }
   nextMqttAttemptMs = 0;   // allow an immediate (throttled) reconnect attempt
 
   // Wake-loop brake: bouncy keys, floating encoder pins or USB activity can
@@ -1044,7 +1070,7 @@ void applyPageUpdateDoc(JsonDocument& doc, bool doDraw) {
 
   int oldSel = currentPage.selected;
   int oldScroll = currentPage.scrollOffset;
-  if (!samePage) { currentPage.selected = 0; currentPage.scrollOffset = 0; }
+  if (!samePage) { currentPage.selected = 0; currentPage.scrollOffset = 0; suppressScrollUntilMs = millis() + PAGE_SCROLL_HOLD_MS; }
 
   JsonArray arr = doc["items"].as<JsonArray>();
   int idx = 0;
@@ -1640,13 +1666,18 @@ void handleInput() {
   int delta = encoderTicks - lastEncoderTicks;
   lastEncoderTicks = encoderTicks;
 
+  // [SCROLL-HOLD] Suppress scroll input inside the post-navigation hold
+  // window (see PAGE_SCROLL_HOLD_MS). Discrete and navigation bindings
+  // (enter/back/home/navigate/toggle/...) are unaffected.
+  bool scrollOpen = (int32_t)(millis() - suppressScrollUntilMs) >= 0;
+
   if (delta != 0) {
     lastInputMs = millis();
     const KeyBinding& b = (delta > 0) ? keymap[KEY_ENC_UP] : keymap[KEY_ENC_DOWN];
     if (bindingIs(b, "scroll") || b.action[0] == '\0') {
       // Default: move the selection by the full turn delta, so fast turning
-      // still scrolls fast.
-      applyScroll(delta);
+      // still scrolls fast. Ignore it inside the hold window (ghost tick).
+      if (scrollOpen) applyScroll(delta);
     } else {
       // Bound to a discrete action (volume, toggle, ...): fire once per step,
       // capped so a fast flick cannot flood the event queue.
@@ -1664,7 +1695,11 @@ void handleInput() {
     for (int c = 0; c < 4; c++) {
       if (rising(r, c)) {
         lastInputMs = millis();
-        executeBinding(keymap[r * 4 + c], 1);
+        const KeyBinding& kb = keymap[r * 4 + c];
+        // Ignore a scroll_up/scroll_down key that fires inside the hold
+        // window (post-wake / post-navigation stray edge).
+        if (!scrollOpen && (bindingIs(kb, "scroll_up") || bindingIs(kb, "scroll_down"))) continue;
+        executeBinding(kb, 1);
       }
     }
   }
