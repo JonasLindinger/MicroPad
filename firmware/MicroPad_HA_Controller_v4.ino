@@ -26,7 +26,16 @@
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
 #include <esp_task_wdt.h>
-#include "tusb.h"  // tud_cdc_n_connected() -> USB-Host (PC) erkannt
+// USB-host detection (usbHostAttached()): TinyUSB's tud_cdc_n_connected()
+// only exists in "USB Mode: USB-OTG (TinyUSB)" builds. With "Hardware CDC
+// and JTAG" (ARDUINO_USB_MODE=1) there is no TinyUSB stack, so the include
+// is conditional and HWCDCSerial reports the host state instead.
+#if defined(ARDUINO_USB_MODE) && ARDUINO_USB_MODE
+// Hardware USB-Serial-JTAG build: no TinyUSB here, HWCDCSerial detects the host.
+#else
+// TinyUSB build: tud_cdc_n_connected() detects the host.
+#include "tusb.h"
+#endif
 #include "USB.h"
 // GxEPD2 prints a diagnostic line ("_Update_Part : 449998") on EVERY panel
 // refresh when init() is given a non-zero diag bitrate. On this board Serial
@@ -526,11 +535,19 @@ void prepareInputsForSleep() {
 // lines reports false and the pad keeps its normal sleep behaviour.
 bool usbHostAttached() {
 #if ARDUINO_USB_CDC_ON_BOOT
-  // A real USB host (PC) has attached the native USB-CDC device: TinyUSB
-  // reports the session, and USBSerial additionally covers "serial monitor
-  // open". A plain phone charger without data lines reports false, so the
-  // normal battery-friendly sleep behaviour stays intact.
+#if defined(ARDUINO_USB_MODE) && ARDUINO_USB_MODE
+  // Hardware USB-Serial-JTAG build: HWCDCSerial is true once a real USB
+  // host opened the CDC link (usb_serial_jtag_is_connected). A plain phone
+  // charger without data lines reports false, so the battery-friendly
+  // sleep behaviour stays intact.
+  return (bool)HWCDCSerial;
+#else
+  // TinyUSB build: tud_cdc_n_connected(0) is true when a real USB host has
+  // attached the USB-CDC device; USBSerial additionally covers "serial
+  // monitor open". A plain phone charger without data lines reports false,
+  // so the normal battery-friendly sleep behaviour stays intact.
   return tud_cdc_n_connected(0) || (bool)USBSerial;
+#endif
 #else
   return false;
 #endif
@@ -1031,6 +1048,13 @@ void handleAllPagesPayload(const char* json) {
 }
 
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
+  // PubSubClient reports the STORED length even if it had to truncate the
+  // payload at the buffer limit. Writing payload[length]='\0' with a
+  // saturated buffer would land ONE byte past the heap buffer -> memory
+  // corruption. Cap the write first: anything beyond ~8 KB is a truncated
+  // catalog anyway and can only fail the JSON parse below, never corrupt
+  // RAM. Keep in sync with mqtt.setBufferSize().
+  if (length > 8000) length = 8000;
   payload[length] = '\0';
   const char* json = (const char*)payload;
 
@@ -1156,10 +1180,13 @@ bool connectMqtt() {
   mqtt.setSocketTimeout(1);
   mqtt.setKeepAlive(30);
   // The boot-time "pages/all" answer contains EVERY page and easily exceeds
-  // 2 KB. With too small a buffer PubSubClient silently drops such a message,
-  // the page cache stays empty and every navigation then sits on
-  // "Loading..." - which looks exactly like the pad hanging.
-  mqtt.setBufferSize(4096);
+  // 2 KB (currently ~6 KB with a full menu tree). PubSubClient does NOT drop
+  // an oversized message: it quietly TRUNCATES the payload at the buffer limit
+  // and still calls the callback with the cut-off JSON. The page cache then
+  // never gets a valid update and navigation silently shows stale content
+  // (e.g. a wrong first item on a category page). Buffer must cover the full
+  // catalog: topic+headers eat ~24 B on top of the payload.
+  mqtt.setBufferSize(8192);
   if (mqtt.connect("micropad", mqttUser, mqttPass)) {
     mqtt.subscribe("micropad/page/current");
     mqtt.subscribe("micropad/pages/all");
