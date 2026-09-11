@@ -1630,6 +1630,14 @@ void executeBinding(const KeyBinding& b, int step) {
   if (bindingIs(b, "on"))     { predictSetState(b.entity, "on");  publishEvent("on",  b.entity, -9999, NULL); return; }
   if (bindingIs(b, "off"))    { predictSetState(b.entity, "off"); publishEvent("off", b.entity, -9999, NULL); return; }
   if (bindingIs(b, "press"))  { publishEvent("press", b.entity, -9999, NULL); return; }
+  // Media transport actions (Spotify / media_player entities). These are
+  // passed through verbatim to HA; the automation's choose-arms dispatch them
+  // to media_player.media_play_pause / media_next_track / media_previous_track,
+  // volume_up / volume_down (see docs/ha/micropad_controller_v2_instructions.md).
+  if (bindingIs(b, "volume_up"))    { publishEvent("volume_up",     b.entity, -9999, NULL); return; }
+  if (bindingIs(b, "volume_down"))  { publishEvent("volume_down",   b.entity, -9999, NULL); return; }
+  if (bindingIs(b, "media_next"))   { publishEvent("media_next",    b.entity, -9999, NULL); return; }
+  if (bindingIs(b, "media_prev"))   { publishEvent("media_prev",    b.entity, -9999, NULL); return; }
 }
 
 void handleInput() {
