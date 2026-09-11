@@ -26,7 +26,16 @@
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
 #include <esp_task_wdt.h>
-#include "tusb.h"  // tud_cdc_n_connected() -> USB-Host (PC) erkannt
+// USB-host detection (usbHostAttached()): TinyUSB's tud_cdc_n_connected()
+// only exists in "USB Mode: USB-OTG (TinyUSB)" builds. With "Hardware CDC
+// and JTAG" (ARDUINO_USB_MODE=1) there is no TinyUSB stack, so the include
+// is conditional and HWCDCSerial reports the host state instead.
+#if defined(ARDUINO_USB_MODE) && ARDUINO_USB_MODE
+// Hardware USB-Serial-JTAG build: no TinyUSB here, HWCDCSerial detects the host.
+#else
+// TinyUSB build: tud_cdc_n_connected() detects the host.
+#include "tusb.h"
+#endif
 #include "USB.h"
 // GxEPD2 prints a diagnostic line ("_Update_Part : 449998") on EVERY panel
 // refresh when init() is given a non-zero diag bitrate. On this board Serial
@@ -526,11 +535,19 @@ void prepareInputsForSleep() {
 // lines reports false and the pad keeps its normal sleep behaviour.
 bool usbHostAttached() {
 #if ARDUINO_USB_CDC_ON_BOOT
-  // A real USB host (PC) has attached the native USB-CDC device: TinyUSB
-  // reports the session, and USBSerial additionally covers "serial monitor
-  // open". A plain phone charger without data lines reports false, so the
-  // normal battery-friendly sleep behaviour stays intact.
+#if defined(ARDUINO_USB_MODE) && ARDUINO_USB_MODE
+  // Hardware USB-Serial-JTAG build: HWCDCSerial is true once a real USB
+  // host opened the CDC link (usb_serial_jtag_is_connected). A plain phone
+  // charger without data lines reports false, so the battery-friendly
+  // sleep behaviour stays intact.
+  return (bool)HWCDCSerial;
+#else
+  // TinyUSB build: tud_cdc_n_connected(0) is true when a real USB host has
+  // attached the USB-CDC device; USBSerial additionally covers "serial
+  // monitor open". A plain phone charger without data lines reports false,
+  // so the normal battery-friendly sleep behaviour stays intact.
   return tud_cdc_n_connected(0) || (bool)USBSerial;
+#endif
 #else
   return false;
 #endif
