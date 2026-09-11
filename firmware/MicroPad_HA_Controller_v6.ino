@@ -984,7 +984,12 @@ void drawPage(const RenderSnapshot& R) {
 // already blocks until the previous update finished, so this is only a short
 // safety margin before driving the controller again. Keep it small: every ms
 // here is felt directly as scroll latency.
-const unsigned long MIN_REFRESH_GAP_MS = 120;
+// Panel recovery time between two consecutive refreshes. Tuned as low as
+// we dare: 120 ms made spinning feel laggy (~570 ms per tick), 0 ms latched
+// the SSD1680 (the historical "freeze" bug). 50 ms is the agreed floor -
+// scroll ticks while spinning now run ~500 ms. If ghosting/stuck pixels
+// ever reappear after a long scroll, raise this back to 120 first.
+const unsigned long MIN_REFRESH_GAP_MS = 50;
 unsigned long lastRefreshEndMs = 0;
 
 void requestDraw() {
