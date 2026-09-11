@@ -1031,6 +1031,13 @@ void handleAllPagesPayload(const char* json) {
 }
 
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
+  // PubSubClient reports the STORED length even if it had to truncate the
+  // payload at the buffer limit. Writing payload[length]='\0' with a
+  // saturated buffer would land ONE byte past the heap buffer -> memory
+  // corruption. Cap the write first: anything beyond ~8 KB is a truncated
+  // catalog anyway and can only fail the JSON parse below, never corrupt
+  // RAM. Keep in sync with mqtt.setBufferSize().
+  if (length > 8000) length = 8000;
   payload[length] = '\0';
   const char* json = (const char*)payload;
 
@@ -1156,10 +1163,13 @@ bool connectMqtt() {
   mqtt.setSocketTimeout(1);
   mqtt.setKeepAlive(30);
   // The boot-time "pages/all" answer contains EVERY page and easily exceeds
-  // 2 KB. With too small a buffer PubSubClient silently drops such a message,
-  // the page cache stays empty and every navigation then sits on
-  // "Loading..." - which looks exactly like the pad hanging.
-  mqtt.setBufferSize(4096);
+  // 2 KB (currently ~6 KB with a full menu tree). PubSubClient does NOT drop
+  // an oversized message: it quietly TRUNCATES the payload at the buffer limit
+  // and still calls the callback with the cut-off JSON. The page cache then
+  // never gets a valid update and navigation silently shows stale content
+  // (e.g. a wrong first item on a category page). Buffer must cover the full
+  // catalog: topic+headers eat ~24 B on top of the payload.
+  mqtt.setBufferSize(8192);
   if (mqtt.connect("micropad", mqttUser, mqttPass)) {
     mqtt.subscribe("micropad/page/current");
     mqtt.subscribe("micropad/pages/all");
