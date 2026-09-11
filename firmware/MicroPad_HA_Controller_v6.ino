@@ -769,6 +769,25 @@ void enterLightSleep() {
   }
   nextMqttAttemptMs = 0;   // allow an immediate (throttled) reconnect attempt
 
+  // [Wake-nav fix] The pad wakes carrying the page it had before sleep still
+  // live in currentPage. The first deliberate press is then interpreted
+  // against that STALE page and fires a spurious multi-level navigation
+  // (e.g. navigate -> steckdosen while the user is looking at Home) - the
+  // "skips a page" symptom. Blank currentPage back to an empty home state so
+  // any press during the reconnect settle is harmless (itemCount == 0 ->
+  // activateItem() is a no-op); the reconnect's own "home" request then
+  // repopulates it with the authoritative page. This matches the existing
+  // "every reconnect returns the pad to home" behaviour, just without the
+  // stale-input window.
+  currentPage.selected = 0;
+  currentPage.scrollOffset = 0;
+  currentPage.itemCount = 0;
+  safeCopy(currentPage.id, sizeof(currentPage.id), "home");
+  currentPage.title[0] = '\0';
+  currentPage.parent[0] = '\0';
+  loadingPage = true;
+  pageRequestSentMs = millis();
+
   // Wake-loop brake: bouncy keys, floating encoder pins or USB activity can
   // re-trigger a wake almost immediately. Without this the pad would ping-
   // pong between sleep and wake and look completely dead. Force a minimum
