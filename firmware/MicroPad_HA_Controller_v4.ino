@@ -84,6 +84,13 @@
 //       panel keeps its image forever). On every power edge it calls
 //       requestDraw() so the icon is cleared/applied by the normal render
 //       path.
+// [M-3] Restored Jonas' power-indicator rendering (PR #5 / dc95978): the
+//       v6 drop had reverted it to an else-if chain drawing the U+26A1 bolt
+//       via the FreeMonoBold9pt7b glyph - which does not contain that
+//       codepoint (invisible) and was additionally hidden whenever the
+//       MQTT/WiFi indicator was active. The icon is now a dedicated
+//       white-rect "ring + line" slot at LX=270 that always shows while
+//       USB power is present, independent of the MQTT/WiFi indicator state.
 // =============================================================================
 
 #include <WiFi.h>
@@ -817,9 +824,22 @@ void drawPage(const RenderSnapshot& R) {
     } else if (R.indT) {
       landFillRect(282, 5, 3, 3, GxEPD_WHITE);
       landFillRect(287, 10, 3, 3, GxEPD_WHITE);
-    } else if (R.indP) {
-      // ⚡ lightning bolt, FreeMonoBold9pt7b glyph at the indicator slot
-      stampCentered("\xe2\x9a\xa1", &FreeMonoBold9pt7b, 9, false);
+    }
+
+    // Power-on indicator: own fixed slot, left of the 282..290 status cell.
+    // Drawn as white rects - the old bolt used the FreeMonoBold9pt7b glyph
+    // (U+26A1 is not in that font) NON-inverted on the black bar, so it was
+    // invisible AND hidden by the MQTT/WiFi priority chain above. Rect-based
+    // it always shows whenever USB power is present (classic "power" icon:
+    // ring + vertical line). Restored from GitHub main (PR #5 / dc95978) -
+    // the v6 drop was based on an older tree and had regressed this.
+    if (R.indP) {
+      const int LX = 270, LY = 4;
+      landFillRect(LX + 1, LY + 0, 6, 1, GxEPD_WHITE); // ring top
+      landFillRect(LX + 1, LY + 7, 6, 1, GxEPD_WHITE); // ring bottom
+      landFillRect(LX + 0, LY + 1, 1, 6, GxEPD_WHITE); // ring left
+      landFillRect(LX + 7, LY + 1, 1, 6, GxEPD_WHITE); // ring right
+      landFillRect(LX + 3, LY + 2, 2, 5, GxEPD_WHITE); // power line (gap at top)
     }
 
     const int ITEM_H = 24;
