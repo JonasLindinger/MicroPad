@@ -984,12 +984,11 @@ void drawPage(const RenderSnapshot& R) {
 // already blocks until the previous update finished, so this is only a short
 // safety margin before driving the controller again. Keep it small: every ms
 // here is felt directly as scroll latency.
-// Panel recovery time between two consecutive refreshes. Tuned as low as
-// we dare: 120 ms made spinning feel laggy (~570 ms per tick), 0 ms latched
-// the SSD1680 (the historical "freeze" bug). 50 ms is the agreed floor -
-// scroll ticks while spinning now run ~500 ms. If ghosting/stuck pixels
-// ever reappear after a long scroll, raise this back to 120 first.
-const unsigned long MIN_REFRESH_GAP_MS = 50;
+// Panel recovery time between two consecutive refreshes. 120 ms is the
+// proven safe value - the test at 50 ms ghosted the whole panel (grey
+// haze + endless refresh feel) because the SSD1680 was being hammered.
+// Do not go below ~100 ms without a hardware latch test.
+const unsigned long MIN_REFRESH_GAP_MS = 120;
 unsigned long lastRefreshEndMs = 0;
 
 void requestDraw() {
@@ -1805,14 +1804,21 @@ void setup() {
 // through the normal render path. 500 ms is plenty: the pad is awake
 // whenever this matters.
 static bool lastPowered = false;
+static bool candPowered = false;
+static uint8_t candCount = 0;
 static unsigned long nextPowerPollMs = 0;
 void pollPowerIndicator() {
   unsigned long now = millis();
   if (now < nextPowerPollMs) return;
   nextPowerPollMs = now + 500;
   bool p = isPowered();
-  if (p != lastPowered) {
-    lastPowered = p;
+  // Debounce: the USB "host connected" signal can flap (SOF watchdog
+  // tolerance, CDC session churn). A flip must be stable for 3 polls
+  // (1.5 s) before it triggers a redraw - otherwise a flapping signal
+  // would redraw the panel forever ("always updating, grey haze").
+  if (p != candPowered) { candPowered = p; candCount = 0; return; }
+  if (++candCount >= 3 && candPowered != lastPowered) {
+    lastPowered = candPowered;
     requestDraw();
   }
 }
