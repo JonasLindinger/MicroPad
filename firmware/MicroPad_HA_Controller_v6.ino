@@ -1,9 +1,11 @@
 // =============================================================================
 // MicroPad Home Assistant Controller  v6 (Light Sleep, power-optimised)
-// v4 firmware: async render on core 0, input never blocked by the e-paper
+// v6 firmware: async render on core 0, input never blocked by the e-paper
 // refresh; portal is escapable; WDT disabled during sleep.
 // - No USB CDC conflicts: light sleep only.
-// - WiFi/MQTT disconnected before sleep, full reconnect on wake.
+// - WiFi/MQTT session is kept across light sleep (modem sleep): wake is
+//   instant instead of re-associating, re-DHCPing and redoing the MQTT
+//   handshake.
 // - Display keeps its image without refresh.
 // - Wakes on keys/encoder only; timer wake disabled to save power.
 //
@@ -99,6 +101,7 @@
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
 #include <esp_task_wdt.h>
+#include <esp_timer.h>
 // USB-host detection (usbHostAttached()): TinyUSB's tud_cdc_n_connected()
 // only exists in "USB Mode: USB-OTG (TinyUSB)" builds. With "Hardware CDC
 // and JTAG" (ARDUINO_USB_MODE=1) there is no TinyUSB stack, so the include
@@ -676,6 +679,14 @@ bool usbHostAttached() {
 bool isPowered() { return usbHostAttached(); }
 
 void enterLightSleep() {
+  // HARD GUARD: never sleep while USB power is present. A host-connected
+  // pad (or a charger that reports a host session) must stay awake at all
+  // times - sleeping while plugged in is what made the first interaction
+  // after a long idle feel laggy (wake + reconnect). This check sits in
+  // enterLightSleep() itself, not only at the call site, so no future code
+  // path can accidentally put a connected pad to sleep.
+  if (isPowered()) return;
+
   // KEEP the WiFi association and the MQTT session across light sleep.
   // Tearing the radio down (the previous behaviour) meant every wake had to
   // re-associate, get DHCP and redo the MQTT handshake before anything could
@@ -689,6 +700,18 @@ void enterLightSleep() {
   // Wait for keys to be released
   unsigned long t = millis();
   while (anyKeyPressed() && millis() - t < 2000) delay(10);
+
+  // [Wake-storm fix] An idle that started while MQTT was down or mid page
+  // transition leaves stale pending events and a stale loading state in RAM.
+  // On wake these are flushed against the out-of-date page state and fire a
+  // burst of bogus multi-level navigations (e.g. navigate -> steckdosen while
+  // page_id still says home) - the "skips a whole page" symptom. There is
+  // nothing worth preserving across the idle: on reconnect the pad re-asks
+  // for home + keymap and the server is authoritative again. Drop it all so
+  // the wake starts clean.
+  pendHead = pendTail = pendCount = 0;
+  loadingPage = false;
+  pageRequestSentMs = 0;
 
   detachInputInterrupts();
 
@@ -716,6 +739,7 @@ void enterLightSleep() {
   gpio_wakeup_enable((gpio_num_t)ENC_B, encB_level);
 
   DBG("light sleep\n");
+  int64_t sleepStartUs = esp_timer_get_time();
   esp_light_sleep_start();
 
   esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
@@ -737,8 +761,40 @@ void enterLightSleep() {
   // The broker drops a client that stops sending keepalives while we sleep,
   // so re-check the session right away. WiFi is still up, so a reconnect
   // costs ~100 ms instead of seconds.
-  if (!mqtt.connected()) mqttConnected = false;
+  //
+  // For a sleep that outlived the MQTT keepalive (30 s; the 60 s idle
+  // timeout makes that essentially every sleep) the broker has already closed
+  // the session, but the local TCP socket can still report "connected".
+  // Trusting that stale socket makes the first publish after wake stall on
+  // the ~1 s socket timeout and THEN reconnect - the multi-second "first key
+  // press does nothing" lag. Drop the session outright: the next loop pass
+  // reconnects instantly (WiFi is still associated) and the press that woke
+  // us goes out right away instead of only after a dead-socket timeout. For
+  // short sleeps (< keepalive) the session is still valid, so leave it alone.
+  if (esp_timer_get_time() - sleepStartUs >= 30 * 1000000) {
+    if (mqtt.connected()) mqtt.disconnect();
+    mqttConnected = false;
+  }
   nextMqttAttemptMs = 0;   // allow an immediate (throttled) reconnect attempt
+
+  // [Wake-nav fix] The pad wakes carrying the page it had before sleep still
+  // live in currentPage. The first deliberate press is then interpreted
+  // against that STALE page and fires a spurious multi-level navigation
+  // (e.g. navigate -> steckdosen while the user is looking at Home) - the
+  // "skips a page" symptom. Blank currentPage back to an empty home state so
+  // any press during the reconnect settle is harmless (itemCount == 0 ->
+  // activateItem() is a no-op); the reconnect's own "home" request then
+  // repopulates it with the authoritative page. This matches the existing
+  // "every reconnect returns the pad to home" behaviour, just without the
+  // stale-input window.
+  currentPage.selected = 0;
+  currentPage.scrollOffset = 0;
+  currentPage.itemCount = 0;
+  safeCopy(currentPage.id, sizeof(currentPage.id), "home");
+  currentPage.title[0] = '\0';
+  currentPage.parent[0] = '\0';
+  loadingPage = true;
+  pageRequestSentMs = millis();
 
   // Wake-loop brake: bouncy keys, floating encoder pins or USB activity can
   // re-trigger a wake almost immediately. Without this the pad would ping-
@@ -1880,6 +1936,8 @@ void loop() {
   // transitions. The wake-loop brake inside the if-body still applies — a
   // powered pad that just woke up must NOT immediately re-enter sleep on a
   // bouncing pin.
+  // Sleep only when truly battery-powered - the isPowered() check is the
+  // single gate here, and enterLightSleep() re-checks it as a hard guard.
   if (!active && !isPowered()) {
     // Never sleep while a refresh is in flight - the display would be left
     // half-updated (and the SPI bus mid-transaction).

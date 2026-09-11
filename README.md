@@ -88,7 +88,7 @@ Compact 3×4 keypad, rotary encoder with push button, and a full-width e-paper s
 
 1. **Soldered & assembled?** Follow [docs/SOLDERING.md](docs/SOLDERING.md) + [docs/ASSEMBLY.md](docs/ASSEMBLY.md).
 2. **Firmware:** install the `esp32` core + libraries, flash
-   [firmware/MicroPad_HA_Controller_v4.ino](firmware/MicroPad_HA_Controller_v4.ino)
+   [firmware/MicroPad_HA_Controller_v6.ino](firmware/MicroPad_HA_Controller_v6.ino)
    (see [docs/FIRMWARE.md](docs/FIRMWARE.md)).
 3. **WiFi setup:** first boot opens the `MicroPad-Setup` portal — enter WiFi + MQTT broker.
 4. **Menu:** run the web app ([docs/WEB-CONFIG.md](docs/WEB-CONFIG.md)) or write the

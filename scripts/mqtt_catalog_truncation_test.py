@@ -48,7 +48,7 @@ KEY_IDS = [
 ]
 assert len(KEY_IDS) == 14, "MicroPad key count drifted from firmware"
 
-# Firmware-mirrored cap - keep these in lockstep with MicroPad_HA_Controller_v4.ino
+# Firmware-mirrored cap - keep these in lockstep with MicroPad_HA_Controller_v6.ino
 FIRMWARE_BUFFER_SIZE = 16384      # mqtt.setBufferSize(...), line ~1231
 FIRMWARE_NUL_CAP      = 16380      # if (length > 16380) length = 16380, line ~1073
 
