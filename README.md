@@ -1,5 +1,7 @@
 # MicroPad — Wireless Home Assistant Macro Keypad
 
+<p align="center">Battery-efficient ESP32-S3 macro pad with a 2.9" e-paper display for controlling Home Assistant. Pages and per-key actions are configured in a web tool and pushed over MQTT — no reflashing for menu or key changes. WiFiManager onboarding, light-sleep power management.</p>
+
 A battery-powered, e-paper macro keypad for controlling a Home Assistant instance. It shows a
 **hierarchical menu** on a 2.9" e-paper display (296×128, B/W), which is driven by Home
 Assistant itself — reflashing the device is not required to change the menu.
