@@ -23,7 +23,7 @@ change the menu.
 
 **Arduino IDE**
 
-1. Open `firmware/MicroPad_HA_Controller_v4.ino`.
+1. Open `firmware/MicroPad_HA_Controller_v6.ino`.
 2. Board: **ESP32-S3** (use your board config; features: dual core, 8 MB PSRAM).
 3. **Port:** native USB-Serial/JTAG (`/dev/ttyACM0` / COM port).
 4. **USB CDC On Boot: Enabled** (so serial debug appears over USB).

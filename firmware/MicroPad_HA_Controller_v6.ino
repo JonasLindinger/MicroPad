@@ -1,9 +1,11 @@
 // =============================================================================
 // MicroPad Home Assistant Controller  v6 (Light Sleep, power-optimised)
-// v4 firmware: async render on core 0, input never blocked by the e-paper
+// v6 firmware: async render on core 0, input never blocked by the e-paper
 // refresh; portal is escapable; WDT disabled during sleep.
 // - No USB CDC conflicts: light sleep only.
-// - WiFi/MQTT disconnected before sleep, full reconnect on wake.
+// - WiFi/MQTT session is kept across light sleep (modem sleep): wake is
+//   instant instead of re-associating, re-DHCPing and redoing the MQTT
+//   handshake.
 // - Display keeps its image without refresh.
 // - Wakes on keys/encoder only; timer wake disabled to save power.
 //
