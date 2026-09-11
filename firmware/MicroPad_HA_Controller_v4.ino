@@ -235,7 +235,7 @@ static const int8_t ENC_TABLE[16] = {0,0,1,0, 0,0,0,-1, -1,0,0,0, 0,1,0,0};
 String foundNetworks[20];
 int foundNetworkCount = 0;
 
-char mqttServer[64] = "192.168.178.103"; // EDIT: your MQTT broker address
+char mqttServer[64] = "192.168.0.100";   // EDIT: your MQTT broker address (192.168.0.100 = placeholder, do not commit real IPs)
 char mqttUser[32]   = "micropad";      // EDIT: your MQTT username
 char mqttPass[64]   = "replace-me";    // EDIT: your MQTT password (do not commit real credentials)
 char wifiSSID[64]   = "";
@@ -545,7 +545,14 @@ bool usbHostAttached() {
   // host opened the CDC link (usb_serial_jtag_is_connected). A plain phone
   // charger without data lines reports false, so the battery-friendly
   // sleep behaviour stays intact.
-  return (bool)HWCDCSerial;
+  // Serial.isPlugged() uses the IDF timer-based check (usb_serial_jtag_
+  // is_connected): true whenever a real USB host ENABLED the port (SOF
+  // running), even with no serial monitor open. (bool)HWCDCSerial alone
+  // needs an ACTIVE CDC session - a pad plugged into a PC without a
+  // terminal would sleep on USB power and stall on wake with a long
+  // "Trying" phase. A plain phone charger reports false in both, so
+  // battery sleep stays intact.
+  return Serial.isPlugged() || (bool)HWCDCSerial;
 #else
   // TinyUSB build: tud_cdc_n_connected(0) is true when a real USB host has
   // attached the USB-CDC device; USBSerial additionally covers "serial
@@ -1040,31 +1047,15 @@ void renderTaskLoop(void* param) {
     //
     // Every branch exits with clear_dirty() so a stale bit from the
     // previous frame cannot re-fire a partial refresh on the next pass.
-    if (RSP.dirty_rows == DIRTY_ALL_ROWS) {
-      // ---- Branch A: full refresh ----
-      drawPage(RSP);
-    } else if (RSP.dirty_rows == DIRTY_ROW_TOP) {
-      // ---- Branch B: indicator strip only ----
-      display.setPartialWindow(0, 0, 16, 296);
-      display.firstPage();
-      do {
-        display.fillScreen(GxEPD_WHITE);
-        drawIndicatorStrip(RSP);
-      } while (display.nextPage());
-    } else {
-      // ---- Branch C: union of row bands (per-bit partial refresh) ----
-      for (int b = 0; b <= 4; ++b) {
-        if (!(RSP.dirty_rows & (1u << b))) continue;
-        // bit 0 (TOP) handled in Branch B; the loop here covers bands 1..4.
-        if (b == 0) continue;
-        display.setPartialWindow(b * 16, 0, 16, 296);
-        display.firstPage();
-        do {
-          display.fillScreen(GxEPD_WHITE);
-          drawRowBand(RSP, b - 1);   // bit 1 -> visible row 0, ...
-        } while (display.nextPage());
-      }
-    }
+    // A single full-panel partial pass, always.
+    // REVERTED from the F-3 per-band experiment: Branch B/C opened a
+    // 16x296 VERTICAL strip per dirty bit and drew drawRowBand() (a
+    // full-width HORIZONTAL band) into it - wrong geometry for this
+    // panel/rotation; it left a persistent white seam and made scrolling
+    // look broken. The full partial pass (~450 ms) is the proven stable
+    // path. dirty_rows bookkeeping stays for change detection but no
+    // longer selects a refresh geometry.
+    drawPage(RSP);
 
     // clear_dirty: don't let the same dirty bit stick across refreshes.
     renderBuf[renderDrawIdx].dirty_rows = 0;
