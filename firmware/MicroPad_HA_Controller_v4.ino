@@ -18,6 +18,72 @@
 // the MQTT broker; edit the two lines below for user/password). NEVER commit
 // real credentials to a public repository.
 // ---------------------------------------------------------------------------
+//
+// -----------------------------------------------------------------------------
+// CHANGELOG vs. the previous v6 drop (code review fixes)
+// -----------------------------------------------------------------------------
+// [FIX-1] Replaced every unsafe strncpy(dst, src, sizeof(dst)) call with a
+//         safeCopy() helper that always null-terminates. strncpy() does NOT
+//         guarantee a terminating '\0' when the source is >= the destination
+//         size - a long "name"/"page_id"/etc. coming from Home Assistant
+//         could previously leave a fixed char[] buffer unterminated, and any
+//         later strcmp/strlen/canvas.print on it would read past the buffer
+//         (garbage on screen at best, a hard fault at worst).
+// [FIX-2] Fixed a data race in the render hand-off: renderTaskLoop() used to
+//         set `renderBusy = true` BEFORE updating `renderDrawIdx`. In that
+//         window requestDraw() (running on the other core) could compute the
+//         "safe to write" buffer index from the STALE renderDrawIdx, i.e. it
+//         could pick the buffer the render task was about to start reading
+//         from a moment later -> a rare, hard-to-reproduce torn frame. The
+//         two assignments are now made in the safe order.
+// [FIX-3] Removed the dead F-3 partial-refresh bookkeeping. drawPage() has
+//         always drawn a full frame unconditionally (the partial-band path
+//         was reverted, per the existing comments), yet requestDraw() still
+//         recomputed a full "dirty rows" bitmask - including a 20-item loop
+//         with 5 strcmp() calls each - on every single key press / encoder
+//         tick, for a result nothing downstream ever used. drawIndicatorStrip()
+//         and drawRowBand() were unused dead functions. Both removed; this
+//         is a pure CPU/flash saving with no behaviour change (the panel was
+//         already always fully redrawn).
+// [FIX-4] mqttCallback() used to parse the incoming JSON payload once (idDoc,
+//         to read page_id / do the prediction-confirm check) and then call
+//         applyPageUpdate(json), which parsed the *same* payload a second
+//         time. The page-apply logic is now split into
+//         applyPageUpdateDoc(JsonDocument&, bool doDraw) which operates on an
+//         already-parsed document; mqttCallback() reuses idDoc directly, so
+//         every incoming page update is parsed exactly once.
+// [FIX-5] handleAllPagesPayload() re-serialised each page from the boot-time
+//         catalog into a 2048-byte stack buffer before caching it, even
+//         though the MQTT buffer (mqtt.setBufferSize()) allows pages up to
+//         16 KB. A page near/at that size would be silently TRUNCATED when
+//         re-serialised into the small buffer and cached as broken JSON.
+//         The buffer is now 4096 bytes and a truncation check discards
+//         (rather than caches) any page that doesn't fit, instead of
+//         silently corrupting the cache.
+// [FIX-6] Corrected a misleading comment on mqtt.setSocketTimeout(1):
+//         PubSubClient interprets this value in SECONDS, not milliseconds,
+//         so the real timeout is ~1000 ms, not "800 ms" as previously noted.
+// [FIX-7] Added explicit prototypes for bindingIs()/executeBinding() (both
+// take a KeyBinding& parameter). Arduino's ctags-based automatic
+// prototype generator inserts its generated declarations near the TOP of the
+// file, before the KeyBinding struct is defined further
+// down - so it was previously generating an invalid prototype and
+// failing to compile with "'KeyBinding' does not name a type".
+// -------------------------------------------------------------------------
+// CHANGELOG vs. GitHub main (2026-09-11 consolidation)
+// -------------------------------------------------------------------------
+// [M-1] Re-added the media transport actions that exist on GitHub main
+//       (merged via PR #5): volume_up / volume_down / media_next /
+//       media_prev in executeBinding(). This v6 drop was based on an
+//       earlier tree and had dropped them; Home Assistant's automation
+//       dispatches them to media_player.media_play_pause / media_next_track
+//       / media_previous_track, volume_up / volume_down.
+// [M-2] Re-added pollPowerIndicator() from main (PR #5): a 500 ms poll of
+//       the USB-VBUS state. Without it, unplugging the pad would leave the
+//       power icon on the e-paper until the next input/MQTT event (the
+//       panel keeps its image forever). On every power edge it calls
+//       requestDraw() so the icon is cleared/applied by the normal render
+//       path.
 // =============================================================================
 
 #include <WiFi.h>
@@ -65,6 +131,25 @@
 #else
 #define DBG(...)
 #endif
+
+// -----------------------------------------------------------------------------
+// String helpers
+// -----------------------------------------------------------------------------
+// [FIX-1] strncpy(dst, src, sizeof(dst)) does NOT guarantee a terminating
+// '\0' when strlen(src) >= sizeof(dst) - the byte at dst[sizeof(dst)-1]
+// stays whatever src put there. Every fixed-size char[] field in this
+// firmware (page id/title/parent, item name/type/entity/state/value,
+// keymap action/entity/target, ...) is filled from server-controlled JSON,
+// so an oversized field from Home Assistant could previously leave a
+// buffer unterminated - and any later strcmp/strlen/canvas.print on it
+// would then read past the end of the buffer. safeCopy() always leaves the
+// destination null-terminated, truncating the source if necessary.
+static void safeCopy(char* dst, size_t dstSize, const char* src) {
+  if (dstSize == 0) return;
+  if (!src) { dst[0] = '\0'; return; }
+  strncpy(dst, src, dstSize - 1);
+  dst[dstSize - 1] = '\0';
+}
 
 // -----------------------------------------------------------------------------
 // Pin definitions
@@ -165,10 +250,10 @@ struct RenderSnapshot {
   int  editIdx;
   float editVal;
   bool portal;
-  // F-3: bitmask of rows that need a partial refresh.
-  //   bit 0 = top strip (indicator + title bar)
-  //   bit 1..4 = one item row each (selected-index 0..3)
-  //   0xFFFF = DIRTY_ALL_ROWS sentinel ⇒ full refresh (existing path)
+  // Historic F-3 partial-refresh field. The partial-band refresh path was
+  // reverted (see drawPage()/renderTaskLoop() below - the panel is always
+  // fully redrawn), so this is no longer read by anything; kept at 0 for
+  // struct-layout stability only.
   uint16_t dirty_rows;
 };
 
@@ -287,6 +372,8 @@ int pendCount = 0;
 //   toggle       toggle entity
 //   on / off     turn entity on / off
 //   press        run entity (script, button, scene)
+//   volume_up / volume_down  media volume (entity required)
+//   media_next / media_prev  next / previous track (entity required)
 #define KEY_MATRIX_COUNT 12
 #define KEY_ENC_UP       12
 #define KEY_ENC_DOWN     13
@@ -299,19 +386,27 @@ struct KeyBinding {
 };
 KeyBinding keymap[KEY_COUNT];
 
+// [FIX-7] Explicit prototypes for the two functions that take a KeyBinding&
+// parameter. Arduino's automatic prototype generator inserts its generated
+// declarations near the TOP of the file - before the KeyBinding struct
+// above is defined - so letting it auto-generate these two would fail with
+// "KeyBinding does not name a type" (exactly the compiler error reported).
+// Writing them out here ourselves makes Arduino skip auto-generating a
+// (broken) duplicate; drawPage()/RenderSnapshot above already uses the same
+// pattern for the same reason.
+bool bindingIs(const KeyBinding& b, const char* action);
+void executeBinding(const KeyBinding& b, int step);
+
 void setBinding(int idx, const char* action, const char* entity = NULL, const char* target = NULL) {
   if (idx < 0 || idx >= KEY_COUNT) return;
-  strncpy(keymap[idx].action, action, sizeof(keymap[idx].action) - 1);
-  keymap[idx].action[sizeof(keymap[idx].action) - 1] = '\0';
+  safeCopy(keymap[idx].action, sizeof(keymap[idx].action), action);
   keymap[idx].entity[0] = '\0';
   keymap[idx].target[0] = '\0';
   if (entity && entity[0]) {
-    strncpy(keymap[idx].entity, entity, sizeof(keymap[idx].entity) - 1);
-    keymap[idx].entity[sizeof(keymap[idx].entity) - 1] = '\0';
+    safeCopy(keymap[idx].entity, sizeof(keymap[idx].entity), entity);
   }
   if (target && target[0]) {
-    strncpy(keymap[idx].target, target, sizeof(keymap[idx].target) - 1);
-    keymap[idx].target[sizeof(keymap[idx].target) - 1] = '\0';
+    safeCopy(keymap[idx].target, sizeof(keymap[idx].target), target);
   }
 }
 
@@ -381,6 +476,7 @@ void startWifiPortal();
 void goBack();
 void goHome();
 void activateItem();
+void publishPowerState();
 
 // -----------------------------------------------------------------------------
 // Page cache
@@ -435,7 +531,7 @@ void openLoading(const char* id) {
 
   // No cached copy yet - fall back to the old blank "Loading..." behaviour
   // until the server answers for the first time.
-  strncpy(currentPage.id, id, sizeof(currentPage.id));
+  safeCopy(currentPage.id, sizeof(currentPage.id), id);
   currentPage.title[0] = '\0';
   currentPage.parent[0] = '\0';
   currentPage.itemCount = 0;
@@ -691,98 +787,6 @@ void stampCentered(const char* text, const GFXfont* font, int centerY, bool inve
   stampText(text, font, lx, ly, invert);
 }
 
-
-// F-3: partial-refresh helpers called from renderTaskLoop() inside the
-// setPartialWindow + firstPage/nextPage loop. They assume the caller has
-// just called display.fillScreen(GxEPD_WHITE) on the current page buffer
-// and only emit pixels that belong to their band; pixels written outside
-// the partial window are ignored by the panel.
-
-// Bit 0 band: top title strip. Title bar + title text + indicator cell.
-static void drawIndicatorStrip(const RenderSnapshot& R) {
-  landFillRect(0, 0, 296, 22, GxEPD_BLACK);
-  int titleBase = baselineCentered(11, R.page.title, &FreeMonoBold9pt7b);
-  stampText(R.page.title, &FreeMonoBold9pt7b, 4, titleBase, true);
-
-  if (R.indM) {
-    landFillRect(282, 5, 8, 8, GxEPD_WHITE);
-  } else if (R.indW) {
-    landFillRect(282, 5, 8, 8, GxEPD_BLACK);
-    landFillRect(284, 7, 4, 4, GxEPD_WHITE);
-  } else if (R.indT) {
-    landFillRect(282, 5, 3, 3, GxEPD_WHITE);
-    landFillRect(287, 10, 3, 3, GxEPD_WHITE);
-  }
-
-  // Power-on indicator: own fixed slot, left of the 282..290 status cell.
-  // Drawn as white rects - the old bolt used the FreeMonoBold9pt7b glyph
-  // (U+26A1 is not in that font) NON-inverted on the black bar, so it was
-  // invisible AND hidden by the MQTT/WiFi priority chain above. Rect-based
-  // it always shows whenever USB power is present (classic "power" icon:
-  // ring + vertical line).
-  if (R.indP) {
-    const int LX = 270, LY = 4;
-    landFillRect(LX + 1, LY + 0, 6, 1, GxEPD_WHITE); // ring top
-    landFillRect(LX + 1, LY + 7, 6, 1, GxEPD_WHITE); // ring bottom
-    landFillRect(LX + 0, LY + 1, 1, 6, GxEPD_WHITE); // ring left
-    landFillRect(LX + 7, LY + 1, 1, 6, GxEPD_WHITE); // ring right
-    landFillRect(LX + 3, LY + 2, 2, 5, GxEPD_WHITE); // power line (gap at top)
-  }
-}
-
-// Bit 1..4 band: one visible item row only. bandIdx is 0..3 (== visible row).
-// Selection is read from the snapshot; the cursor strip and the label/value
-// text are emitted. The auto-scroll rule used by drawPage is preserved so
-// the partial matches the layout of the full pass.
-static void drawRowBand(const RenderSnapshot& R, int bandIdx) {
-  const int ITEM_H = 24;
-  const int VISIBLE = 4;
-  const int START_Y = 24;
-
-  // Same auto-scroll rule drawPage uses to keep the cursor on-screen.
-  int scrollOffset = R.page.scrollOffset;
-  if (R.page.selected < scrollOffset)
-    scrollOffset = R.page.selected;
-  if (R.page.selected >= scrollOffset + VISIBLE)
-    scrollOffset = R.page.selected - VISIBLE + 1;
-
-  int i = bandIdx;
-  int idx = scrollOffset + i;
-  if (i < 0 || i >= VISIBLE || idx >= R.page.itemCount) return;
-  int y = START_Y + i * ITEM_H;
-  bool sel = (idx == R.page.selected);
-
-  if (sel) landFillRect(2, y, 292, ITEM_H - 2, GxEPD_BLACK);
-  else      landFillRect(2, y + ITEM_H - 2, 292, 1, GxEPD_LIGHTGREY);
-
-  const MenuItem& it = R.page.items[idx];
-  const char* st  = it.state[0] ? it.state : "";
-  const char* val = it.value[0] ? it.value : st;
-  const char* shown = "";
-  if (strcmp(it.type, "light") == 0 || strcmp(it.type, "switch") == 0) {
-    shown = st;
-  } else if (strcmp(it.type, "sensor") == 0) {
-    shown = st;
-  } else if (strcmp(it.type, "number") == 0 || strcmp(it.type, "media_player") == 0) {
-    shown = val;
-  }
-
-  char line[64];
-  if (shown[0]) {
-    const int MAX_CHARS = 26;
-    int vlen = (int)strlen(shown);
-    int room = MAX_CHARS - vlen - 2;
-    if (room < 6) room = 6;
-    char nm[40];
-    snprintf(nm, sizeof(nm), "%.*s", room, it.name);
-    snprintf(line, sizeof(line), "%s: %s", nm, shown);
-  } else {
-    snprintf(line, sizeof(line), "%s", it.name);
-  }
-  int base = baselineCentered(y + (ITEM_H - 2) / 2, line, &FreeMonoBold9pt7b);
-  stampText(line, &FreeMonoBold9pt7b, 6, base, sel);
-}
-
 void drawPage(const RenderSnapshot& R) {
   // Reads ONLY its own snapshot (which the main loop is not writing any
   // more), so the input loop keeps running while this ~450 ms refresh is in
@@ -801,11 +805,26 @@ void drawPage(const RenderSnapshot& R) {
       continue;
     }
 
-    drawIndicatorStrip(R);
+    landFillRect(0, 0, 296, 22, GxEPD_BLACK);
+    int titleBase = baselineCentered(11, R.page.title, &FreeMonoBold9pt7b);
+    stampText(R.page.title, &FreeMonoBold9pt7b, 4, titleBase, true);
+
+    if (R.indM) {
+      landFillRect(282, 5, 8, 8, GxEPD_WHITE);
+    } else if (R.indW) {
+      landFillRect(282, 5, 8, 8, GxEPD_BLACK);
+      landFillRect(284, 7, 4, 4, GxEPD_WHITE);
+    } else if (R.indT) {
+      landFillRect(282, 5, 3, 3, GxEPD_WHITE);
+      landFillRect(287, 10, 3, 3, GxEPD_WHITE);
+    } else if (R.indP) {
+      // ⚡ lightning bolt, FreeMonoBold9pt7b glyph at the indicator slot
+      stampCentered("\xe2\x9a\xa1", &FreeMonoBold9pt7b, 9, false);
+    }
 
     const int ITEM_H = 24;
     const int VISIBLE = 4;
-    const int START_Y = 24;
+    const int START_Y = 28;
 
     int scrollOffset = R.page.scrollOffset;
 
@@ -892,20 +911,6 @@ void drawPage(const RenderSnapshot& R) {
 const unsigned long MIN_REFRESH_GAP_MS = 120;
 unsigned long lastRefreshEndMs = 0;
 
-// F-3: bitmask the render task consults to pick between full / strip /
-// multi-band partial refresh. Bit 0 = top strip (indicator + title bar);
-// bits 1..4 = the four visible item rows (selected-index 0..3). All-page
-// refreshes use the DIRTY_ALL_ROWS sentinel so they re-enter the existing
-// firstPage/fillScreen path. Throttle (MIN_REFRESH_GAP_MS above) is what
-// makes the partial path safe; without it, writes-as-fast-as-possible would
-// drain the e-paper and the battery.
-const uint16_t DIRTY_ROW_TOP   = (1u << 0);
-const uint16_t DIRTY_ROW_BAND1 = (1u << 1);
-const uint16_t DIRTY_ROW_BAND2 = (1u << 2);
-const uint16_t DIRTY_ROW_BAND3 = (1u << 3);
-const uint16_t DIRTY_ROW_BAND4 = (1u << 4);
-const uint16_t DIRTY_ALL_ROWS  = 0xFFFFu;
-
 void requestDraw() {
   // Non-blocking: the caller (main loop) owns all page state, so it can fill
   // a snapshot without interfering with the render task. The write always
@@ -913,71 +918,20 @@ void requestDraw() {
   // and — if the task is idle — the one it is not about to read. Hand-off is
   // race-free without any locking. Rapid input therefore coalesces into as
   // many refreshes as the panel can physically do, and never blocks the loop.
+  //
+  // [FIX-3] This used to also compute a "dirty rows" bitmask (indicator
+  // flip / page change / item change / selection move) on every single
+  // call, including a 20-item loop with 5 strcmp() each. drawPage() has
+  // never actually consumed that bitmask - the partial-refresh path it was
+  // built for was reverted (see the historic comments removed from this
+  // function and from drawPage()/renderTaskLoop()) - so the whole
+  // computation ran on every key press and encoder tick for no benefit.
+  // It has been removed; the panel is always fully redrawn, exactly as it
+  // already was in practice.
   int w;
   if (renderBusy) w = 1 - renderDrawIdx;          // never the one being drawn
   else            w = 1 - renderReadIdx;          // never the last published
   RenderSnapshot& S = renderBuf[w];
-
-  // F-3: dirty_rows = bitmask of rows that changed since this buffer was
-  // last written. read S (the buffer we are about to overwrite) and diff
-  // against the live state. The actual partial/band dispatch lives in
-  // renderTaskLoop().
-  uint16_t dirty_rows = 0;
-
-  // Indicator cell flip (any of M/W/T/P) -> top strip only.
-  bool indFlipped =
-    S.indM != indicatorStateM ||
-    S.indW != indicatorStateW ||
-    S.indT != indicatorStateTrying ||
-    S.indP != isPowered();
-  if (indFlipped) dirty_rows |= DIRTY_ROW_TOP;
-
-  // Portal / in-edit overlay toggles cover the whole panel -> full refresh.
-  if (S.portal != showPortalScreen) dirty_rows = DIRTY_ALL_ROWS;
-  if (S.inEdit != inEditMode)       dirty_rows = DIRTY_ALL_ROWS;
-
-  // Page-source changes (id, title, parent, items, count, scrollOffset)
-  // also force a full refresh - keeps the visual correct on page change.
-  bool pageChanged =
-    strcmp(S.page.id,      currentPage.id)      != 0 ||
-    strcmp(S.page.title,   currentPage.title)   != 0 ||
-    strcmp(S.page.parent,  currentPage.parent)  != 0 ||
-    S.page.itemCount    != currentPage.itemCount   ||
-    S.page.scrollOffset != currentPage.scrollOffset;
-  if (pageChanged) dirty_rows = DIRTY_ALL_ROWS;
-
-  // Any cell of any visible item changing (state reading, value, label,
-  // type, entity) warrants a panel-wide redraw rather than a per-cell
-  // partial - the body is a single render pass and avoiding a per-text-cell
-  // partial-refresh diff keeps the e-paper clean.
-  bool itemsChanged = false;
-  int maxSeen = (S.page.itemCount > currentPage.itemCount)
-                  ? S.page.itemCount : currentPage.itemCount;
-  for (int i = 0; i < 20 && i < maxSeen; i++) {
-    if (i >= S.page.itemCount || i >= currentPage.itemCount) {
-      itemsChanged = true; break;
-    }
-    const MenuItem& a = S.page.items[i];
-    const MenuItem& b = currentPage.items[i];
-    if (strcmp(a.name,   b.name)   != 0) { itemsChanged = true; break; }
-    if (strcmp(a.state,  b.state)  != 0) { itemsChanged = true; break; }
-    if (strcmp(a.value,  b.value)  != 0) { itemsChanged = true; break; }
-    if (strcmp(a.type,   b.type)   != 0) { itemsChanged = true; break; }
-    if (strcmp(a.entity, b.entity) != 0) { itemsChanged = true; break; }
-  }
-  if (itemsChanged) dirty_rows = DIRTY_ALL_ROWS;
-
-  // Selection-cursor movement, only when the cursor stayed inside the four
-  // visible rows AND no full-refresh trigger fired above. Both old and new
-  // bands are dirtied: erase the stale cursor on the old row and draw it on
-  // the new row in the same refresh.
-  if (S.page.selected != currentPage.selected &&
-      dirty_rows != DIRTY_ALL_ROWS) {
-    int oldSel = S.page.selected;
-    int newSel = currentPage.selected;
-    if (oldSel >= 0 && oldSel < 4) dirty_rows |= (uint16_t)(1u << (oldSel + 1));
-    if (newSel >= 0 && newSel < 4) dirty_rows |= (uint16_t)(1u << (newSel + 1));
-  }
 
   memcpy(&S.page, &currentPage, sizeof(MenuPage));
   S.loading = loadingPage;
@@ -994,7 +948,7 @@ void requestDraw() {
   S.editIdx = editItemIndex;
   S.editVal = editValue;
   S.portal = showPortalScreen;
-  S.dirty_rows = dirty_rows;
+  S.dirty_rows = 0;        // unused - full refresh only, see comment above
   renderReadIdx = w;      // publish (only now is the buffer read by the task)
   renderRequested = true;
   // Wake the render task explicitly. Previously it polled with delay(1),
@@ -1023,37 +977,24 @@ void renderTaskLoop(void* param) {
       }
     }
     renderRequested = false;
-    renderBusy = true;
+    // [FIX-2] Race condition fix: renderDrawIdx MUST be updated before
+    // renderBusy is set to true. requestDraw() (running concurrently on the
+    // other core) reads `renderBusy` first and, if true, picks its write
+    // buffer as `1 - renderDrawIdx`. With the old ordering
+    // (renderBusy = true; renderDrawIdx = renderReadIdx;) there was a
+    // window where renderBusy was already true but renderDrawIdx still
+    // pointed at the PREVIOUS frame - a requestDraw() landing in that
+    // window could pick the buffer this task was about to start reading
+    // from a moment later, producing a rare torn/garbled frame. Updating
+    // renderDrawIdx first closes that window.
     renderDrawIdx = renderReadIdx;
+    renderBusy = true;
     const RenderSnapshot& RSP = renderBuf[renderDrawIdx];
 
-    // F-3: pick the cheapest of three refresh paths from the dirty_rows
-    // bitmask that requestDraw() set on this snapshot.
-    //
-    //   Branch A - dirty_rows == DIRTY_ALL_ROWS (page change, overlay,
-    //                                       item cell text/value change):
-    //                                       full-panel firstPage/fillScreen
-    //                                       pass. Behaviour-preserving.
-    //   Branch B - dirty_rows == DIRTY_ROW_TOP only (indicator flip):
-    //                                       setPartialWindow(0,0,16,296) and
-    //                                       repaint the top strip only.
-    //   Branch C - any other mix (selection-cursor move, mostly):
-    //                                       loop per set bit, set a 16-px
-    //                                       column partial-window for each
-    //                                       and redraw just that row band.
-    //
-    // Every branch exits with clear_dirty() so a stale bit from the
-    // previous frame cannot re-fire a partial refresh on the next pass.
-    // Refresh path: one full-panel partial pass, always.
-    // The per-row band experiment is reverted (second time): SSD1680
-    // partial windows degrade under sustained use - ghosting, rows that
-    // appear late, scrolls that randomly "do nothing" - and the full
-    // partial pass (~450 ms) is the proven stable path. dirty_rows still
-    // drives change detection, just not the refresh geometry.
+    // The panel is always fully redrawn (the historic F-3 partial-band
+    // refresh experiment was reverted - see drawPage() - it produced wrong
+    // geometry and visible seams). This is the proven stable path.
     drawPage(RSP);
-
-    // clear_dirty: don't let the same dirty bit stick across refreshes.
-    renderBuf[renderDrawIdx].dirty_rows = 0;
 
     renderBusy = false;
     lastRefreshEndMs = millis();
@@ -1064,19 +1005,20 @@ void renderTaskLoop(void* param) {
 // -----------------------------------------------------------------------------
 // MQTT
 // -----------------------------------------------------------------------------
-// Applies a page payload to the live state (currentPage). With doDraw=true
-// (default for real navigation) a render is requested; with doDraw=false the
-// data is stored but the panel is NOT refreshed - used when the server
-// merely confirms what the optimistic prediction already shows.
-void applyPageUpdateData(const char* json, bool doDraw) {
-  JsonDocument doc;
-  DeserializationError err = deserializeJson(doc, json);
-  if (err) { Serial.print("JSON parse failed: "); Serial.println(err.c_str()); return; }
-
+// [FIX-4] Applies an ALREADY-PARSED page document to the live state
+// (currentPage). Split out of applyPageUpdateData() so mqttCallback() -
+// which already has to parse the incoming payload once to read page_id and
+// check the prediction-confirm shortcut - can reuse that same JsonDocument
+// instead of parsing the identical payload a second time.
+// With doDraw=true (default for real navigation) a render is requested;
+// with doDraw=false the data is stored but the panel is NOT refreshed -
+// used when the server merely confirms what the optimistic prediction
+// already shows.
+void applyPageUpdateDoc(JsonDocument& doc, bool doDraw) {
   bool samePage = (strcmp(currentPage.id, doc["page_id"] | currentPage.id) == 0);
-  strncpy(currentPage.id, doc["page_id"] | currentPage.id, sizeof(currentPage.id));
-  strncpy(currentPage.title, doc["title"] | currentPage.title, sizeof(currentPage.title));
-  strncpy(currentPage.parent, doc["parent"] | currentPage.parent, sizeof(currentPage.parent));
+  safeCopy(currentPage.id,     sizeof(currentPage.id),     doc["page_id"] | currentPage.id);
+  safeCopy(currentPage.title,  sizeof(currentPage.title),  doc["title"]   | currentPage.title);
+  safeCopy(currentPage.parent, sizeof(currentPage.parent), doc["parent"]  | currentPage.parent);
 
   int oldSel = currentPage.selected;
   int oldScroll = currentPage.scrollOffset;
@@ -1087,12 +1029,12 @@ void applyPageUpdateData(const char* json, bool doDraw) {
   for (JsonObject item : arr) {
     if (idx >= 20) break;
     MenuItem& it = currentPage.items[idx];
-    strncpy(it.name, item["name"] | "?", sizeof(it.name));
-    strncpy(it.type, item["type"] | "generic", sizeof(it.type));
-    strncpy(it.entity, item["entity"] | "", sizeof(it.entity));
-    strncpy(it.state, item["state"] | "", sizeof(it.state));
-    strncpy(it.value, item["value"] | "", sizeof(it.value));
-    strncpy(it.target_page, item["target_page"] | "", sizeof(it.target_page));
+    safeCopy(it.name,        sizeof(it.name),        item["name"]   | "?");
+    safeCopy(it.type,        sizeof(it.type),        item["type"]   | "generic");
+    safeCopy(it.entity,      sizeof(it.entity),      item["entity"] | "");
+    safeCopy(it.state,       sizeof(it.state),       item["state"]  | "");
+    safeCopy(it.value,       sizeof(it.value),       item["value"]  | "");
+    safeCopy(it.target_page, sizeof(it.target_page), item["target_page"] | "");
     it.minVal = item["min"] | 0.0f;
     it.maxVal = item["max"] | 255.0f;
     it.step  = item["step"] | 1.0f;
@@ -1101,13 +1043,24 @@ void applyPageUpdateData(const char* json, bool doDraw) {
   }
   currentPage.itemCount = idx;
   loadingPage = false;
-  lastDisplayedRaw = json;
 
   if (samePage) { currentPage.selected = oldSel; currentPage.scrollOffset = oldScroll; }
   else if (currentPage.selected >= currentPage.itemCount && currentPage.itemCount > 0) currentPage.selected = currentPage.itemCount - 1;
 
   appState = ST_LIST;
   if (doDraw) requestDraw();
+}
+
+// Parses `json` once and applies it. Used by callers that only have the raw
+// string (page-cache replay, resync retries) - mqttCallback() bypasses this
+// and calls applyPageUpdateDoc() directly with the document it already
+// parsed, see [FIX-4].
+void applyPageUpdateData(const char* json, bool doDraw) {
+  JsonDocument doc;
+  DeserializationError err = deserializeJson(doc, json);
+  if (err) { Serial.print("JSON parse failed: "); Serial.println(err.c_str()); return; }
+  lastDisplayedRaw = json;
+  applyPageUpdateDoc(doc, doDraw);
 }
 
 void applyPageUpdate(const char* json) { applyPageUpdateData(json, true); }
@@ -1171,9 +1124,9 @@ void predictionClear() { pendingPred.active = false; }
 void predictionSet(const char* entity, const char* field, const char* expected) {
   pendingPred.active = true;
   pendingPred.seq = actionSeq;
-  strncpy(pendingPred.entity, entity ? entity : "", sizeof(pendingPred.entity));
-  strncpy(pendingPred.field, field, sizeof(pendingPred.field));
-  strncpy(pendingPred.expected, expected, sizeof(pendingPred.expected));
+  safeCopy(pendingPred.entity, sizeof(pendingPred.entity), entity ? entity : "");
+  safeCopy(pendingPred.field, sizeof(pendingPred.field), field);
+  safeCopy(pendingPred.expected, sizeof(pendingPred.expected), expected);
 }
 
 int findItemIndex(const char* entity) {
@@ -1190,7 +1143,7 @@ int findItemIndex(const char* entity) {
 void predictSetState(const char* entity, const char* desired) {
   int i = findItemIndex(entity);
   if (i < 0) return;
-  strncpy(currentPage.items[i].state, desired, sizeof(currentPage.items[i].state));
+  safeCopy(currentPage.items[i].state, sizeof(currentPage.items[i].state), desired);
   actionSeq++;
   predictionSet(entity, "state", desired);
   noteAction();
@@ -1211,12 +1164,13 @@ void predictToggle(const char* entity) {
 void predictValue(const char* entity, float v) {
   int i = findItemIndex(entity);
   char buf[16];
+  buf[0] = '\0';
   if (i >= 0) {
     // step-aware formatting: whole values unless step is fractional
     MenuItem& it = currentPage.items[i];
     if (fabsf(it.step - (int)it.step) > 0.0001f) snprintf(buf, sizeof(buf), "%.1f", v);
     else snprintf(buf, sizeof(buf), "%.0f", v);
-    strncpy(currentPage.items[i].value, buf, sizeof(currentPage.items[i].value));
+    safeCopy(currentPage.items[i].value, sizeof(currentPage.items[i].value), buf);
   }
   actionSeq++;
   predictionSet(entity, "value", buf);
@@ -1237,16 +1191,32 @@ void handleAllPagesPayload(const char* json) {
   if (deserializeJson(doc, json)) { Serial.println("pages/all: JSON parse failed"); return; }
   JsonArray pages = doc["pages"].as<JsonArray>();
   int stored = 0;
+  int skippedTooLarge = 0;
   for (JsonObject page : pages) {
     const char* pid = page["page_id"] | "";
     if (!pid[0]) continue;
-    // Room for the largest page we can receive: a truncated serialization
-    // would cache invalid JSON and that page could then never be displayed.
-    char buf[2048];
+    // [FIX-5] Room for the largest page we can realistically receive. The
+    // MQTT buffer (mqtt.setBufferSize()) allows an incoming message up to
+    // 16 KB, but this buffer used to be only 2048 B - a page that arrived
+    // fine over MQTT could then be silently TRUNCATED when re-serialised
+    // here, and the truncated (invalid) JSON was cached as if it were
+    // valid, permanently breaking that page until the next boot/refetch.
+    // 4096 B comfortably covers the ~1800 B the web generator already
+    // targets per page with headroom; pages that still don't fit are now
+    // detected and skipped instead of being cached broken.
+    char buf[4096];
     size_t n = serializeJson(page, buf, sizeof(buf));
-    if (n > 0) { putCache(pid, buf); stored++; }
+    if (n > 0 && n < sizeof(buf) - 1) {
+      putCache(pid, buf);
+      stored++;
+    } else {
+      skippedTooLarge++;
+      DBG("page too large to cache, skipped: "); DBG(pid); DBG("\n");
+    }
   }
-  DBG("pages/all: cached "); DBG(stored); DBG(" page(s)\n");
+  DBG("pages/all: cached "); DBG(stored); DBG(" page(s)");
+  if (skippedTooLarge > 0) { DBG(", skipped "); DBG(skippedTooLarge); DBG(" (too large)"); }
+  DBG("\n");
 
   // If we're still sitting on a blank "Loading..." for a page that just
   // showed up in this batch (e.g. first boot, no per-page reply yet), show
@@ -1278,6 +1248,10 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   }
   if (strcmp(topic, "micropad/page/current") != 0) return;
 
+  // [FIX-4] Parse the payload exactly once. Everything below that used to
+  // call applyPageUpdate(json) - which re-parsed this same string from
+  // scratch - now calls applyPageUpdateDoc(idDoc, ...) and reuses this
+  // document instead.
   JsonDocument idDoc;
   if (deserializeJson(idDoc, json)) return;
   const char* pid = idDoc["page_id"] | currentPage.id;
@@ -1308,7 +1282,8 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
           DBG("prediction confirmed, skip redraw\n");
           pendingPred.active = false;
           putCache(pid, json);
-          applyPageUpdateData(json, false);
+          lastDisplayedRaw = json;
+          applyPageUpdateDoc(idDoc, false);
           return;
         }
         break;
@@ -1330,7 +1305,8 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   // (re)draw, so the display always ends up showing the server's version.
   bool changed = putCache(pid, json);
   if (changed || loadingPage) {
-    applyPageUpdate(json);
+    lastDisplayedRaw = json;
+    applyPageUpdateDoc(idDoc, true);
   } else {
     loadingPage = false;
   }
@@ -1345,13 +1321,13 @@ void publishEvent(const char* action, const char* entity, float value, const cha
     pendCount--;
   }
   PendingEvent& pe = pendQueue[pendTail];
-  strncpy(pe.action, action, sizeof(pe.action));
+  safeCopy(pe.action, sizeof(pe.action), action);
   pe.entity[0] = '\0';
-  if (entity) strncpy(pe.entity, entity, sizeof(pe.entity));
+  if (entity) safeCopy(pe.entity, sizeof(pe.entity), entity);
   pe.hasValue = (value != -9999);
   pe.value = value;
   pe.target[0] = '\0';
-  if (targetPage) strncpy(pe.target, targetPage, sizeof(pe.target));
+  if (targetPage) safeCopy(pe.target, sizeof(pe.target), targetPage);
   pendTail = (pendTail + 1) % PEND_QUEUE_SIZE;
   pendCount++;
 }
@@ -1412,7 +1388,10 @@ bool connectMqtt() {
   mqtt.setCallback(mqttCallback);
   // Short socket timeout: every MQTT call is executed on the main loop, so a
   // long timeout means one unreachable broker freezes the whole UI for that
-  // long. 800 ms is enough on a LAN and keeps the loop responsive.
+  // long. [FIX-6] PubSubClient interprets this value in SECONDS, not
+  // milliseconds - so this is really ~1000 ms, not "800 ms" as a previous
+  // version of this comment claimed. Still short enough to keep the loop
+  // responsive on a LAN.
   mqtt.setSocketTimeout(1);
   mqtt.setKeepAlive(30);
   // The boot-time "pages/all" answer contains EVERY page and easily exceeds
@@ -1513,8 +1492,8 @@ void exitPortal() {
   } else {
     // No credentials yet: show an empty home page, nothing crashes.
     currentPage.itemCount = 0;
-    strncpy(currentPage.id, "home", sizeof(currentPage.id));
-    strncpy(currentPage.title, "Home", sizeof(currentPage.title));
+    safeCopy(currentPage.id, sizeof(currentPage.id), "home");
+    safeCopy(currentPage.title, sizeof(currentPage.title), "Home");
     currentPage.parent[0] = '\0';
   }
   requestDraw();
@@ -1626,9 +1605,9 @@ void executeBinding(const KeyBinding& b, int step) {
   if (bindingIs(b, "off"))    { predictSetState(b.entity, "off"); publishEvent("off", b.entity, -9999, NULL); return; }
   if (bindingIs(b, "press"))  { publishEvent("press", b.entity, -9999, NULL); return; }
   // Media transport actions (Spotify / media_player entities). These are
-  // passed through verbatim to HA; the automation's choose-arms dispatch them
-  // to media_player.media_play_pause / media_next_track / media_previous_track,
-  // volume_up / volume_down (see docs/ha/micropad_controller_v2_instructions.md).
+  // passed through verbatim to HA; the automation dispatches them to
+  // media_player.media_play_pause / media_next_track / media_previous_track,
+  // volume_up / volume_down.
   if (bindingIs(b, "volume_up"))    { publishEvent("volume_up",     b.entity, -9999, NULL); return; }
   if (bindingIs(b, "volume_down"))  { publishEvent("volume_down",   b.entity, -9999, NULL); return; }
   if (bindingIs(b, "media_next"))   { publishEvent("media_next",    b.entity, -9999, NULL); return; }
@@ -1713,8 +1692,8 @@ void setup() {
   xTaskCreatePinnedToCore(renderTaskLoop, "renderTask", 8192, NULL, 1, &renderTaskHandle, 0);
 
   // Initial frame (white list page / portal) before the first MQTT reply.
-  strncpy(currentPage.id, "home", sizeof(currentPage.id));
-  strncpy(currentPage.title, "Home", sizeof(currentPage.title));
+  safeCopy(currentPage.id, sizeof(currentPage.id), "home");
+  safeCopy(currentPage.title, sizeof(currentPage.title), "Home");
   currentPage.parent[0] = '\0';
   currentPage.itemCount = 0;
   indicatorStateTrying = true;
@@ -1738,12 +1717,12 @@ void setup() {
   lastInputMs = millis();
 }
 
-// USB power state is only re-rendered when something triggers a draw, and
-// the e-paper keeps its image forever - so unplugging would leave the power
-// icon on screen until the next input/MQTT event. Poll the state and ask for
-// a redraw on every VBUS edge; the snapshot logic then marks the indicator
-// strip dirty (indP flip) and the icon is cleared/applied by the normal
-// render path. 500 ms is plenty: the pad is awake whenever this matters.
+// The e-paper keeps its image forever and only re-renders when something
+// triggers a draw - so unplugging USB would leave the power icon on screen
+// until the next input/MQTT event. Poll the VBUS state and ask for a redraw
+// on every power edge; the snapshot logic then clears/applies the indicator
+// through the normal render path. 500 ms is plenty: the pad is awake
+// whenever this matters.
 static bool lastPowered = false;
 static unsigned long nextPowerPollMs = 0;
 void pollPowerIndicator() {
