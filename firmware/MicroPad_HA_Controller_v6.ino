@@ -676,7 +676,24 @@ bool usbHostAttached() {
 // connection as "powered" because the VBUS rail it pulls 5V from is what the on-board charge IC
 // (separate from this ESP32) draws from. When this is true, even an idle pad should NOT light-sleep,
 // because macros fired from a powered-down pad feel laggy on wake.
-bool isPowered() { return usbHostAttached(); }
+//
+// Optional WIRED power sense: a plain USB charger (no data lines) is NOT detected by the USB PHY,
+// so a pad on a wall adapter still sleeps and does a ~5 s WiFi reconnect on wake. To also stay awake
+// on ANY power source, run one jumper from the BQ24075 /PG (active-low "power good", ~3.3 V domain)
+// — or VBUS through a ~2:1 divider — to a free ESP32-S3 input (e.g. GPIO15; NOT 5 V tolerant), set
+// POWER_SENSE_PIN to that GPIO and POWER_SENSE_ACTIVE_LOW=true. Then isPowered() also returns true on
+// a charger: an idle plugged-in pad keeps WiFi on and never does the slow wake reconnect. Keep
+// POWER_SENSE_PIN = -1 on a stock build (no wire fitted) to retain the USB-host-only detection.
+#define POWER_SENSE_PIN          (-1)   // free GPIO used for wired power-good sense, or -1 if none
+#define POWER_SENSE_ACTIVE_LOW   true   // /PG is active-low; VBUS-through-divider would be active-high
+bool isPowered() {
+  if (usbHostAttached()) return true;
+#if POWER_SENSE_PIN >= 0
+  if (POWER_SENSE_ACTIVE_LOW) return digitalRead((gpio_num_t)POWER_SENSE_PIN) == LOW;
+  return digitalRead((gpio_num_t)POWER_SENSE_PIN) == HIGH;
+#endif
+  return false;
+}
 
 void enterLightSleep() {
   // KEEP the WiFi association and the MQTT session across light sleep.
@@ -1736,6 +1753,12 @@ void setup() {
   attachInterrupt(digitalPinToInterrupt(ENC_A), onEncoder, CHANGE);
   attachInterrupt(digitalPinToInterrupt(ENC_B), onEncoder, CHANGE);
   resyncEncoder();
+
+#if POWER_SENSE_PIN >= 0
+  // Wired power-good sense (see isPowered()): pull-up makes the active-low /PG
+  // read HIGH when unpowered, LOW when the charger is present.
+  pinMode(POWER_SENSE_PIN, POWER_SENSE_ACTIVE_LOW ? INPUT_PULLUP : INPUT);
+#endif
 
   SPI.begin(39, -1, 38, -1);
   display.init(0);   // 0 = diagnostics OFF (see DISABLE_DIAGNOSTIC_OUTPUT above)
