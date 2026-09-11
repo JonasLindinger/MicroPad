@@ -712,9 +712,21 @@ static void drawIndicatorStrip(const RenderSnapshot& R) {
   } else if (R.indT) {
     landFillRect(282, 5, 3, 3, GxEPD_WHITE);
     landFillRect(287, 10, 3, 3, GxEPD_WHITE);
-  } else if (R.indP) {
-    // ⚡ lightning bolt, FreeMonoBold9pt7b glyph at the indicator slot
-    stampCentered("\xe2\x9a\xa1", &FreeMonoBold9pt7b, 9, false);
+  }
+
+  // Power-on indicator: own fixed slot, left of the 282..290 status cell.
+  // Drawn as white rects - the old bolt used the FreeMonoBold9pt7b glyph
+  // (U+26A1 is not in that font) NON-inverted on the black bar, so it was
+  // invisible AND hidden by the MQTT/WiFi priority chain above. Rect-based
+  // it always shows whenever USB power is present (classic "power" icon:
+  // ring + vertical line).
+  if (R.indP) {
+    const int LX = 270, LY = 4;
+    landFillRect(LX + 1, LY + 0, 6, 1, GxEPD_WHITE); // ring top
+    landFillRect(LX + 1, LY + 7, 6, 1, GxEPD_WHITE); // ring bottom
+    landFillRect(LX + 0, LY + 1, 1, 6, GxEPD_WHITE); // ring left
+    landFillRect(LX + 7, LY + 1, 1, 6, GxEPD_WHITE); // ring right
+    landFillRect(LX + 3, LY + 2, 2, 5, GxEPD_WHITE); // power line (gap at top)
   }
 }
 
@@ -725,7 +737,7 @@ static void drawIndicatorStrip(const RenderSnapshot& R) {
 static void drawRowBand(const RenderSnapshot& R, int bandIdx) {
   const int ITEM_H = 24;
   const int VISIBLE = 4;
-  const int START_Y = 28;
+  const int START_Y = 24;
 
   // Same auto-scroll rule drawPage uses to keep the cursor on-screen.
   int scrollOffset = R.page.scrollOffset;
@@ -789,26 +801,11 @@ void drawPage(const RenderSnapshot& R) {
       continue;
     }
 
-    landFillRect(0, 0, 296, 22, GxEPD_BLACK);
-    int titleBase = baselineCentered(11, R.page.title, &FreeMonoBold9pt7b);
-    stampText(R.page.title, &FreeMonoBold9pt7b, 4, titleBase, true);
-
-    if (R.indM) {
-      landFillRect(282, 5, 8, 8, GxEPD_WHITE);
-    } else if (R.indW) {
-      landFillRect(282, 5, 8, 8, GxEPD_BLACK);
-      landFillRect(284, 7, 4, 4, GxEPD_WHITE);
-    } else if (R.indT) {
-      landFillRect(282, 5, 3, 3, GxEPD_WHITE);
-      landFillRect(287, 10, 3, 3, GxEPD_WHITE);
-    } else if (R.indP) {
-      // ⚡ lightning bolt, FreeMonoBold9pt7b glyph at the indicator slot
-      stampCentered("\xe2\x9a\xa1", &FreeMonoBold9pt7b, 9, false);
-    }
+    drawIndicatorStrip(R);
 
     const int ITEM_H = 24;
     const int VISIBLE = 4;
-    const int START_Y = 28;
+    const int START_Y = 24;
 
     int scrollOffset = R.page.scrollOffset;
 
@@ -1047,14 +1044,12 @@ void renderTaskLoop(void* param) {
     //
     // Every branch exits with clear_dirty() so a stale bit from the
     // previous frame cannot re-fire a partial refresh on the next pass.
-    // A single full-panel partial pass, always.
-    // REVERTED from the F-3 per-band experiment: Branch B/C opened a
-    // 16x296 VERTICAL strip per dirty bit and drew drawRowBand() (a
-    // full-width HORIZONTAL band) into it - wrong geometry for this
-    // panel/rotation; it left a persistent white seam and made scrolling
-    // look broken. The full partial pass (~450 ms) is the proven stable
-    // path. dirty_rows bookkeeping stays for change detection but no
-    // longer selects a refresh geometry.
+    // Refresh path: one full-panel partial pass, always.
+    // The per-row band experiment is reverted (second time): SSD1680
+    // partial windows degrade under sustained use - ghosting, rows that
+    // appear late, scrolls that randomly "do nothing" - and the full
+    // partial pass (~450 ms) is the proven stable path. dirty_rows still
+    // drives change detection, just not the refresh geometry.
     drawPage(RSP);
 
     // clear_dirty: don't let the same dirty bit stick across refreshes.
@@ -1630,6 +1625,14 @@ void executeBinding(const KeyBinding& b, int step) {
   if (bindingIs(b, "on"))     { predictSetState(b.entity, "on");  publishEvent("on",  b.entity, -9999, NULL); return; }
   if (bindingIs(b, "off"))    { predictSetState(b.entity, "off"); publishEvent("off", b.entity, -9999, NULL); return; }
   if (bindingIs(b, "press"))  { publishEvent("press", b.entity, -9999, NULL); return; }
+  // Media transport actions (Spotify / media_player entities). These are
+  // passed through verbatim to HA; the automation's choose-arms dispatch them
+  // to media_player.media_play_pause / media_next_track / media_previous_track,
+  // volume_up / volume_down (see docs/ha/micropad_controller_v2_instructions.md).
+  if (bindingIs(b, "volume_up"))    { publishEvent("volume_up",     b.entity, -9999, NULL); return; }
+  if (bindingIs(b, "volume_down"))  { publishEvent("volume_down",   b.entity, -9999, NULL); return; }
+  if (bindingIs(b, "media_next"))   { publishEvent("media_next",    b.entity, -9999, NULL); return; }
+  if (bindingIs(b, "media_prev"))   { publishEvent("media_prev",    b.entity, -9999, NULL); return; }
 }
 
 void handleInput() {
@@ -1735,8 +1738,28 @@ void setup() {
   lastInputMs = millis();
 }
 
+// USB power state is only re-rendered when something triggers a draw, and
+// the e-paper keeps its image forever - so unplugging would leave the power
+// icon on screen until the next input/MQTT event. Poll the state and ask for
+// a redraw on every VBUS edge; the snapshot logic then marks the indicator
+// strip dirty (indP flip) and the icon is cleared/applied by the normal
+// render path. 500 ms is plenty: the pad is awake whenever this matters.
+static bool lastPowered = false;
+static unsigned long nextPowerPollMs = 0;
+void pollPowerIndicator() {
+  unsigned long now = millis();
+  if (now < nextPowerPollMs) return;
+  nextPowerPollMs = now + 500;
+  bool p = isPowered();
+  if (p != lastPowered) {
+    lastPowered = p;
+    requestDraw();
+  }
+}
+
 void loop() {
   esp_task_wdt_reset();
+  pollPowerIndicator();
 
   if (appState == ST_WIFI_PORTAL) {
     // Keep scanning the matrix even in the portal, otherwise the pad is
