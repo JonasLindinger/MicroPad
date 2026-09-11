@@ -237,7 +237,20 @@ async function persistPages() {
 }
 
 /* ---------------- 04 render / views ---------------- */
+// v2 loads with selectedPage = null. While pages exist that hides BOTH the
+// empty state and the editor, so the main column stays blank until the user
+// clicks a page in the sidebar - which is collapsed on mobile, so the page
+// looks completely empty. Auto-select the "home" page (else the first one)
+// so the editor always has something to show.
+function ensurePageSelected() {
+  if (!state.pages.length) return;
+  if (state.pages[state.selectedPage]) return;   // current selection still valid
+  const homeIdx = state.pages.findIndex(p => p.id === "home");
+  state.selectedPage = homeIdx >= 0 ? homeIdx : 0;
+}
+
 function renderAll() {
+  ensurePageSelected();
   renderPageList();
   renderKeymap();
   applyView();
