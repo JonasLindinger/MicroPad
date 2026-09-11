@@ -679,6 +679,14 @@ bool usbHostAttached() {
 bool isPowered() { return usbHostAttached(); }
 
 void enterLightSleep() {
+  // HARD GUARD: never sleep while USB power is present. A host-connected
+  // pad (or a charger that reports a host session) must stay awake at all
+  // times - sleeping while plugged in is what made the first interaction
+  // after a long idle feel laggy (wake + reconnect). This check sits in
+  // enterLightSleep() itself, not only at the call site, so no future code
+  // path can accidentally put a connected pad to sleep.
+  if (isPowered()) return;
+
   // KEEP the WiFi association and the MQTT session across light sleep.
   // Tearing the radio down (the previous behaviour) meant every wake had to
   // re-associate, get DHCP and redo the MQTT handshake before anything could
@@ -1928,6 +1936,8 @@ void loop() {
   // transitions. The wake-loop brake inside the if-body still applies — a
   // powered pad that just woke up must NOT immediately re-enter sleep on a
   // bouncing pin.
+  // Sleep only when truly battery-powered - the isPowered() check is the
+  // single gate here, and enterLightSleep() re-checks it as a hard guard.
   if (!active && !isPowered()) {
     // Never sleep while a refresh is in flight - the display would be left
     // half-updated (and the SPI bus mid-transaction).
