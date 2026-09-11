@@ -1,19 +1,20 @@
 <!DOCTYPE html>
-<html lang="de">
+<html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>MicroPad Config</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/static/style.css?v=4">
+<link rel="preconnect" href="/static" crossorigin>
+<link rel="preload" href="/static/assets/inter-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/static/style.css?v=6">
 </head>
 <body>
 <div id="app">
   <!-- Sidebar -->
-  <aside class="sidebar">
+  <aside class="sidebar" aria-label="Pages">
+    <button id="btn-sidebar-close" class="icon-btn sidebar-close" aria-label="Close menu" title="Close menu">✕</button>
     <div class="brand">
-      <div class="brand-mark">▣</div>
+      <div class="brand-mark" aria-hidden="true">▣</div>
       <div class="brand-text">
         <span class="brand-title">MicroPad</span>
         <span class="brand-sub">Config Generator</span>
@@ -22,50 +23,114 @@
 
     <div class="side-conn">
       <div id="conn-dot" class="conn-dot"></div>
-      <span id="conn-label">HA nicht verbunden</span>
+      <span id="conn-label">HA not connected</span>
     </div>
 
-    <div class="side-label">Seiten</div>
+    <div class="side-label">Pages</div>
     <div id="page-list" class="page-list"></div>
 
     <button id="btn-add-page" class="btn btn-ghost side-add">
-      <span>+</span> Neue Seite
+      <span aria-hidden="true">+</span> New page
     </button>
 
+    <!-- "+ New page" template popover (Vercel/Linear style card). -->
+    <div id="new-page-popover" class="template-popover hidden" role="dialog"
+         aria-label="Create a new page from a template">
+      <div class="tp-head">
+        <span class="tp-title">New page</span>
+        <button id="btn-popover-close" class="tp-close" aria-label="Close" title="Close">✕</button>
+      </div>
+      <div class="tp-sub">Pick a template to start from. Empty page keeps the current prompt flow.</div>
+      <div class="tp-list">
+        <button class="tp-card" data-template="empty">
+          <div class="tp-card-icon">▦</div>
+          <div>
+            <div class="tp-card-title">Empty page</div>
+            <div class="tp-card-desc">Blank page — just an ID and title.</div>
+          </div>
+        </button>
+        <button class="tp-card" data-template="spotify">
+          <div class="tp-card-icon">🎵</div>
+          <div>
+            <div class="tp-card-title">Spotify</div>
+            <div class="tp-card-desc">Play / pause, next, previous, volume, shuffle.</div>
+          </div>
+        </button>
+        <button class="tp-card" data-template="discord">
+          <div class="tp-card-icon">🎧</div>
+          <div>
+            <div class="tp-card-title">Discord</div>
+            <div class="tp-card-desc">Mute mic, start/stop Discord, toggle deafen.</div>
+          </div>
+        </button>
+      </div>
+    </div>
+    <div id="popover-overlay" class="tp-overlay hidden"></div>
+
     <div class="side-foot">
-      <button id="btn-settings" class="btn btn-ghost"><span>⚙</span> Einstellungen</button>
+      <div id="side-status" class="side-status" aria-live="polite">
+        <span><strong id="side-status-pages">0</strong> pages</span>
+        <span class="muted">·</span>
+        <span><strong id="side-status-entities">0</strong> entities</span>
+        <span class="ss-spacer" style="flex:1"></span>
+        <span class="side-status-conn"><span id="side-status-dot" class="ss-dot"></span></span>
+      </div>
+      <button id="btn-settings" class="btn btn-ghost-outline"><span aria-hidden="true">⚙</span> Settings</button>
     </div>
   </aside>
+
+  <!-- Sidebar overlay (mobile) -->
+  <div id="sidebar-overlay" class="overlay hidden"></div>
 
   <!-- Main -->
   <main class="main">
     <header class="topbar">
-      <div>
-        <h1 id="page-title-placeholder">Wähle oder erstelle eine Seite</h1>
-        <p id="page-id-hint" class="muted">Starte mit einer "home"-Seite, der Einstiegspunkt des Pads.</p>
+      <button id="btn-menu" class="btn btn-ghost menu-btn" aria-label="Open menu" title="Open menu">
+        <span aria-hidden="true">☰</span>
+      </button>
+      <div class="topbar-title">
+        <h1 id="page-title-placeholder">Select or create a page</h1>
+        <p id="page-id-hint" class="muted">Start with a &quot;home&quot; page — the pad&apos;s entry point.</p>
       </div>
       <div class="top-actions">
-        <button id="btn-load-current" class="btn btn-ghost">Aktuelle Seite laden</button>
-        <button id="btn-download" class="btn btn-ghost">Download</button>
-        <button id="btn-keys" class="btn btn-ghost">Tastenbelegung</button>
-        <button id="btn-generate" class="btn btn-primary">Generieren</button>
-        <button id="btn-upload" class="btn btn-accent">Zu HA hochladen ▸</button>
+        <button id="btn-load-current" class="btn btn-ghost-outline">Load current page</button>
+        <button id="btn-download" class="btn btn-ghost-outline">Load from HA</button>
+        <button id="btn-keys" class="btn btn-ghost-outline">Key layout</button>
+        <button id="btn-generate" class="btn btn-primary">Generate</button>
+        <button id="btn-upload" class="btn btn-primary">Upload to HA ▸</button>
       </div>
     </header>
 
     <!-- Empty state -->
     <section id="empty-state" class="empty-state">
-      <div class="empty-illustration">
-        <div class="pad-icon">
-          <span class="pad-line"></span><span class="pad-line"></span><span class="pad-line"></span>
-          <span class="pad-row"></span><span class="pad-row"></span><span class="pad-row"></span>
-        </div>
+      <div class="empty-illustration" aria-hidden="true">
+        <!-- three inline SVG glyphs: box → arrow → gear -->
+        <svg class="empty-svg-glyph box" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7l9-4 9 4-9 4-9-4z"/><path d="M3 7v10l9 4 9-4V7"/><path d="M12 11v10"/></svg>
+        <svg class="empty-svg-glyph arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M13 6l6 6-6 6"/></svg>
+        <svg class="empty-svg-glyph gear" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3"/><path d="M12 19v3"/><path d="M4.2 4.2l2.1 2.1"/><path d="M17.7 17.7l2.1 2.1"/><path d="M2 12h3"/><path d="M19 12h3"/><path d="M4.2 19.8l2.1-2.1"/><path d="M17.7 6.3l2.1-2.1"/></svg>
       </div>
-      <h2>Richte dein MicroPad ein</h2>
-      <p class="muted">Definiere Seiten und Items. Das Pad bekommt danach automatisch die neue Struktur über MQTT – ganz ohne Neu-Flashen.</p>
+      <h2>Set up your MicroPad</h2>
+      <p class="muted">Define pages and items. The pad automatically receives the new structure over MQTT — no re-flashing needed. Pick a template below to get started in one click.</p>
+      <div class="empty-templates" id="empty-templates">
+        <button class="tpl-card" data-template="lights">
+          <span class="tpl-card-glyph" aria-hidden="true">💡</span>
+          <span class="tpl-card-name">Lights</span>
+          <span class="tpl-card-desc">On / off / dim for every light in a room — quick controls.</span>
+        </button>
+        <button class="tpl-card" data-template="spotify">
+          <span class="tpl-card-glyph" aria-hidden="true">🎵</span>
+          <span class="tpl-card-name">Spotify</span>
+          <span class="tpl-card-desc">Play / pause, next, previous, volume, shuffle.</span>
+        </button>
+        <button class="tpl-card" data-template="discord">
+          <span class="tpl-card-glyph" aria-hidden="true">🎧</span>
+          <span class="tpl-card-name">Discord</span>
+          <span class="tpl-card-desc">Mute mic, start/stop Discord, toggle deafen.</span>
+        </button>
+      </div>
       <div class="empty-actions">
-        <button id="btn-add-page-hero" class="btn btn-primary">+ Erste Seite anlegen</button>
-        <button id="btn-upload-hero" class="btn btn-ghost">↺ Von HA laden</button>
+        <button id="btn-add-page-hero" class="btn btn-primary">+ Create blank page</button>
+        <button id="btn-upload-hero" class="btn btn-ghost-outline">↺ Load from HA</button>
       </div>
     </section>
 
@@ -73,26 +138,26 @@
     <section id="editor" class="editor hidden">
       <div class="page-meta card">
         <div class="field">
-          <label>Seiten-ID</label>
-          <input id="f-id" type="text" placeholder="home">
+          <label for="f-id">Page ID</label>
+          <input id="f-id" type="text" placeholder="home" autocomplete="off">
         </div>
         <div class="field">
-          <label>Titel</label>
-          <input id="f-title" type="text" placeholder="Home">
+          <label for="f-title">Title</label>
+          <input id="f-title" type="text" placeholder="Home" autocomplete="off">
         </div>
         <div class="field">
-          <label>Übergeordnete Seite</label>
-          <select id="f-parent" placeholder="(keine)"></select>
+          <label for="f-parent">Parent page</label>
+          <select id="f-parent"></select>
         </div>
       </div>
 
       <div class="card page-key-card">
         <div class="card-head">
-          <h2>Tastenbelegung dieser Seite</h2>
-          <button id="btn-page-keys" class="btn btn-ghost btn-sm">Bearbeiten</button>
+          <h2>Key layout for this page</h2>
+          <button id="btn-page-keys" class="btn btn-ghost btn-sm">Edit</button>
         </div>
-        <p class="muted" style="margin:0" id="page-key-summary">
-          Erbt die Tastenbelegung der übergeordneten Seite. Hier kannst du sie für diese Seite überschreiben.
+        <p class="muted no-margin" id="page-key-summary">
+          No overrides yet — this page uses the global key layout for every key. Click "Edit" to override keys for this page only.
         </p>
       </div>
 
@@ -102,7 +167,7 @@
           <button id="btn-add-item" class="btn btn-primary btn-sm">+ Item</button>
         </div>
         <div id="item-list" class="item-list"></div>
-        <div id="item-empty" class="item-empty muted">Noch keine Items. Klicke „+ Item“.</div>
+        <div id="item-empty" class="item-empty muted">No items yet. Click &quot;+ Item&quot;.</div>
       </div>
     </section>
 
@@ -110,40 +175,40 @@
     <section id="keymap-view" class="editor hidden">
       <div class="card">
         <div class="card-head">
-          <h2>Tastenbelegung</h2>
+          <h2>Key layout</h2>
           <div class="top-actions">
-            <button id="btn-keymap-scope" class="btn btn-ghost btn-sm">Wechseln zu: Seite</button>
-            <button id="btn-keymap-defaults" class="btn btn-ghost btn-sm">Standard wiederherstellen</button>
-            <button id="btn-keymap-back" class="btn btn-primary btn-sm">Zurück zu den Seiten</button>
+            <button id="btn-keymap-scope" class="btn btn-ghost btn-sm">Edit a single page…</button>
+            <button id="btn-keymap-defaults" class="btn btn-ghost btn-sm">Restore defaults</button>
+            <button id="btn-keymap-back" class="btn btn-primary btn-sm">Back to pages</button>
           </div>
         </div>
-        <p class="muted" style="margin:0 0 16px" id="keymap-scope-hint">
-          Globale Belegung – gilt für alle Seiten, die keine eigene Belegung haben.
+        <p class="muted no-margin keymap-hint" id="keymap-scope-hint">
+          Global layout — applies to all pages without their own layout.
         </p>
 
         <div class="keymap-layout">
-          <!-- Das Pad -->
+          <!-- The pad -->
           <div class="pad-device">
             <div class="pad-screen">
               <span class="pad-screen-title">MicroPad</span>
-              <span class="pad-screen-dots">
+              <span class="pad-screen-dots" aria-hidden="true">
                 <i class="pd"></i><i class="pd pd-b"></i><i class="pd"></i>
               </span>
             </div>
             <div class="pad-body">
               <div class="pad-grid" id="pad-grid"></div>
               <div class="pad-encoder">
-                <button class="enc-knob" data-key="r0c3" title="Encoder drücken (R1C4)">
-                  <span class="enc-mark"></span>
+                <button class="enc-knob" data-key="r0c3" aria-label="Encoder press (R1C4)" title="Encoder press (R1C4)">
+                  <span class="enc-mark" aria-hidden="true"></span>
                 </button>
-                <button class="enc-dir" data-key="enc_up" title="Rechts drehen">↻</button>
-                <button class="enc-dir" data-key="enc_down" title="Links drehen">↺</button>
-                <div class="enc-hint">drücken&nbsp;=&nbsp;R1C4</div>
+                <button class="enc-dir" data-key="enc_up" aria-label="Encoder right" title="Rotate right">↻</button>
+                <button class="enc-dir" data-key="enc_down" aria-label="Encoder left" title="Rotate left">↺</button>
+                <div class="enc-hint">press&nbsp;=&nbsp;R1C4</div>
               </div>
             </div>
           </div>
 
-          <!-- Aktionen der gewählten Taste -->
+          <!-- Actions for the selected key -->
           <aside class="key-detail" id="key-detail"></aside>
         </div>
         <datalist id="keymap-entities"></datalist>
@@ -154,75 +219,110 @@
 
 <!-- Settings drawer -->
 <div id="drawer-overlay" class="overlay hidden"></div>
-<aside id="settings-drawer" class="drawer">
+<aside id="settings-drawer" class="drawer" role="dialog" aria-label="Home Assistant settings">
   <div class="drawer-head">
     <h2>Home Assistant</h2>
-    <button id="btn-close-drawer" class="icon-btn">✕</button>
+    <button id="btn-close-drawer" class="icon-btn" aria-label="Close" title="Close">✕</button>
   </div>
   <div class="drawer-body">
     <div class="field">
-      <label>HA URL</label>
-      <input id="s-ha-url" type="text">
+      <label for="s-ha-url">HA URL</label>
+      <input id="s-ha-url" type="text" autocomplete="off">
     </div>
     <div class="field">
-      <label>Access Token</label>
+      <label for="s-ha-token">Access token</label>
       <input id="s-ha-token" type="password" autocomplete="off">
-      <div class="field-hint">Long-Lived Access Token aus Profil → Sicherheit.</div>
+      <div class="field-hint">Long-lived access token from Profile → Security.</div>
     </div>
     <div class="field">
-      <label>MQTT Broker IP</label>
-      <input id="s-mqtt" type="text">
+      <label for="s-mqtt">MQTT broker IP</label>
+      <input id="s-mqtt" type="text" autocomplete="off">
     </div>
 
-    <h3 class="drawer-sub">SSH-Upload (alternativ zur API)</h3>
+    <h3 class="drawer-sub">SSH upload (alternative to API)</h3>
     <div class="field">
-      <label>SSH Host</label>
-      <input id="s-ssh-host" type="text">
+      <label for="s-ssh-host">SSH host</label>
+      <input id="s-ssh-host" type="text" autocomplete="off">
     </div>
     <div class="field">
-      <label>SSH User</label>
-      <input id="s-ssh-user" type="text">
+      <label for="s-ssh-user">SSH user</label>
+      <input id="s-ssh-user" type="text" autocomplete="off">
     </div>
     <div class="field">
-      <label>SSH Key Pfad</label>
-      <input id="s-ssh-key" type="text">
+      <label for="s-ssh-key">SSH key path</label>
+      <input id="s-ssh-key" type="text" autocomplete="off">
     </div>
     <div class="field">
-      <label>Remote Config-Pfad</label>
-      <input id="s-remote" type="text" placeholder="/srv/homeassistant/automations.yaml">
+      <label for="s-remote">Remote config path</label>
+      <input id="s-remote" type="text" placeholder="/srv/homeassistant/automations.yaml" autocomplete="off">
     </div>
 
     <div class="drawer-actions">
-      <button id="btn-test" class="btn btn-ghost">Verbindung testen</button>
-      <button id="btn-fetch-entities" class="btn btn-ghost">Entities laden</button>
-      <button id="btn-save-settings" class="btn btn-primary">Speichern</button>
+      <button id="btn-test" class="btn btn-ghost">Test connection</button>
+      <button id="btn-fetch-entities" class="btn btn-ghost">Load entities</button>
+      <button id="btn-save-settings" class="btn btn-primary">Save</button>
     </div>
   </div>
 </aside>
 
 <!-- Item editor modal -->
 <div id="item-modal-bg" class="modal-bg hidden"></div>
-<div id="item-modal" class="modal hidden">
+<div id="item-modal" class="modal hidden" role="dialog" aria-label="Item editor">
   <div class="modal-head">
     <h2 id="item-modal-title">Item</h2>
-    <button id="btn-close-modal" class="icon-btn">✕</button>
+    <button id="btn-close-modal" class="icon-btn" aria-label="Close" title="Close">✕</button>
   </div>
   <div class="modal-body" id="item-form"></div>
   <div class="modal-foot">
-    <button id="btn-item-cancel" class="btn btn-ghost">Abbrechen</button>
-    <button id="btn-item-save" class="btn btn-primary">Speichern</button>
+    <button id="btn-item-cancel" class="btn btn-ghost">Cancel</button>
+    <button id="btn-item-save" class="btn btn-primary">Save</button>
   </div>
 </div>
 
-<div id="toast-wrap" class="toast-wrap"></div>
+<div id="toast-wrap" class="toast-wrap" role="status" aria-live="polite"></div>
 <div id="gen-overlay" class="gen-overlay hidden">
   <div class="gen-panel">
-    <div class="gen-head"><h2>Ergebnis</h2>
-      <button id="btn-gen-close" class="icon-btn">✕</button></div>
+    <div class="gen-head"><h2>Result</h2>
+      <button id="btn-gen-close" class="icon-btn" aria-label="Close" title="Close">✕</button></div>
+    <div class="gen-toolbar" role="toolbar" aria-label="Result view options">
+      <div class="seg" id="gen-format" role="group" aria-label="Output format">
+        <button type="button" data-format="raw">Raw</button>
+        <button type="button" data-format="yaml" class="on">YAML</button>
+        <button type="button" data-format="merged">Merged</button>
+      </div>
+      <span id="gen-meta" class="muted" style="font-size:12px"></span>
+      <div class="right">
+        <button id="btn-gen-copy" type="button" class="btn btn-ghost btn-sm">Copy</button>
+        <button id="btn-gen-download" type="button" class="btn btn-ghost btn-sm">Download</button>
+      </div>
+    </div>
     <div class="gen-body"><pre id="gen-output"></pre></div>
   </div>
 </div>
 
-<script src="/static/app.js?v=4"></script>
+<!-- W-3 confirm / prompt modal (replaces window.confirm + window.prompt) -->
+<div id="confirm-modal-bg" class="modal-bg hidden"></div>
+<div id="confirm-modal" class="modal modal-confirm hidden" role="dialog" aria-labelledby="confirm-title">
+  <div class="modal-head">
+    <h2 id="confirm-title">Confirm</h2>
+    <button id="btn-confirm-close" class="icon-btn" aria-label="Close" title="Close">✕</button>
+  </div>
+  <div class="modal-body">
+    <p id="confirm-body" style="margin:4px 0 12px"></p>
+    <div id="confirm-input-wrap" class="field hidden">
+      <label for="confirm-input" id="confirm-input-label">Name</label>
+      <input id="confirm-input" type="text" autocomplete="off">
+    </div>
+  </div>
+  <div class="modal-foot split" style="width:100%">
+    <span id="confirm-hint" class="muted" style="font-size:11.5px;align-self:center"></span>
+    <div class="right">
+      <button id="btn-confirm-no" class="btn btn-ghost-outline">Cancel</button>
+      <button id="btn-confirm-yes" class="btn btn-primary">Confirm</button>
+    </div>
+  </div>
+</div>
+
+<script src="/static/app.js?v=6"></script>
 </body>
 </html>

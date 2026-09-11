@@ -15,8 +15,11 @@ Storage: a single JSON file per user (no database dependency).
 """
 
 import os
+import gzip
 import json
 import tempfile
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 from flask import Flask, jsonify, request, send_from_directory
@@ -48,6 +51,49 @@ DEFAULT_SETTINGS = {
 }
 
 app = Flask(__name__, static_folder=str(STATIC_DIR), static_url_path="/static")
+
+
+# ---------------------------------------------------------------------------
+# Health
+# ---------------------------------------------------------------------------
+@app.get("/healthz")
+def healthz():
+    # Cheap liveness probe for a load balancer or uptime check. Returns the
+    # current unix timestamp so callers can spot stale caches vs. an actual
+    # outage (the body changes on every hit).
+    return jsonify({"ok": True, "ts": int(time.time()),
+                    "iso": datetime.now(timezone.utc).isoformat()})
+
+
+# ---------------------------------------------------------------------------
+# Static assets: gzip + long cache lifetime
+# ---------------------------------------------------------------------------
+# index.html is served no-cache (asset versions are bumped with ?v=N in the
+# query string), so everything under /static can be cached "immutable".
+_GZIP_TYPES = ("text/", "application/javascript", "application/json")
+
+
+@app.after_request
+def _compress_and_cache(resp):
+    if request.path.startswith("/static"):
+        resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    if (request.path.startswith("/static")
+            and resp.status_code == 200
+            and "gzip" in request.headers.get("Accept-Encoding", "")
+            and resp.mimetype.startswith(_GZIP_TYPES)):
+        # send_from_directory streams the file (direct passthrough), so
+        # get_data() raises RuntimeError there -> read the raw payload.
+        try:
+            data = resp.get_data()
+        except RuntimeError:
+            data = b"".join(resp.response)
+        if len(data) > 500:
+            data = gzip.compress(data)
+            resp.set_data(data)
+            resp.headers["Content-Encoding"] = "gzip"
+            resp.headers["Content-Length"] = str(len(data))
+            resp.headers["Vary"] = "Accept-Encoding"
+    return resp
 
 
 # ---------------------------------------------------------------------------
@@ -219,9 +265,18 @@ def upload_api():
                 effective_keymap_for_page(pages, home["id"], keymap)))
         except HAClientError:
             pass
+        # Republish the full page catalog (retained) so the pad's cache can
+        # never go stale after a config change - otherwise navigation can
+        # show an outdated page (wrong first item on a category) until the
+        # next reboot. Requires firmware with an 8 KB MQTT buffer (catalog
+        # is ~6 KB); a too-small buffer truncates the JSON silently.
+        try:
+            c.publish_all_pages(generate_all_pages_payload(pages))
+        except HAClientError:
+            pass
         return jsonify({"ok": True,
                         "message": "Uploaded via Config API, reloaded automations, "
-                                   "published the home page and the key map to the pad."})
+                                   "published the home page, key map and page catalog to the pad."})
     except HAClientError as e:
         return jsonify({"ok": False, "error": str(e)}), 400
 

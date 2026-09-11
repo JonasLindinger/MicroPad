@@ -61,10 +61,17 @@ def suggest_name(entity_id: str):
 # encoder press) plus the two encoder directions.
 KEY_ACTION_TYPES = ["none", "enter", "back", "home", "settings", "scroll",
                     "scroll_up", "scroll_down", "navigate", "toggle", "on",
-                    "off", "press"]
+                    "off", "press",
+                    # Media transport (delegated to HA media_player services).
+                    # The automation maps these to media_play_pause / media_next_track /
+                    # media_previous_track and to volume_up / volume_down on a
+                    # media_player.* entity.
+                    "volume_up", "volume_down", "media_next", "media_prev"]
 
 # Actions that need an entity / a target page.
-KEY_ACTIONS_NEED_ENTITY = {"toggle", "on", "off", "press"}
+KEY_ACTIONS_NEED_ENTITY = {"toggle", "on", "off", "press",
+                           "volume_up", "volume_down",
+                           "media_next", "media_prev"}
 KEY_ACTIONS_NEED_PAGE = {"navigate"}
 
 KEYMAP_KEYS = [

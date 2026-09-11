@@ -102,6 +102,19 @@ class HAClient:
             "qos": 1,
         })
 
+    def publish_all_pages(self, catalog_payload, retain=True):
+        # Full page catalog on micropad/pages/all (retained). The pad caches
+        # every page from this at boot/reconnect for instant navigation. If it
+        # stays stale after a config change, the pad can show outdated pages
+        # (e.g. wrong first item on a category page) - republish on every
+        # upload so that can never happen.
+        return self.request("/api/services/mqtt/publish", method="POST", payload={
+            "topic": "micropad/pages/all",
+            "payload": catalog_payload,
+            "retain": retain,
+            "qos": 1,
+        })
+
     def push_mqtt_sensor(self):
         # MQTT Last-Action sensor used by "Load current page from HA".
         payload = {

@@ -160,11 +160,16 @@ struct MenuPage {
 struct RenderSnapshot {
   MenuPage page;
   bool loading;
-  bool indM, indW, indT;
+  bool indM, indW, indT, indP;
   bool inEdit;
   int  editIdx;
   float editVal;
   bool portal;
+  // F-3: bitmask of rows that need a partial refresh.
+  //   bit 0 = top strip (indicator + title bar)
+  //   bit 1..4 = one item row each (selected-index 0..3)
+  //   0xFFFF = DIRTY_ALL_ROWS sentinel ⇒ full refresh (existing path)
+  uint16_t dirty_rows;
 };
 
 RenderSnapshot renderBuf[2];
@@ -230,7 +235,7 @@ static const int8_t ENC_TABLE[16] = {0,0,1,0, 0,0,0,-1, -1,0,0,0, 0,1,0,0};
 String foundNetworks[20];
 int foundNetworkCount = 0;
 
-char mqttServer[64] = "192.168.0.100"; // EDIT: your MQTT broker address
+char mqttServer[64] = "192.168.178.103"; // EDIT: your MQTT broker address
 char mqttUser[32]   = "micropad";      // EDIT: your MQTT username
 char mqttPass[64]   = "replace-me";    // EDIT: your MQTT password (do not commit real credentials)
 char wifiSSID[64]   = "";
@@ -553,6 +558,13 @@ bool usbHostAttached() {
 #endif
 }
 
+// Returns true when there is USB power available (VBUS 5V delivered via the USB host connection).
+// Same hardware signal as usbHostAttached() — renamed for honesty: the firmware treats a USB host
+// connection as "powered" because the VBUS rail it pulls 5V from is what the on-board charge IC
+// (separate from this ESP32) draws from. When this is true, even an idle pad should NOT light-sleep,
+// because macros fired from a powered-down pad feel laggy on wake.
+bool isPowered() { return usbHostAttached(); }
+
 void enterLightSleep() {
   // KEEP the WiFi association and the MQTT session across light sleep.
   // Tearing the radio down (the previous behaviour) meant every wake had to
@@ -673,6 +685,85 @@ void stampCentered(const char* text, const GFXfont* font, int centerY, bool inve
 }
 
 
+// F-3: partial-refresh helpers called from renderTaskLoop() inside the
+// setPartialWindow + firstPage/nextPage loop. They assume the caller has
+// just called display.fillScreen(GxEPD_WHITE) on the current page buffer
+// and only emit pixels that belong to their band; pixels written outside
+// the partial window are ignored by the panel.
+
+// Bit 0 band: top title strip. Title bar + title text + indicator cell.
+static void drawIndicatorStrip(const RenderSnapshot& R) {
+  landFillRect(0, 0, 296, 22, GxEPD_BLACK);
+  int titleBase = baselineCentered(11, R.page.title, &FreeMonoBold9pt7b);
+  stampText(R.page.title, &FreeMonoBold9pt7b, 4, titleBase, true);
+
+  if (R.indM) {
+    landFillRect(282, 5, 8, 8, GxEPD_WHITE);
+  } else if (R.indW) {
+    landFillRect(282, 5, 8, 8, GxEPD_BLACK);
+    landFillRect(284, 7, 4, 4, GxEPD_WHITE);
+  } else if (R.indT) {
+    landFillRect(282, 5, 3, 3, GxEPD_WHITE);
+    landFillRect(287, 10, 3, 3, GxEPD_WHITE);
+  } else if (R.indP) {
+    // ⚡ lightning bolt, FreeMonoBold9pt7b glyph at the indicator slot
+    stampCentered("\xe2\x9a\xa1", &FreeMonoBold9pt7b, 9, false);
+  }
+}
+
+// Bit 1..4 band: one visible item row only. bandIdx is 0..3 (== visible row).
+// Selection is read from the snapshot; the cursor strip and the label/value
+// text are emitted. The auto-scroll rule used by drawPage is preserved so
+// the partial matches the layout of the full pass.
+static void drawRowBand(const RenderSnapshot& R, int bandIdx) {
+  const int ITEM_H = 24;
+  const int VISIBLE = 4;
+  const int START_Y = 28;
+
+  // Same auto-scroll rule drawPage uses to keep the cursor on-screen.
+  int scrollOffset = R.page.scrollOffset;
+  if (R.page.selected < scrollOffset)
+    scrollOffset = R.page.selected;
+  if (R.page.selected >= scrollOffset + VISIBLE)
+    scrollOffset = R.page.selected - VISIBLE + 1;
+
+  int i = bandIdx;
+  int idx = scrollOffset + i;
+  if (i < 0 || i >= VISIBLE || idx >= R.page.itemCount) return;
+  int y = START_Y + i * ITEM_H;
+  bool sel = (idx == R.page.selected);
+
+  if (sel) landFillRect(2, y, 292, ITEM_H - 2, GxEPD_BLACK);
+  else      landFillRect(2, y + ITEM_H - 2, 292, 1, GxEPD_LIGHTGREY);
+
+  const MenuItem& it = R.page.items[idx];
+  const char* st  = it.state[0] ? it.state : "";
+  const char* val = it.value[0] ? it.value : st;
+  const char* shown = "";
+  if (strcmp(it.type, "light") == 0 || strcmp(it.type, "switch") == 0) {
+    shown = st;
+  } else if (strcmp(it.type, "sensor") == 0) {
+    shown = st;
+  } else if (strcmp(it.type, "number") == 0 || strcmp(it.type, "media_player") == 0) {
+    shown = val;
+  }
+
+  char line[64];
+  if (shown[0]) {
+    const int MAX_CHARS = 26;
+    int vlen = (int)strlen(shown);
+    int room = MAX_CHARS - vlen - 2;
+    if (room < 6) room = 6;
+    char nm[40];
+    snprintf(nm, sizeof(nm), "%.*s", room, it.name);
+    snprintf(line, sizeof(line), "%s: %s", nm, shown);
+  } else {
+    snprintf(line, sizeof(line), "%s", it.name);
+  }
+  int base = baselineCentered(y + (ITEM_H - 2) / 2, line, &FreeMonoBold9pt7b);
+  stampText(line, &FreeMonoBold9pt7b, 6, base, sel);
+}
+
 void drawPage(const RenderSnapshot& R) {
   // Reads ONLY its own snapshot (which the main loop is not writing any
   // more), so the input loop keeps running while this ~450 ms refresh is in
@@ -703,6 +794,9 @@ void drawPage(const RenderSnapshot& R) {
     } else if (R.indT) {
       landFillRect(282, 5, 3, 3, GxEPD_WHITE);
       landFillRect(287, 10, 3, 3, GxEPD_WHITE);
+    } else if (R.indP) {
+      // ⚡ lightning bolt, FreeMonoBold9pt7b glyph at the indicator slot
+      stampCentered("\xe2\x9a\xa1", &FreeMonoBold9pt7b, 9, false);
     }
 
     const int ITEM_H = 24;
@@ -794,6 +888,20 @@ void drawPage(const RenderSnapshot& R) {
 const unsigned long MIN_REFRESH_GAP_MS = 120;
 unsigned long lastRefreshEndMs = 0;
 
+// F-3: bitmask the render task consults to pick between full / strip /
+// multi-band partial refresh. Bit 0 = top strip (indicator + title bar);
+// bits 1..4 = the four visible item rows (selected-index 0..3). All-page
+// refreshes use the DIRTY_ALL_ROWS sentinel so they re-enter the existing
+// firstPage/fillScreen path. Throttle (MIN_REFRESH_GAP_MS above) is what
+// makes the partial path safe; without it, writes-as-fast-as-possible would
+// drain the e-paper and the battery.
+const uint16_t DIRTY_ROW_TOP   = (1u << 0);
+const uint16_t DIRTY_ROW_BAND1 = (1u << 1);
+const uint16_t DIRTY_ROW_BAND2 = (1u << 2);
+const uint16_t DIRTY_ROW_BAND3 = (1u << 3);
+const uint16_t DIRTY_ROW_BAND4 = (1u << 4);
+const uint16_t DIRTY_ALL_ROWS  = 0xFFFFu;
+
 void requestDraw() {
   // Non-blocking: the caller (main loop) owns all page state, so it can fill
   // a snapshot without interfering with the render task. The write always
@@ -805,15 +913,84 @@ void requestDraw() {
   if (renderBusy) w = 1 - renderDrawIdx;          // never the one being drawn
   else            w = 1 - renderReadIdx;          // never the last published
   RenderSnapshot& S = renderBuf[w];
+
+  // F-3: dirty_rows = bitmask of rows that changed since this buffer was
+  // last written. read S (the buffer we are about to overwrite) and diff
+  // against the live state. The actual partial/band dispatch lives in
+  // renderTaskLoop().
+  uint16_t dirty_rows = 0;
+
+  // Indicator cell flip (any of M/W/T/P) -> top strip only.
+  bool indFlipped =
+    S.indM != indicatorStateM ||
+    S.indW != indicatorStateW ||
+    S.indT != indicatorStateTrying ||
+    S.indP != isPowered();
+  if (indFlipped) dirty_rows |= DIRTY_ROW_TOP;
+
+  // Portal / in-edit overlay toggles cover the whole panel -> full refresh.
+  if (S.portal != showPortalScreen) dirty_rows = DIRTY_ALL_ROWS;
+  if (S.inEdit != inEditMode)       dirty_rows = DIRTY_ALL_ROWS;
+
+  // Page-source changes (id, title, parent, items, count, scrollOffset)
+  // also force a full refresh - keeps the visual correct on page change.
+  bool pageChanged =
+    strcmp(S.page.id,      currentPage.id)      != 0 ||
+    strcmp(S.page.title,   currentPage.title)   != 0 ||
+    strcmp(S.page.parent,  currentPage.parent)  != 0 ||
+    S.page.itemCount    != currentPage.itemCount   ||
+    S.page.scrollOffset != currentPage.scrollOffset;
+  if (pageChanged) dirty_rows = DIRTY_ALL_ROWS;
+
+  // Any cell of any visible item changing (state reading, value, label,
+  // type, entity) warrants a panel-wide redraw rather than a per-cell
+  // partial - the body is a single render pass and avoiding a per-text-cell
+  // partial-refresh diff keeps the e-paper clean.
+  bool itemsChanged = false;
+  int maxSeen = (S.page.itemCount > currentPage.itemCount)
+                  ? S.page.itemCount : currentPage.itemCount;
+  for (int i = 0; i < 20 && i < maxSeen; i++) {
+    if (i >= S.page.itemCount || i >= currentPage.itemCount) {
+      itemsChanged = true; break;
+    }
+    const MenuItem& a = S.page.items[i];
+    const MenuItem& b = currentPage.items[i];
+    if (strcmp(a.name,   b.name)   != 0) { itemsChanged = true; break; }
+    if (strcmp(a.state,  b.state)  != 0) { itemsChanged = true; break; }
+    if (strcmp(a.value,  b.value)  != 0) { itemsChanged = true; break; }
+    if (strcmp(a.type,   b.type)   != 0) { itemsChanged = true; break; }
+    if (strcmp(a.entity, b.entity) != 0) { itemsChanged = true; break; }
+  }
+  if (itemsChanged) dirty_rows = DIRTY_ALL_ROWS;
+
+  // Selection-cursor movement, only when the cursor stayed inside the four
+  // visible rows AND no full-refresh trigger fired above. Both old and new
+  // bands are dirtied: erase the stale cursor on the old row and draw it on
+  // the new row in the same refresh.
+  if (S.page.selected != currentPage.selected &&
+      dirty_rows != DIRTY_ALL_ROWS) {
+    int oldSel = S.page.selected;
+    int newSel = currentPage.selected;
+    if (oldSel >= 0 && oldSel < 4) dirty_rows |= (uint16_t)(1u << (oldSel + 1));
+    if (newSel >= 0 && newSel < 4) dirty_rows |= (uint16_t)(1u << (newSel + 1));
+  }
+
   memcpy(&S.page, &currentPage, sizeof(MenuPage));
   S.loading = loadingPage;
   S.indM = indicatorStateM;
   S.indW = indicatorStateW;
   S.indT = indicatorStateTrying;
+  S.indP = isPowered();
+  // F-2: publish micropad/power heartbeat whenever the powered state flips.
+  // publishPowerState() is internally rate-limited (state-change only), so
+  // calling it every render pass is fine — at most one retained MQTT publish
+  // per VBUS edge. No-op while mqtt is disconnected.
+  publishPowerState();
   S.inEdit = inEditMode;
   S.editIdx = editItemIndex;
   S.editVal = editValue;
   S.portal = showPortalScreen;
+  S.dirty_rows = dirty_rows;
   renderReadIdx = w;      // publish (only now is the buffer read by the task)
   renderRequested = true;
   // Wake the render task explicitly. Previously it polled with delay(1),
@@ -844,7 +1021,54 @@ void renderTaskLoop(void* param) {
     renderRequested = false;
     renderBusy = true;
     renderDrawIdx = renderReadIdx;
-    drawPage(renderBuf[renderDrawIdx]);
+    const RenderSnapshot& RSP = renderBuf[renderDrawIdx];
+
+    // F-3: pick the cheapest of three refresh paths from the dirty_rows
+    // bitmask that requestDraw() set on this snapshot.
+    //
+    //   Branch A - dirty_rows == DIRTY_ALL_ROWS (page change, overlay,
+    //                                       item cell text/value change):
+    //                                       full-panel firstPage/fillScreen
+    //                                       pass. Behaviour-preserving.
+    //   Branch B - dirty_rows == DIRTY_ROW_TOP only (indicator flip):
+    //                                       setPartialWindow(0,0,16,296) and
+    //                                       repaint the top strip only.
+    //   Branch C - any other mix (selection-cursor move, mostly):
+    //                                       loop per set bit, set a 16-px
+    //                                       column partial-window for each
+    //                                       and redraw just that row band.
+    //
+    // Every branch exits with clear_dirty() so a stale bit from the
+    // previous frame cannot re-fire a partial refresh on the next pass.
+    if (RSP.dirty_rows == DIRTY_ALL_ROWS) {
+      // ---- Branch A: full refresh ----
+      drawPage(RSP);
+    } else if (RSP.dirty_rows == DIRTY_ROW_TOP) {
+      // ---- Branch B: indicator strip only ----
+      display.setPartialWindow(0, 0, 16, 296);
+      display.firstPage();
+      do {
+        display.fillScreen(GxEPD_WHITE);
+        drawIndicatorStrip(RSP);
+      } while (display.nextPage());
+    } else {
+      // ---- Branch C: union of row bands (per-bit partial refresh) ----
+      for (int b = 0; b <= 4; ++b) {
+        if (!(RSP.dirty_rows & (1u << b))) continue;
+        // bit 0 (TOP) handled in Branch B; the loop here covers bands 1..4.
+        if (b == 0) continue;
+        display.setPartialWindow(b * 16, 0, 16, 296);
+        display.firstPage();
+        do {
+          display.fillScreen(GxEPD_WHITE);
+          drawRowBand(RSP, b - 1);   // bit 1 -> visible row 0, ...
+        } while (display.nextPage());
+      }
+    }
+
+    // clear_dirty: don't let the same dirty bit stick across refreshes.
+    renderBuf[renderDrawIdx].dirty_rows = 0;
+
     renderBusy = false;
     lastRefreshEndMs = millis();
     lastDrawMs = millis();
@@ -1051,10 +1275,10 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   // PubSubClient reports the STORED length even if it had to truncate the
   // payload at the buffer limit. Writing payload[length]='\0' with a
   // saturated buffer would land ONE byte past the heap buffer -> memory
-  // corruption. Cap the write first: anything beyond ~8 KB is a truncated
-  // catalog anyway and can only fail the JSON parse below, never corrupt
-  // RAM. Keep in sync with mqtt.setBufferSize().
-  if (length > 8000) length = 8000;
+  // Cap pointless. Anything beyond the buffer is a truncated catalog and
+  // can only fail the JSON parse below, never corrupt RAM. Keep in sync
+  // with mqtt.setBufferSize().
+  if (length > 16380) length = 16380;
   payload[length] = '\0';
   const char* json = (const char*)payload;
 
@@ -1171,6 +1395,32 @@ void flushPending() {
   }
 }
 
+// -----------------------------------------------------------------------------
+// micropad/power heartbeat (F-2)
+// -----------------------------------------------------------------------------
+// Published to MQTT topic "micropad/power" (retained). Tells HA whether the
+// pad is VBUS-powered right now, whether the USB host has attached the CDC
+// link, and what millis() reading we last sampled at. vbus_mv is reserved
+// for a future ADC-equipped board revision; emitted as JSON null so the
+// schema is stable today.
+// Rate-limited: only publishes when the powered-state bit flips vs. the
+// last sample we sent. Function-static so the throttle survives across
+// loop passes without polluting file-scope state.
+void publishPowerState() {
+  static bool lastPoweredSeen = false;
+  bool nowPowered = isPowered();
+  if (nowPowered == lastPoweredSeen) return;
+  lastPoweredSeen = nowPowered;
+  if (!mqttConnected || mqtt.connected() == false) return;
+  StaticJsonDocument<192> doc;
+  doc["powered"]  = nowPowered;
+  doc["usb_host"] = usbHostAttached();
+  doc["vbus_mv"]  = nullptr;   // reserved (no ADC equipped)
+  doc["since_ms"] = millis();
+  char buf[192]; size_t n = serializeJson(doc, buf, sizeof(buf));
+  mqtt.publish("micropad/power", (const uint8_t*)buf, n, true);
+}
+
 bool connectMqtt() {
   mqtt.setServer(mqttServer, 1883);
   mqtt.setCallback(mqttCallback);
@@ -1180,13 +1430,14 @@ bool connectMqtt() {
   mqtt.setSocketTimeout(1);
   mqtt.setKeepAlive(30);
   // The boot-time "pages/all" answer contains EVERY page and easily exceeds
-  // 2 KB (currently ~6 KB with a full menu tree). PubSubClient does NOT drop
-  // an oversized message: it quietly TRUNCATES the payload at the buffer limit
+  // 2 KB (currently ~6 KB with a full menu tree; per-page effective keymap
+  // overlay pushes the worst case higher). PubSubClient does NOT drop an
+  // oversized message: it quietly TRUNCATES the payload at the buffer limit
   // and still calls the callback with the cut-off JSON. The page cache then
-  // never gets a valid update and navigation silently shows stale content
-  // (e.g. a wrong first item on a category page). Buffer must cover the full
-  // catalog: topic+headers eat ~24 B on top of the payload.
-  mqtt.setBufferSize(8192);
+  // never gets a valid update and navigation silently shows stale content.
+  // Buffer must cover the full catalog: topic+headers eat ~24 B on top of
+  // the payload.
+  mqtt.setBufferSize(16384);
   if (mqtt.connect("micropad", mqttUser, mqttPass)) {
     mqtt.subscribe("micropad/page/current");
     mqtt.subscribe("micropad/pages/all");
@@ -1608,9 +1859,15 @@ void loop() {
   // in renderTaskLoop(); this loop only sets renderRequested, so buttons are
   // scanned continuously and presses are never swallowed mid-refresh.
 
-  // Do not sleep while connected to a USB host (PC) - keep the device awake
-  // for flashing / development. Only the battery-powered case sleeps.
-  if (!active && !usbHostAttached()) {
+  // Do not sleep while powered via USB host (PC / charger with data lines) -
+  // keep the device awake for flashing, development and fast macro response.
+  // Only the truly battery-powered case sleeps. F-2 gate now reads isPowered()
+  // (the renamed usbHostAttached() — same signal, honest label) so the powered
+  // path can flip the modem-sleep off and redraw the indicator when state
+  // transitions. The wake-loop brake inside the if-body still applies — a
+  // powered pad that just woke up must NOT immediately re-enter sleep on a
+  // bouncing pin.
+  if (!active && !isPowered()) {
     // Never sleep while a refresh is in flight - the display would be left
     // half-updated (and the SPI bus mid-transaction).
     unsigned long waitStart = millis();
@@ -1623,6 +1880,13 @@ void loop() {
       DBG("going to sleep\n");
       enterLightSleep();
     }
+  } else if (isPowered()) {
+    // Powered path: keep the radio ready (modem sleep OFF so MQTT latency
+    // is bounded) and refresh the indicator so the ⚡ glyph appears the
+    // instant VBUS rises. requestDraw() is a coalescing flag setter — safe
+    // to call every loop pass.
+    WiFi.setSleep(false);
+    requestDraw();
   }
 
   delay(2);
