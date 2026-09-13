@@ -1,0 +1,385 @@
+/* AI-assisted development — firmware, HA automation, config generator and docs were created with AI (LLM) help, reviewed and tested by the author. Provided as-is, without warranty; verify on your own hardware, don't use for safety-critical applications. */
+/* ---- Responsive workspace grid ----
+   Three columns on desktop, two on tablet (keymap full-width underneath),
+   one column below 768px. Every track and grid item can shrink (minmax 0) so
+   long entity IDs or status text never force horizontal document scroll. */
+.workspace {
+  display: grid;
+  grid-template-columns: minmax(14rem, 0.8fr) minmax(20rem, 1.4fr) minmax(22rem, 1fr);
+  gap: 1rem;
+  align-items: start;
+}
+
+.workspace > *,
+.side-panel > * {
+  min-width: 0;
+}
+
+.side-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+/* 44px touch-target minimum for every interactive control plus intrinsic
+   sizing so long labels cannot overflow their column. */
+button,
+input,
+select {
+  min-height: 44px;
+  max-width: 100%;
+}
+
+/* Long entity IDs / status text wrap rather than overflowing the column. */
+#operation-status,
+#app-status,
+.binding-origin,
+.binding-hint,
+ul.entity-listbox li {
+  overflow-wrap: anywhere;
+}
+
+/* Keyboard-only focus ring, visible on buttons/links/inputs/tree items. */
+:focus-visible {
+  outline: 3px solid #2457d6;
+  outline-offset: 2px;
+}
+
+/* Tablet: two columns; the keymap (with its full-width side panel) spans both. */
+@media (max-width: 1099px) and (min-width: 768px) {
+  .workspace {
+    grid-template-columns: minmax(14rem, 0.8fr) minmax(0, 1.2fr);
+  }
+  .side-panel {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 767px) {
+  .workspace {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .side-panel {
+    grid-column: auto;
+  }
+}
+#page-tree ul {
+  list-style: none;
+  margin: 0;
+  padding-left: 1.25rem;
+}
+
+#page-tree > ul {
+  padding-left: 0;
+}
+
+#page-tree [role="treeitem"] {
+  display: block;
+  width: 100%;
+  text-align: left;
+  margin: 0.125rem 0;
+  padding: 0.25rem 0.5rem;
+  cursor: grab;
+}
+
+#page-tree [role="treeitem"]:active {
+  cursor: grabbing;
+}
+
+#page-tree [role="treeitem"][aria-grabbed="true"] {
+  opacity: 0.5;
+}
+
+/* Drop zones are always present (Playwright/native DnD needs a real hit target)
+   but render as invisible hairline strips when idle; they highlight during a drag. */
+.drop-zone {
+  display: block;
+  width: 100%;
+  height: 8px;
+  /* Invisible drag target: exempt from the global 44px button min-height. */
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  font-size: 0;
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.drop-zone:hover {
+  background: rgba(51, 102, 204, 0.1);
+}
+
+.drop-zone.drop-target {
+  background: rgba(51, 102, 204, 0.25);
+  border-radius: 3px;
+}
+
+#app-status:not(:empty) {
+  margin-top: 0.5rem;
+  padding: 0.35rem 0.6rem;
+  color: #a11;
+  background: #fdecea;
+  border: 1px solid #ecc;
+  border-radius: 4px;
+}
+
+.page-commands {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  margin-bottom: 0.75rem;
+}
+
+.page-commands button,
+.page-commands input {
+  padding: 0.25rem 0.5rem;
+}
+
+dialog {
+  border: 1px solid #999;
+  border-radius: 6px;
+  padding: 1rem;
+}
+
+dialog::backdrop {
+  background: rgba(0, 0, 0, 0.4);
+}
+
+#item-editor fieldset {
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  margin: 0.5rem 0;
+  padding: 0.75rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  align-items: center;
+}
+
+#item-editor label {
+  display: inline-flex;
+  gap: 0.25rem;
+  align-items: center;
+}
+
+#item-editor input[type="text"],
+#item-editor select {
+  padding: 0.25rem 0.35rem;
+}
+
+#item-editor button {
+  padding: 0.25rem 0.5rem;
+}
+
+/* ---- Keymap editor ---- */
+.keypad {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(4.5rem, 6rem));
+  grid-auto-rows: minmax(3rem, auto);
+  gap: 0.5rem;
+  align-items: stretch;
+  margin: 0.75rem 0 1rem;
+}
+
+.keypad button,
+.binding-panel fieldset button {
+  padding: 0.5rem 0.25rem;
+  /* Harmonised to the global 44px touch-target min-height so this (more
+     specific) rule cannot re-shrink key rows below the 44px gate. */
+  min-height: 44px;
+}
+
+.keypad button[aria-pressed="true"] {
+  outline: 3px solid #3366cc;
+  background: #e8f0fb;
+}
+
+.binding-panel {
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  padding: 0.75rem;
+}
+
+.binding-panel fieldset {
+  border: none;
+  margin: 0 0 0.75rem;
+  padding: 0;
+}
+
+.binding-panel legend {
+  font-weight: 600;
+  padding: 0;
+}
+
+.binding-panel fieldset button[aria-pressed="true"] {
+  outline: 3px solid #3366cc;
+  background: #e8f0fb;
+}
+
+.binding-target {
+  display: inline-flex;
+  gap: 0.5rem;
+  align-items: center;
+  margin-top: 0.5rem;
+}
+
+.binding-target .binding-hint {
+  color: #555;
+  font-style: italic;
+}
+
+.keymap-scope {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  margin-bottom: 0.75rem;
+}
+
+.keymap-scope-label {
+  font-weight: 600;
+}
+
+.binding-origin {
+  margin: 0 0 0.75rem;
+  font-size: 0.9rem;
+}
+
+.binding-panel[data-binding-origin="global"] .binding-origin {
+  color: #444;
+}
+
+.binding-panel[data-binding-origin="ancestor"] {
+  border-left: 4px solid #b5a25a;
+}
+
+.binding-panel[data-binding-origin="ancestor"] .binding-origin {
+  color: #7a6a33;
+  font-style: italic;
+}
+
+.binding-panel[data-binding-origin="override"] {
+  border-left: 4px solid #3366cc;
+}
+
+.binding-panel[data-binding-origin="override"] .binding-origin {
+  color: #1f4a9c;
+  font-weight: 600;
+}
+
+.binding-panel .clear-override {
+  margin-top: 0.75rem;
+  padding: 0.35rem 0.7rem;
+}
+
+ul.entity-listbox {
+  list-style: none;
+  margin: 0.25rem 0 0;
+  padding: 0;
+  max-height: 12rem;
+  overflow-y: auto;
+  border: 1px solid #999;
+  border-radius: 4px;
+  background: #fff;
+}
+
+ul.entity-listbox li {
+  padding: 0.35rem 0.5rem;
+  cursor: pointer;
+}
+
+ul.entity-listbox li[aria-selected="true"],
+ul.entity-listbox li:hover {
+  background: #e8f0fb;
+}
+
+/* ---- Template picker ---- */
+#template-picker {
+  margin-top: 1rem;
+}
+
+#template-picker .template-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(13rem, 1fr));
+  gap: 0.75rem;
+}
+
+#template-picker .template-card {
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  padding: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+#template-picker .template-title {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+#template-picker .template-description {
+  margin: 0;
+  color: #555;
+  font-size: 0.9rem;
+  flex: 1;
+}
+
+#template-picker .template-card button {
+  align-self: flex-start;
+  padding: 0.3rem 0.6rem;
+}
+
+#template-picker .template-notice {
+  margin: 0 0 0.5rem;
+  min-height: 1rem;
+}
+
+/* ---- Operations ---- */
+#operations {
+  margin-top: 1rem;
+}
+
+#operations .operation-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+#operations button,
+#operations a {
+  padding: 0.35rem 0.7rem;
+  border: 1px solid #999;
+  border-radius: 4px;
+  font: inherit;
+}
+
+#operations button:disabled {
+  opacity: 0.5;
+}
+
+#operations a[aria-disabled="true"] {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+#operation-status:not(:empty) {
+  margin-top: 0.5rem;
+  padding: 0.35rem 0.6rem;
+  border-radius: 4px;
+}
+
+#operation-status[data-kind="error"] {
+  color: #a11;
+  background: #fdecea;
+  border: 1px solid #ecc;
+}
+
+#operation-status[data-kind="success"] {
+  color: #176b3a;
+  background: #e8f6ee;
+  border: 1px solid #c3e6d1;
+}

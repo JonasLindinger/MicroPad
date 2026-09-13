@@ -1,0 +1,39 @@
+{
+  "_purpose": "Single source of truth for the APPROVED placeholder values the public-release audit (scripts/audit_public_release.py) accepts. Anything secret-shaped that is NOT listed here is a blocked finding (the gate exits non-zero). The exact design placeholders are the MQTT broker host 192.168.0.100, user micropad, and password replace-me; synthetic test-only tokens are allowed only under allowed_tokens and live only in tests/.",
+  "schema_version": 1,
+  "allowed_ips": {
+    "reason": "Neutral, non-personal IPv4 literals. 192.168.0.100 is the documented operator-LAN/network placeholder; the operator's real home-LAN 192.168.x addresses are personal data and are never allowed. 192.168.4.1 is the fixed ESP32 setup-portal SoftAP gateway address (hardware constant, device-local, not the operator LAN).",
+    "values": ["192.168.0.100", "127.0.0.1", "0.0.0.0", "192.168.4.1"]
+  },
+  "ip_documentation_ranges": {
+    "reason": "IETF RFC 5737 documentation ranges; never routable, never personal.",
+    "values": ["192.0.2.0/24", "198.51.100.0/24", "203.0.113.0/24"]
+  },
+  "allowed_users": {
+    "reason": "The documented service/operator placeholder user; never a real account.",
+    "values": ["micropad"]
+  },
+  "allowed_password_placeholders": {
+    "reason": "The documented unfilled placeholder password. Any other value assigned to a password/secret/token key is a finding.",
+    "values": ["replace-me"]
+  },
+  "allowed_tokens": {
+    "reason": "Synthetic tokens the plan already carries, clearly marked (fake-token / test-token) and present only in tests/. Every other secret-shaped value fails the gate.",
+    "values": [
+      "test-token",
+      "fake-token",
+      "token-value",
+      "secret-token",
+      "saved-token",
+      "configured-token"
+    ]
+  },
+  "allowed_repo_identifiers": {
+    "reason": "The literal public repository identifier may appear in release integration scripts/docs and nowhere else in user-facing docs.",
+    "values": ["JonasLindinger/MicroPad"]
+  },
+  "benign_email_tlds": {
+    "reason": "Reserved/benign TLDs used by synthetic fixtures and mDNS demo hosts; an email on any of these is not personal data.",
+    "values": ["local", "example", "test", "invalid", "localhost"]
+  }
+}

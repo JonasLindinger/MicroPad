@@ -1,0 +1,100 @@
+{
+  "_ai_assisted_notice": "AI-assisted development \u2014 firmware, HA automation, config generator and docs were created with AI (LLM) help, reviewed and tested by the author. Provided as-is, without warranty; verify on your own hardware, don't use for safety-critical applications.",
+  "schema_version": 1,
+  "settings": {
+    "ha_url": "http://homeassistant.local:8123",
+    "ha_token": "",
+    "verify_tls": true,
+    "request_timeout_seconds": 10.0,
+    "ssh_host": "",
+    "ssh_port": 22,
+    "ssh_user": "",
+    "ssh_key": "",
+    "ssh_known_hosts": "~/.ssh/known_hosts",
+    "remote_path": "/config/automations/micropad.yaml",
+    "ssh_validate_command": "test -s {temp_path}",
+    "ssh_reload_command": "ha core restart"
+  },
+  "pages": [
+    {
+      "page_id": "home",
+      "title": "Home",
+      "parent": "",
+      "items": [],
+      "keymap": {}
+    }
+  ],
+  "entity_cache": [],
+  "global_keymap": {
+    "r0c0": {
+      "action": "home",
+      "entity": "",
+      "target_page": ""
+    },
+    "r0c1": {
+      "action": "none",
+      "entity": "",
+      "target_page": ""
+    },
+    "r0c2": {
+      "action": "none",
+      "entity": "",
+      "target_page": ""
+    },
+    "r0c3": {
+      "action": "enter",
+      "entity": "",
+      "target_page": ""
+    },
+    "r1c0": {
+      "action": "none",
+      "entity": "",
+      "target_page": ""
+    },
+    "r1c1": {
+      "action": "none",
+      "entity": "",
+      "target_page": ""
+    },
+    "r1c2": {
+      "action": "none",
+      "entity": "",
+      "target_page": ""
+    },
+    "r1c3": {
+      "action": "enter",
+      "entity": "",
+      "target_page": ""
+    },
+    "r2c0": {
+      "action": "none",
+      "entity": "",
+      "target_page": ""
+    },
+    "r2c1": {
+      "action": "none",
+      "entity": "",
+      "target_page": ""
+    },
+    "r2c2": {
+      "action": "none",
+      "entity": "",
+      "target_page": ""
+    },
+    "r2c3": {
+      "action": "back",
+      "entity": "",
+      "target_page": ""
+    },
+    "enc_up": {
+      "action": "scroll_up",
+      "entity": "",
+      "target_page": ""
+    },
+    "enc_down": {
+      "action": "scroll_down",
+      "entity": "",
+      "target_page": ""
+    }
+  }
+}
