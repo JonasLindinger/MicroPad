@@ -1,0 +1,84 @@
+# MicroPad Configurator
+
+> AI-assisted development — firmware, HA automation, config generator and docs were created with AI (LLM) help, reviewed and tested by the author. Provided as-is, without warranty; verify on your own hardware, don't use for safety-critical applications.
+
+The configurator is the Flask web app (`src/micropad/app.py`) that validates your
+configuration, edits pages and key maps, discovers Home Assistant entities, and
+generates or uploads the automation. It talks to the repo over these endpoints:
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /` | web UI (`src/micropad/templates/index.html`, `static/js/*`) |
+| `GET /healthz` | liveness probe → `{"ok": true, "service": "micropad-configurator"}` |
+| `GET/POST /api/config` | read / validate-and-save configuration |
+| `POST /api/validate` | validate without saving |
+| `GET /api/meta` | contract version, key IDs, actions, item types, templates, default keymap |
+| `GET /api/generate` | generated automation YAML + retained MQTT payloads |
+| `POST /api/ha/test` | test Home Assistant auth |
+| `GET /api/ha/entities` | discover and cache Home Assistant entities |
+| `POST /api/upload/api` | deploy via Home Assistant REST API |
+| `POST /api/upload/ssh` | deploy via SFTP/SSH (see `docs/home-assistant.md`) |
+
+Configuration is stored in `config.json` (git-ignored local) or the path in
+`MICROPAD_CONFIG_PATH`. Secrets (`ha_token`, `ssh_key`) are redacted from every
+public response — only `ha_token_configured` / `ssh_key_configured` booleans are
+exposed. All placeholder values used in this documentation are neutral
+(`192.168.0.100`, user `micropad`, password `replace-me`).
+
+## Pages editor
+
+A configuration contains up to 24 pages. Each page has an id (a normalized
+lowercase slug), a title, an optional parent (for navigation), up to 20 items,
+and a per-page key-map override. Item types are: `category`, `light`, `switch`,
+`script`, `button`, `scene`, `sensor`, `media_player`, `number`, `settings`, and
+`back`. A `category` item requires a `target_page`; entity-backed item types
+require an entity in the matching domain (`light.foo` for a `light`, etc.).
+Editable starter templates (Spotify, Discord, Lights, generic media) are offered
+by the pages editor.
+
+## Key editor
+
+Every input maps to an action. The fourteen key IDs are fixed by the contract:
+`r0c0, r0c1, r0c2, r0c3, r1c0, r1c1, r1c2, r1c3, r2c0, r2c1, r2c2, r2c3, enc_up,
+enc_down`. The global key map must contain all fourteen in canonical order; a page
+may override any subset. Actions (from `src/micropad/ui_meta.py`):
+
+- **Navigation:** `enter`, `back`, `home`, `navigate`, `keymap`.
+- **Scrolling:** `scroll`, `scroll_up`, `scroll_down`.
+- **Device:** `toggle`, `on`, `off`, `press`, `edit`, `confirm`.
+- **Media:** `volume_up`, `volume_down`, `media_next`, `media_prev`.
+- **System:** `settings`, `get_all_pages`, `none`.
+
+`navigate` and `keymap` take a `target_page`; the device actions (except `none`,
+`settings`, `get_all_pages`) take an `entity` argument.
+
+## Entity discovery
+
+`GET /api/ha/entities` calls Home Assistant's entity API with the stored token,
+returns the discovered entities, and caches them in `entity_cache` so the UI can
+autocomplete entity ids. Discovery requires a configured `ha_url` and `ha_token`;
+**TLS verification defaults to on** (`verify_tls: true`). Entities are matched for
+editing against the item-type domains, and the generator reflects current state
+(light switch state, number value/min/max/step, media volume, sensor unit) into
+generated retained payloads whenever the cached state is concrete. Unknown or
+`unavailable` states are left alone rather than guessing.
+
+## Validation
+
+Validation is strict and real:
+
+- **Model validation** (`src/micropad/models.py`): unknown fields are rejected,
+  page-graph cycles/unknown parents are rejected, key maps must use only the
+  fourteen known ids, global keys must be exactly the canonical set, item shape
+  rules (category needs `target_page`; entity types need a matching-domain
+  entity; `min <= max`).
+- **Generation validation**: every publishable payload is generated and rejected
+  if it exceeds its byte budget (page 1800, catalog 16000, keymap 16380).
+- **Template safety**: user-controlled Jinja delimiters (`{{`, `{%`, `{#`) and
+  malformed entity ids are rejected before any payload is embedded.
+- **Net effect**: `POST /api/validate`, `POST /api/config`, and every upload
+  path fail closed (HTTP 422 validation error / 502 upload error) rather than
+  shipping a partial or unsafe configuration.
+
+MicroPad is not safety-critical; always keep the Home Assistant UI as the
+authoritative control surface.

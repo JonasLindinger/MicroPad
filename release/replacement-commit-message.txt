@@ -1,0 +1,6 @@
+feat: replace software with clean-room MicroPad implementation
+
+Replace firmware, Home Assistant automation, configurator, tests,
+deployment assets, README, and software documentation with the reviewed
+clean-room implementation. Preserve repository history, PCB and STL assets,
+and the existing project license.

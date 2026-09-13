@@ -1,0 +1,60 @@
+{
+  "_ai_assisted_notice": "AI-assisted development — firmware, HA automation, config generator and docs were created with AI (LLM) help, reviewed and tested by the author. Provided as-is, without warranty; verify on your own hardware, don't use for safety-critical applications.",
+  "home_page_id": "home",
+  "key_ids": ["r0c0","r0c1","r0c2","r0c3","r1c0","r1c1","r1c2","r1c3","r2c0","r2c1","r2c2","r2c3","enc_up","enc_down"],
+  "actions": [
+    {"id":"enter","label":"Enter","group":"Navigation","argument":"none"},
+    {"id":"back","label":"Back","group":"Navigation","argument":"none"},
+    {"id":"home","label":"Home","group":"Navigation","argument":"none"},
+    {"id":"navigate","label":"Navigate","group":"Navigation","argument":"target_page"},
+    {"id":"keymap","label":"Keymap","group":"Navigation","argument":"target_page"},
+    {"id":"scroll","label":"Scroll","group":"Scrolling","argument":"none"},
+    {"id":"scroll_up","label":"Scroll up","group":"Scrolling","argument":"none"},
+    {"id":"scroll_down","label":"Scroll down","group":"Scrolling","argument":"none"},
+    {"id":"toggle","label":"Toggle","group":"Device","argument":"entity"},
+    {"id":"on","label":"Turn on","group":"Device","argument":"entity"},
+    {"id":"off","label":"Turn off","group":"Device","argument":"entity"},
+    {"id":"press","label":"Press","group":"Device","argument":"entity"},
+    {"id":"edit","label":"Edit","group":"Device","argument":"entity"},
+    {"id":"confirm","label":"Confirm","group":"Device","argument":"entity"},
+    {"id":"volume_up","label":"Volume up","group":"Media","argument":"entity"},
+    {"id":"volume_down","label":"Volume down","group":"Media","argument":"entity"},
+    {"id":"media_next","label":"Next track","group":"Media","argument":"entity"},
+    {"id":"media_prev","label":"Previous track","group":"Media","argument":"entity"},
+    {"id":"none","label":"No action","group":"System","argument":"none"},
+    {"id":"settings","label":"Settings","group":"System","argument":"none"},
+    {"id":"get_all_pages","label":"Refresh all pages","group":"System","argument":"none"}
+  ],
+  "item_types": ["category","light","switch","script","button","scene","sensor","media_player","number","settings","back"],
+  "default_keymap": {
+    "r0c0":{"action":"home","entity":"","target_page":""},"r0c1":{"action":"none","entity":"","target_page":""},"r0c2":{"action":"none","entity":"","target_page":""},"r0c3":{"action":"enter","entity":"","target_page":""},
+    "r1c0":{"action":"none","entity":"","target_page":""},"r1c1":{"action":"none","entity":"","target_page":""},"r1c2":{"action":"none","entity":"","target_page":""},"r1c3":{"action":"enter","entity":"","target_page":""},
+    "r2c0":{"action":"none","entity":"","target_page":""},"r2c1":{"action":"none","entity":"","target_page":""},"r2c2":{"action":"none","entity":"","target_page":""},"r2c3":{"action":"back","entity":"","target_page":""},
+    "enc_up":{"action":"scroll_up","entity":"","target_page":""},"enc_down":{"action":"scroll_down","entity":"","target_page":""}
+  },
+  "templates": [
+    {"id":"spotify","label":"Spotify","description":"Media controls ready for entity assignment.","page":{"title":"Spotify","items":[
+      {"name":"Play/Pause","type":"media_player","entity":"","state":"","value":0,"min":0,"max":100,"step":1,"unit":"","editable":false,"target_page":""},
+      {"name":"Next","type":"media_player","entity":"","state":"","value":0,"min":0,"max":100,"step":1,"unit":"","editable":false,"target_page":""},
+      {"name":"Previous","type":"media_player","entity":"","state":"","value":0,"min":0,"max":100,"step":1,"unit":"","editable":false,"target_page":""}
+    ]}},
+    {"id":"discord","label":"Discord","description":"Discord buttons ready for script or button entities.","page":{"title":"Discord","items":[
+      {"name":"Mute","type":"button","entity":"","state":"","value":0,"min":0,"max":100,"step":1,"unit":"","editable":false,"target_page":""},
+      {"name":"Deafen","type":"button","entity":"","state":"","value":0,"min":0,"max":100,"step":1,"unit":"","editable":false,"target_page":""},
+      {"name":"Disconnect","type":"button","entity":"","state":"","value":0,"min":0,"max":100,"step":1,"unit":"","editable":false,"target_page":""}
+    ]}},
+    {"id":"lights","label":"Lights","description":"Light controls ready for light entities.","page":{"title":"Lights","items":[
+      {"name":"All lights","type":"light","entity":"","state":"","value":0,"min":0,"max":100,"step":1,"unit":"","editable":false,"target_page":""},
+      {"name":"Bright","type":"light","entity":"","state":"","value":0,"min":0,"max":100,"step":1,"unit":"","editable":false,"target_page":""},
+      {"name":"Dim","type":"light","entity":"","state":"","value":0,"min":0,"max":100,"step":1,"unit":"","editable":false,"target_page":""}
+    ]}},
+    {"id":"generic-media","label":"Generic media","description":"Generic media controls ready for one media player.","page":{"title":"Generic media","items":[
+      {"name":"Play/Pause","type":"media_player","entity":"","state":"","value":0,"min":0,"max":100,"step":1,"unit":"","editable":false,"target_page":""},
+      {"name":"Volume up","type":"media_player","entity":"","state":"","value":0,"min":0,"max":100,"step":1,"unit":"","editable":false,"target_page":""},
+      {"name":"Volume down","type":"media_player","entity":"","state":"","value":0,"min":0,"max":100,"step":1,"unit":"","editable":false,"target_page":""},
+      {"name":"Next","type":"media_player","entity":"","state":"","value":0,"min":0,"max":100,"step":1,"unit":"","editable":false,"target_page":""},
+      {"name":"Previous","type":"media_player","entity":"","state":"","value":0,"min":0,"max":100,"step":1,"unit":"","editable":false,"target_page":""}
+    ]}}
+  ],
+  "automation_id": "micropad_controller"
+}

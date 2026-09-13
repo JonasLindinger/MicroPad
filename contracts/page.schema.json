@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://micropad.local/contracts/page.schema.json",
+  "$comment": "AI-assisted development — firmware, HA automation, config generator and docs were created with AI (LLM) help, reviewed and tested by the author. Provided as-is, without warranty; verify on your own hardware, don't use for safety-critical applications.",
+  "title": "MicroPad Page",
+  "description": "One detached page published by the backend on topic micropad/page/current, or nested inside a catalog payload. page_id is required and non-empty; every item carries all eleven spec fields the firmware parses and the backend always emits.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["page_id", "title", "parent", "items"],
+  "properties": {
+    "page_id": {"type": "string", "minLength": 1, "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"},
+    "title": {"type": "string", "minLength": 1},
+    "parent": {"type": "string"},
+    "items": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {"$ref": "#/$defs/item"}
+    }
+  },
+  "$defs": {
+    "item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "type", "entity", "state", "value", "min", "max", "step", "unit", "editable", "target_page"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "type": {
+          "type": "string",
+          "enum": ["category", "light", "switch", "script", "button", "scene", "sensor", "media_player", "number", "settings", "back"]
+        },
+        "entity": {"type": "string", "default": ""},
+        "state": {"type": "string", "default": ""},
+        "value": {"type": "number"},
+        "min": {"type": "number"},
+        "max": {"type": "number"},
+        "step": {"type": "number", "exclusiveMinimum": 0},
+        "unit": {"type": "string", "default": ""},
+        "editable": {"type": "boolean", "default": false},
+        "target_page": {"type": "string", "default": ""}
+      }
+    }
+  }
+}

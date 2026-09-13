@@ -1,0 +1,36 @@
+<!-- AI-assisted development — firmware, HA automation, config generator and docs were created with AI (LLM) help, reviewed and tested by the author. Provided as-is, without warranty; verify on your own hardware, don't use for safety-critical applications. -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MicroPad Configurator</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css', v=asset_version) }}">
+</head>
+<body>
+  <main id="app">
+    <h1>MicroPad Configurator</h1>
+    <div class="workspace">
+      <nav id="page-tree" aria-label="Pages"></nav>
+      <section id="item-editor" aria-label="Item editor"></section>
+      <div class="side-panel">
+        <section id="keymap-editor" class="keymap-panel" aria-label="Keymap editor"></section>
+        <section id="template-picker" aria-label="Template picker"></section>
+        <section id="operations" aria-label="Operations">
+          <div class="operation-actions">
+            <button type="button" data-operation="generate">Generate automation</button>
+            <button type="button" data-operation="upload-api">Upload through Home Assistant API</button>
+            <button type="button" data-operation="upload-ssh">Upload through SSH</button>
+            <a data-download href="/api/download/api">Download API artifact</a>
+            <a data-download href="/api/download/ssh">Download SSH script</a>
+          </div>
+          <div id="operation-status" role="status"></div>
+        </section>
+        <div id="save-status" role="status"></div>
+        <div id="app-status" role="status"></div>
+      </div>
+    </div>
+  </main>
+  <script type="module" src="{{ url_for('static', filename='js/app.js', v=asset_version) }}"></script>
+</body>
+</html>
