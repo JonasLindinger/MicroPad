@@ -242,6 +242,16 @@ class FirmwarePortalContractTest(FirmwareStaticContractTest):
         idle_at = body.index(
             "static_cast<uint32_t>(nowMs - portalLastActivityMs)")
         self.assertLess(idle_at, body.index("ESP.restart()"))
+        # Issue #6: the restart is a client-free safety net only. A connected
+        # setup client is an active user, so the pad must never reset itself
+        # while the phone is attached, and the idle window is generous enough
+        # that a bumped pairing session does not lose the entered settings.
+        self.assertIn("WiFi.softAPgetStationNum() > 0", body)
+        self.assertLess(body.index("WiFi.softAPgetStationNum() > 0"),
+                        body.index("ESP.restart()"))
+        self.assertIn("!setupClientAttached", body)
+        self.assertIn("constexpr uint32_t PORTAL_IDLE_MS = 1800000;",
+                      self.source("firmware/micropad_core.h"))
 
     def test_portal_activity_refreshes_on_requests_and_input(self):
         text = self.ino()
@@ -334,6 +344,15 @@ class FirmwarePortalContractTest(FirmwareStaticContractTest):
         self.assertIn("bool loadSetupPassword(", text)
         self.assertIn("void saveSetupPassword(", text)
         self.assertIn('preferences.getString("setup_pass"', text)
+        # The load path must accept the nvs_get_str length convention, which
+        # counts the NUL terminator: a stored 16-character password reads
+        # back as 17. Comparing against the raw constant would make the load
+        # always fail and regenerate the password on every boot (issue #7).
+        load_body = self.function_body(text, "bool loadSetupPassword(")
+        self.assertIn("micropad::SETUP_PASSWORD_LENGTH + 1", load_body)
+        self.assertIn('preferences.getString("setup_pass", out, sizeof(out))',
+                      load_body)
+
         body = self.function_body(self.ino(), "void startPortal(uint32_t nowMs)")
         # The load-or-generate decision happens before the AP is brought up.
         self.assertLess(body.index("loadSetupPassword(setupPassword)"),
@@ -1129,6 +1148,28 @@ class FirmwareLoopContractTest(FirmwareStaticContractTest):
                         body.index("xPortGetCoreID()"))
         for token in ("Serial", "println", "printf"):
             self.assertNotIn(token, body)
+
+    def test_setup_configures_task_wdt_budget(self):
+        # Issue #6: the loop task is the TWDT subscriber, but the setup
+        # portal's WebServer can block the loop for its full socket timeouts
+        # while a pairing phone stalls a request; the IDF default deadline is
+        # 5 s with panic, so a single slow portal page panics and reboots the
+        # pad. setup() must configure the v6-proven 20 s budget (with the
+        # reconfigure fallback when the IDF already initialised the TWDT).
+        text = self.ino()
+        self.assertIn(
+            "constexpr uint32_t TASK_WDT_TIMEOUT_MS = 20000;",
+            self.source("firmware/micropad_core.h"))
+        body = self.function_body(text, "void setup()")
+        self.assertIn("esp_task_wdt_config_t wdtCfg = {};", body)
+        self.assertIn("wdtCfg.timeout_ms = micropad::TASK_WDT_TIMEOUT_MS;", body)
+        self.assertIn("wdtCfg.idle_core_mask = 0;", body)
+        self.assertIn("wdtCfg.trigger_panic = true;", body)
+        self.assertIn("esp_task_wdt_init(&wdtCfg)", body)
+        self.assertIn("esp_task_wdt_reconfigure(&wdtCfg)", body)
+        # The budget is configured before the loop task subscribes.
+        self.assertLess(body.index("esp_task_wdt_init(&wdtCfg)"),
+                        body.index("esp_task_wdt_add(NULL)"))
 
     def test_render_recovery_tick_gated_draw(self):
         body = self.function_body(self.ino(),

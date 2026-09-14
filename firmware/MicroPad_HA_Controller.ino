@@ -522,8 +522,16 @@ void portalTick(uint32_t nowMs) {
   if (!portalActive) return;
   dnsServer.processNextRequest();
   webServer.handleClient();
-  if (static_cast<uint32_t>(nowMs - portalLastActivityMs) >=
-      micropad::PORTAL_IDLE_MS) {
+  // Idle restart as a safety net only: a connected setup client is an active
+  // user by definition, so the pad must never reset itself mid-setup while
+  // the phone is attached (issue #6: the pad rebooted ~5 min after portal
+  // entry / ~1 min after the page was opened because the idle timer expired
+  // even though the user was working). With no client attached, PORTAL_IDLE_MS
+  // is a generous 30-minute window, not the old 5-minute one.
+  const bool setupClientAttached = WiFi.softAPgetStationNum() > 0;
+  if (!setupClientAttached &&
+      static_cast<uint32_t>(nowMs - portalLastActivityMs) >=
+          micropad::PORTAL_IDLE_MS) {
     ESP.restart();
   }
 }
@@ -539,7 +547,9 @@ bool loadSetupPassword(char (&out)[micropad::SETUP_PASSWORD_LENGTH + 1]) {
   if (!preferences.begin("micropad", true)) return false;
   const size_t length = preferences.getString("setup_pass", out, sizeof(out));
   preferences.end();
-  return length == micropad::SETUP_PASSWORD_LENGTH;
+  // Preferences::getString uses nvs_get_str, whose returned length INCLUDES
+  // the NUL terminator: a stored 16-character password reads back as 17.
+  return length == micropad::SETUP_PASSWORD_LENGTH + 1;
 }
 
 void saveSetupPassword(const char *password) {
@@ -1584,6 +1594,24 @@ void setup() {
   mqttClientConfigured = true;
   initDisplay();
   createRenderTask();
+  // The loop task is the task-watchdog subscriber and the setup portal's
+  // WebServer can block the loop for up to its socket timeouts (5 s each)
+  // when a pairing phone stalls a request mid-page (HTTP_MAX_SEND_WAIT /
+  // HTTP_MAX_DATA_WAIT in the WebServer library). The ESP-IDF default task
+  // WDT timeout is 5 s with panic enabled, so a single slow portal page
+  // blocks the loop past the limit and panics-reboots the pad (issue #6).
+  // Give the loop task the v6-proven 20 s budget and stop watching idle
+  // tasks (idle_core_mask = 0, identical to the proven v6 configuration).
+  esp_task_wdt_config_t wdtCfg = {};
+  wdtCfg.timeout_ms = micropad::TASK_WDT_TIMEOUT_MS;
+  wdtCfg.idle_core_mask = 0;
+  wdtCfg.trigger_panic = true;
+  const esp_err_t wdtInit = esp_task_wdt_init(&wdtCfg);
+  if (wdtInit != ESP_OK) {
+    // The IDF already initialised the TWDT at startup: reconfigure it to the
+    // same 20 s deadline instead of leaving the 5 s default in place.
+    esp_task_wdt_reconfigure(&wdtCfg);
+  }
   // Subscribe the loop task (this task) to the task watchdog and feed it on
   // every loop() pass; the render task is deliberately left unsubscribed so
   // long GxEPD2 panel busy-waits on Core 0 never trip the TWDT.

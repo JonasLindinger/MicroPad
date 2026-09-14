@@ -19,7 +19,14 @@ constexpr uint32_t INPUT_DEBOUNCE_MS = 25;
 constexpr uint32_t RESYNC_SETTLE_MS = 350;
 constexpr uint32_t WIFI_RETRY_MS = 5000;
 constexpr uint32_t MQTT_RETRY_MS = 5000;
-constexpr uint32_t PORTAL_IDLE_MS = 300000;
+// Setup-portal inactivity safety net (issue #6). The portal used to restart
+// the pad after 5 minutes even while the phone was attached and the user was
+// actively pairing, because the page HTTP traffic did not reach the activity
+// clock. The pad now never restarts while a setup client is connected
+// (portalTick gates the restart on softAPgetStationNum() == 0), and this
+// client-free window is a generous 30 minutes so a bumped session does not
+// lose the pairing flow.
+constexpr uint32_t PORTAL_IDLE_MS = 1800000;
 constexpr uint32_t IDLE_SLEEP_MS = 60000;
 constexpr bool LIGHT_SLEEP_ENABLED = true;  // proven v6 wake mechanism merged
 constexpr uint32_t MIN_AWAKE_MS = 3000;
@@ -32,6 +39,11 @@ constexpr size_t EVENT_BUFFER_BYTES = 512;
 // limit never forces a visible full-refresh flash.
 constexpr uint8_t MAX_PARTIAL_REFRESHES = 0;
 constexpr uint32_t MIN_REFRESH_SPACING_MS = 100;
+// Loop-task task-WDT deadline (v6-proven 20 s). The default ESP-IDF deadline
+// is 5 s with panic; the setup portal's WebServer can block the loop for its
+// full socket timeouts while a pairing phone stalls a request, so the shorter
+// default panics-reboots the pad during initial setup (issue #6).
+constexpr uint32_t TASK_WDT_TIMEOUT_MS = 20000;
 
 // Physical matrix geometry. The first MATRIX_KEY_COUNT KeyId values (r0c0 ..
 // r2c3) map directly to (row * MATRIX_COLS + col).
