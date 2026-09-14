@@ -378,6 +378,43 @@ constexpr bool refreshMustBeFull(DrawReason reason) {
 
 enum class RefreshMode : uint8_t { Full, Partial };
 
+// Sleep/render handshake (P1.2): the sleep path and the render task serialize
+// through this interlock inside the sketch's critical section, so a draw can
+// never begin after sleep was granted and sleep can never start while a draw
+// is in flight or a snapshot is pending. The state transitions are
+// dependency-free and host-testable for every interleaving; the sketch wraps
+// each transition (plus the renderBusy and mailbox-pending reads) in the same
+// FreeRTOS critical section to make them atomic across the two cores.
+class SleepInterlock {
+ public:
+  // Render task: claim permission to draw. False while sleep is entered, so
+  // no new draw starts after the interlock was granted until wake().
+  bool tryBeginDraw() const { return state_ == State::Awake; }
+
+  // Sleep path: grant sleep only when no draw is in flight and no snapshot is
+  // pending. The caller must hold the critical section while supplying the
+  // freshly read flags; on success every later tryBeginDraw() returns false.
+  bool setSleepEntered(bool renderBusy, bool snapshotPending) {
+    if (state_ != State::Awake) return false;
+    if (renderBusy || snapshotPending) return false;
+    state_ = State::SleepEntered;
+    return true;
+  }
+
+  // Wake: draws may start again. Returns true only when sleep was entered.
+  bool wake() {
+    if (state_ != State::SleepEntered) return false;
+    state_ = State::Awake;
+    return true;
+  }
+
+  bool sleeping() const { return state_ == State::SleepEntered; }
+
+ private:
+  enum class State : uint8_t { Awake, SleepEntered };
+  State state_ = State::Awake;
+};
+
 // Refresh policy of the Core 0 render task: decides full vs partial per
 // refresh, keeps the partial counter (reset only by a successful full
 // refresh, incremented only after a successful partial refresh), and enforces

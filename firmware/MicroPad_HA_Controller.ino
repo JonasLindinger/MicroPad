@@ -146,7 +146,17 @@ void emitInput(const micropad::InputEvent &input) {
   const micropad::Binding &binding = pad.activeKeymap[index];
   micropad::Action action = micropad::resolveBinding(binding, input);
   if (!input.pressed) return;
-  if (action == micropad::Action::Enter) action = pad.selectedItemAction();
+  // P1.1: a direct key binding steers exactly its own entity. Enter is the one
+  // device-owned resolution that acts on the selected item, so the item's
+  // entity is bound into a local copy of the binding — the stored keymap is
+  // never rewritten and no selected item is substituted for a keymap entity.
+  micropad::Binding resolved = binding;
+  if (action == micropad::Action::Enter) {
+    action = pad.selectedItemAction();
+    resolved.action = action;
+    const micropad::Item *selected = pad.currentItem();
+    if (selected != nullptr) safeCopy(resolved.entity, selected->entity);
+  }
   // While the setup portal is active every input refreshes its inactivity
   // clock; only Back acts on it, exiting without touching saved settings.
   if (portalActive) {
@@ -160,7 +170,7 @@ void emitInput(const micropad::InputEvent &input) {
     return;
   }
   const micropad::ApplyResult result =
-      pad.applyAction(action, binding, input.atMs);
+      pad.applyAction(action, resolved, input.atMs);
   if (result.stateChanged) {
     requestDraw(micropad::DrawReason::StateChange);
   }
@@ -201,6 +211,33 @@ bool mqttClientConfigured = false;
 // present, every bounded copy succeeds, and the complete result validates.
 // The active settings are updated only on full success; NVS is closed on
 // every path.
+// Bounded, checked NVS string read (P1.5). A stored value that is absent, empty
+// where the field is required, or longer than the field can hold must not be
+// accepted: silently keeping a truncated value would let a corrupt record pass
+// as a valid setting (and connect to a placeholder broker). Nothing is logged.
+bool readSettingString(Preferences &preferences, const char *key, char *out,
+                       size_t capacity, bool required) {
+  if (capacity == 0) return false;
+  out[0] = '\0';
+  const size_t stored = preferences.getBytesLength(key);
+  if (stored == 0) return !required;  // absent or empty: ok only if optional
+  if (stored > capacity - 1) return false;  // overlong: reject, never truncate
+  const size_t written = preferences.getString(key, out, capacity);
+  if (written == 0 || written > capacity - 1) {
+    out[0] = '\0';
+    return false;
+  }
+  return true;
+}
+
+// A wrong-sized or absent port record is not a valid setting either (P1.5).
+bool readSettingUShort(Preferences &preferences, const char *key,
+                       uint16_t &out) {
+  if (preferences.getBytesLength(key) != sizeof(uint16_t)) return false;
+  out = preferences.getUShort(key, out);
+  return true;
+}
+
 bool loadSettings() {
   Preferences preferences;
   if (!preferences.begin("micropad", true)) return false;
@@ -212,26 +249,27 @@ bool loadSettings() {
       preferences.isKey("mqtt_host") && preferences.isKey("mqtt_port") &&
       preferences.isKey("mqtt_user") && preferences.isKey("mqtt_pass") &&
       preferences.isKey("client_id");
-  // Every bounded copy is safe by construction (getString is given the array
-  // capacity and never overflows); presence is confirmed above, so a missing
-  // or partial record never silently falls back to defaults.
-  preferences.getString("wifi_ssid", candidate.wifiSsid,
-                        sizeof(candidate.wifiSsid));
-  preferences.getString("wifi_pass", candidate.wifiPassword,
-                        sizeof(candidate.wifiPassword));
-  preferences.getString("mqtt_host", candidate.mqttHost,
-                        sizeof(candidate.mqttHost));
-  candidate.mqttPort =
-      preferences.getUShort("mqtt_port", candidate.mqttPort);
-  preferences.getString("mqtt_user", candidate.mqttUser,
-                        sizeof(candidate.mqttUser));
-  preferences.getString("mqtt_pass", candidate.mqttPassword,
-                        sizeof(candidate.mqttPassword));
-  preferences.getString("client_id", candidate.clientId,
-                        sizeof(candidate.clientId));
+  // Every field is read through a bounded, length-checked helper: presence,
+  // stored length and maximum size are verified, so a corrupt or overlong
+  // record cannot masquerade as a valid setting and fall back to a placeholder.
+  const bool fieldsOk =
+      readSettingString(preferences, "wifi_ssid", candidate.wifiSsid,
+                        sizeof(candidate.wifiSsid), true) &&
+      readSettingString(preferences, "wifi_pass", candidate.wifiPassword,
+                        sizeof(candidate.wifiPassword), false) &&
+      readSettingString(preferences, "mqtt_host", candidate.mqttHost,
+                        sizeof(candidate.mqttHost), true) &&
+      readSettingUShort(preferences, "mqtt_port", candidate.mqttPort) &&
+      readSettingString(preferences, "mqtt_user", candidate.mqttUser,
+                        sizeof(candidate.mqttUser), false) &&
+      readSettingString(preferences, "mqtt_pass", candidate.mqttPassword,
+                        sizeof(candidate.mqttPassword), false) &&
+      readSettingString(preferences, "client_id", candidate.clientId,
+                        sizeof(candidate.clientId), false);
   preferences.end();
 
-  if (!versionOk || !keysPresent || !micropad::validateSettings(candidate)) {
+  if (!versionOk || !keysPresent || !fieldsOk ||
+      !micropad::validateSettings(candidate)) {
     return false;
   }
   deviceSettings = candidate;
@@ -289,6 +327,12 @@ bool saveSettings(const micropad::Settings &settings) {
 
 micropad::SnapshotMailbox snapshotMailbox;
 portMUX_TYPE snapshotMux = portMUX_INITIALIZER_UNLOCKED;
+
+// P1.2: core-owned sleep/render interlock. All transitions plus the
+// renderBusy and mailbox-pending reads happen inside snapshotMux so the two
+// cores observe them atomically; once sleep is entered no draw may start
+// until the wake path releases it.
+micropad::SleepInterlock sleepInterlock;
 TaskHandle_t renderTaskHandle = nullptr;
 std::atomic<bool> renderBusy{false};
 // Core 0 -> Core 1 display-recovery handshake (Task 12): recoverDisplay()
@@ -727,6 +771,33 @@ bool copyOptionalString(JsonVariantConst value, char (&dst)[N]) {
   return safeCopy(dst, text);
 }
 
+// Strict optional numeric field (P1.6): absent/null keeps the documented
+// default; present-but-not-a-number or non-finite (NaN/Infinity) rejects the
+// whole payload instead of silently falling back to the default.
+bool numericField(JsonVariantConst value, float &out, float fallback) {
+  if (value.isNull()) {
+    out = fallback;
+    return true;
+  }
+  if (!value.is<float>()) return false;
+  const float number = value.as<float>();
+  if (!std::isfinite(number)) return false;
+  out = number;
+  return true;
+}
+
+// Strict optional boolean field (P1.6): absent/null keeps the default;
+// present-but-not-a-boolean rejects the whole payload.
+bool booleanField(JsonVariantConst value, bool &out, bool fallback) {
+  if (value.isNull()) {
+    out = fallback;
+    return true;
+  }
+  if (!value.is<bool>()) return false;
+  out = value.as<bool>();
+  return true;
+}
+
 }  // namespace
 
 bool parseBinding(JsonVariantConst value, micropad::Binding &out) {
@@ -755,15 +826,16 @@ bool parseItem(JsonVariantConst value, micropad::Item &out) {
   if (!copyOptionalString(obj["unit"], out.unit)) return false;
   if (!copyOptionalString(obj["target_page"], out.targetPage)) return false;
   // Numeric/edit fields are optional and defaulted so retained payloads from
-  // older generators (name/type/entity/state only) stay loadable; when any is
-  // present it must be numeric (or boolean for editable) and the resulting
-  // combination must remain finite and bounded (min <= max, step > 0).
-  out.value = obj["value"].is<float>() ? obj["value"].as<float>() : 0.0f;
-  out.min = obj["min"].is<float>() ? obj["min"].as<float>() : 0.0f;
-  out.max = obj["max"].is<float>() ? obj["max"].as<float>() : 100.0f;
-  out.step = obj["step"].is<float>() ? obj["step"].as<float>() : 1.0f;
-  out.editable =
-      obj["editable"].is<bool>() ? obj["editable"].as<bool>() : false;
+  // older generators (name/type/entity/state only) stay loadable; each present
+  // field must have the exact documented type, and the resulting combination
+  // must remain finite and bounded (min <= max, step > 0). A present-but-wrong
+  // typed field (string instead of number, boolean instead of boolean, or
+  // NaN/Infinity) rejects the whole payload (P1.6).
+  if (!numericField(obj["value"], out.value, 0.0f)) return false;
+  if (!numericField(obj["min"], out.min, 0.0f)) return false;
+  if (!numericField(obj["max"], out.max, 100.0f)) return false;
+  if (!numericField(obj["step"], out.step, 1.0f)) return false;
+  if (!booleanField(obj["editable"], out.editable, false)) return false;
   if (!std::isfinite(out.value) || !std::isfinite(out.min) ||
       !std::isfinite(out.max) || !std::isfinite(out.step)) {
     return false;
@@ -935,7 +1007,18 @@ void mqttTick(uint32_t nowMs) {
   if (portalActive) return;
   if (WiFi.status() != WL_CONNECTED) return;
   if (!mqttClientConfigured) {
-    mqttClient.setBufferSize(micropad::MQTT_BUFFER_BYTES);
+    // P1.4: widening the PubSubClient buffer can fail on a fragmented heap.
+    // The failure must never be ignored: a truncated buffer would silently
+    // drop the retained pages, so stay unconfigured and retry through the
+    // same throttle instead of connecting.
+    if (static_cast<uint32_t>(nowMs - mqttNextAttemptMs) <
+        micropad::MQTT_RETRY_MS) {
+      return;
+    }
+    if (!mqttClient.setBufferSize(micropad::MQTT_BUFFER_BYTES)) {
+      mqttNextAttemptMs = nowMs;
+      return;
+    }
     mqttClient.setSocketTimeout(1);
     mqttNetworkClient.setConnectionTimeout(100);
     mqttClient.setServer(deviceSettings.mqttHost, deviceSettings.mqttPort);
@@ -1125,9 +1208,14 @@ bool sleepGateReady(uint32_t nowMs) {
   // pad and the session looks like a crash. The portal has its own
   // PORTAL_IDLE_MS restart instead.
   if (portalActive) return false;
-  return micropad::canSleep(false, anyKeyHeld(),
-                            renderBusy.load(std::memory_order_acquire),
-                            snapshotMailbox.hasPending(), nowMs,
+  // P1.2: the busy and pending reads are race-free — they are taken under the
+  // same mutex the render task uses to claim/release snapshots and publish
+  // renderBusy.
+  portENTER_CRITICAL(&snapshotMux);
+  const bool busy = renderBusy.load(std::memory_order_acquire);
+  const bool pending = snapshotMailbox.hasPending();
+  portEXIT_CRITICAL(&snapshotMux);
+  return micropad::canSleep(false, anyKeyHeld(), busy, pending, nowMs,
                             lastActivityMs, awakeStartedMs);
 }
 
@@ -1170,7 +1258,22 @@ void enterLightSleep(uint32_t nowMs) {
   // Structural guard mirroring the gate: the setup portal never sleeps (issue
   // #6), whatever the future call graph looks like.
   if (portalActive) return;
+  // P1.2 atomic sleep/render handshake: the busy/pending check and the
+  // interlock grant are one critical section. If the render task claimed a
+  // frame or committed a snapshot in between, sleep is skipped for this round
+  // instead of suspending a renderer that is drawing or holds a pending frame.
+  const bool granted = [&] {
+    portENTER_CRITICAL(&snapshotMux);
+    const bool busy = renderBusy.load(std::memory_order_acquire);
+    const bool pending = snapshotMailbox.hasPending();
+    const bool ok = sleepInterlock.setSleepEntered(busy, pending);
+    portEXIT_CRITICAL(&snapshotMux);
+    return ok;
+  }();
+  if (!granted) return;
   prepareWakeInputs();
+  // Safe now: the interlock forbids any new draw, so the render task is not
+  // inside a SPI/GxEPD2 transaction when suspended.
   vTaskSuspend(renderTaskHandle);
   // The loop task is the only task watchdog subscriber (like the proven v6
   // firmware): a sleep longer than the watchdog period would panic-reboot, so
@@ -1183,6 +1286,13 @@ void enterLightSleep(uint32_t nowMs) {
   const int64_t wakeUs = esp_timer_get_time();
   const uint32_t wakeMs = millis();
   restoreAfterWake(wakeMs, static_cast<uint64_t>(wakeUs - sleepStartUs));
+  // Wake releases the interlock (the resumed renderer must be allowed to draw
+  // again), and a frame that stayed pending while sleeping is rendered now.
+  portENTER_CRITICAL(&snapshotMux);
+  const bool wakeResumed = sleepInterlock.wake();
+  const bool pendingAfterWake = snapshotMailbox.hasPending();
+  portEXIT_CRITICAL(&snapshotMux);
+  (void)wakeResumed;
   awakeStartedMs = wakeMs;
   // A wake is activity: restart the idle clock. Without this the pad woke with
   // the idle timer still expired, slept again ~3 s later, and spent most of its
@@ -1190,6 +1300,9 @@ void enterLightSleep(uint32_t nowMs) {
   // then read in all three rows (observed live: r0c3+r1c3+r2c3 for one press).
   lastActivityMs = wakeMs;
   processWakeInput(wakeMs);
+  if (pendingAfterWake) {
+    requestDraw(micropad::DrawReason::StateChange);
+  }
 }
 
 // Post-wake restore: resume the renderer, re-arm this task on the watchdog
@@ -1328,17 +1441,32 @@ void renderTask(void *) {
     }
     for (;;) {
       waitForRefreshSpacing();
-      int8_t slot = -1;
       portENTER_CRITICAL(&snapshotMux);
-      slot = snapshotMailbox.claimNewest();
+      const bool mayDraw = sleepInterlock.tryBeginDraw();
+      int8_t slot = -1;
+      if (mayDraw) {
+        slot = snapshotMailbox.claimNewest();
+        if (slot >= 0) {
+          // P1.2: renderBusy flips under the same mutex the sleep path reads,
+          // so the interrupt-safe check never races with a draw start.
+          renderBusy.store(true, std::memory_order_release);
+        }
+      }
       portEXIT_CRITICAL(&snapshotMux);
+      if (!mayDraw) {
+        // Sleep entered since this frame arrived: the frame must survive.
+        // Sleep can only start with no pending frame, so this only happens
+        // right after wake; give the loop task a moment to release the
+        // interlock, then return to the notification wait.
+        vTaskDelay(pdMS_TO_TICKS(20));
+        break;
+      }
       if (slot < 0) break;  // no newer published generation: block again
-      renderBusy.store(true, std::memory_order_release);
       esp_task_wdt_reset();  // pet before the long panel draw
       drawSnapshot(snapshotMailbox.readable(slot));
       esp_task_wdt_reset();  // pet after the long panel draw
-      renderBusy.store(false, std::memory_order_release);
       portENTER_CRITICAL(&snapshotMux);
+      renderBusy.store(false, std::memory_order_release);
       snapshotMailbox.release(slot);
       portEXIT_CRITICAL(&snapshotMux);
     }
@@ -1398,9 +1526,14 @@ void initDisplay() {
 // keep replacing the still-published slot so the eventual claim receives the
 // newest snapshot. vTaskDelay blocks only this task; nothing prints.
 void waitForRefreshSpacing() {
+  // P1.3: MAX_PARTIAL_REFRESHES == 0 means "never force a periodic full
+  // refresh" — it must NOT disable the 100 ms spacing. Every normal partial
+  // refresh is spaced; only a forced-full start may lag.
+  const bool forcedFull = pendingForceFull.load(std::memory_order_acquire);
   const bool partialImminent =
-      !pendingForceFull.load(std::memory_order_acquire) &&
-      refreshPolicy.partialCount() < micropad::MAX_PARTIAL_REFRESHES;
+      !forcedFull &&
+      (micropad::MAX_PARTIAL_REFRESHES == 0 ||
+       refreshPolicy.partialCount() < micropad::MAX_PARTIAL_REFRESHES);
   if (!partialImminent) return;
   const uint32_t remaining = refreshPolicy.remainingSpacingMs(millis());
   if (remaining > 0) vTaskDelay(pdMS_TO_TICKS(remaining));
@@ -1586,12 +1719,20 @@ void setup() {
   assert(xPortGetCoreID() == 1);  // setup must run on the application core
 #endif
 
-  mqttClient.setBufferSize(micropad::MQTT_BUFFER_BYTES);
+  // P1.4: the 16 KiB widening can fail on a fragmented boot heap. Never
+  // advertise a configured client with a truncated buffer — leave it
+  // unconfigured so the throttled mqttTick() path re-attempts widening and
+  // connect instead of silently dropping retained pages.
+  if (!mqttClient.setBufferSize(micropad::MQTT_BUFFER_BYTES)) {
+    mqttClientConfigured = false;
+    mqttNextAttemptMs = millis();
+  } else {
+    mqttClientConfigured = true;
+  }
   mqttClient.setSocketTimeout(1);
   mqttNetworkClient.setConnectionTimeout(100);
   mqttClient.setServer(deviceSettings.mqttHost, deviceSettings.mqttPort);
   mqttClient.setCallback(onMqttMessage);
-  mqttClientConfigured = true;
   initDisplay();
   createRenderTask();
   // The loop task is the task-watchdog subscriber and the setup portal's

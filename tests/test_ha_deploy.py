@@ -142,3 +142,153 @@ def test_publications_are_retained_for_catalog_current_and_keymap() -> None:
         ("micropad/page/current", True),
         ("micropad/keymap", True),
     ]
+
+
+# --- P1.14: approved-preview pinning, rollback, honest verification -----------
+
+
+class RollbackRecordingClient(RecordingHAClient):
+    """Recording client that also records deletes and can fail a chosen publish."""
+
+    def __init__(self, *args, fail_publish_topic: str = "", **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.fail_publish_topic = fail_publish_topic
+        self.deleted: list[str] = []
+        self.payloads: list[tuple[str, str]] = []
+
+    def publish_mqtt(self, topic, payload, retain=True):
+        self._record(f"publish:{topic}")
+        if topic == self.fail_publish_topic:
+            raise RuntimeError(f"publish:{topic}")
+        self.published.append((topic, retain))
+        self.payloads.append((topic, payload))
+
+    def delete_automation(self, automation_id: str) -> None:
+        self._record("delete_automation")
+        self.deleted.append(automation_id)
+
+
+def _approved_preview(tmp_path):
+    """Build a realistic approved preview from the real generator."""
+    from micropad.generator import generate_bundle
+    from micropad.ha_deploy import RETAINED_TOPICS, ApprovedPreview
+
+    bundle = generate_bundle(default_config())
+    payloads = (
+        (RETAINED_TOPICS[0], bundle.catalog_payload),
+        (RETAINED_TOPICS[1], bundle.home_payload),
+        (RETAINED_TOPICS[2], bundle.home_keymap_payload),
+    )
+    return ApprovedPreview(
+        automation=bundle.automation, publications=payloads, digest="a" * 64
+    )
+
+
+def test_approved_preview_publishes_exactly_the_approved_bytes(tmp_path) -> None:
+    client = RollbackRecordingClient(existing=None)
+    approved = _approved_preview(tmp_path)
+    # read_back must match the approved automation for verification to pass.
+    client.read_back = approved.automation
+    HomeAssistantDeployer(client).deploy(default_config(), approved=approved)
+    assert client.payloads == list(approved.publications)
+    # The approved path never regenerates payloads from fresh HA state.
+    assert "list_entities" not in client.operations
+
+
+def test_read_back_mismatch_rolls_back_to_previous_automation() -> None:
+    previous = {"id": "micropad_controller", "alias": "Previous"}
+    client = RollbackRecordingClient(existing=previous, read_back={"id": "different"})
+    with pytest.raises(HADeploymentError, match="did not match"):
+        HomeAssistantDeployer(client).deploy(default_config())
+    assert "put_automation" in client.operations
+    # The previous automation is restored (put_automation is called twice).
+    assert client.operations.count("put_automation") == 2
+    assert not [op for op in client.operations if op.startswith("publish:")]
+
+
+def test_read_back_mismatch_on_first_create_deletes_the_new_automation() -> None:
+    client = RollbackRecordingClient(existing=None, read_back={"id": "different"})
+    with pytest.raises(HADeploymentError, match="did not match"):
+        HomeAssistantDeployer(client).deploy(default_config())
+    assert client.deleted == ["micropad_controller"]
+
+
+def test_publish_failure_rolls_back_and_reports_remaining_changes() -> None:
+    from micropad.ha_deploy import HADeploymentPartialError
+
+    client = RollbackRecordingClient(existing=None, fail_publish_topic="micropad/page/current")
+    with pytest.raises(HADeploymentPartialError) as excinfo:
+        HomeAssistantDeployer(client).deploy(default_config())
+    # The automation write was rolled back (delete, since it was a create) ...
+    assert client.deleted == ["micropad_controller"]
+    # ... and the exact remaining change is reported (the topic that got published).
+    assert excinfo.value.remaining == ("micropad/pages/all",)
+
+
+def test_unverified_retained_topics_are_never_reported_as_verified() -> None:
+    client = RollbackRecordingClient(existing=None)
+    result = HomeAssistantDeployer(client).deploy(default_config())
+    assert result.automation_readback_verified is True
+    assert result.mqtt_verified is False  # no verifier configured
+    assert result.verified is False
+    assert set(result.unverified_topics) == {
+        "micropad/pages/all",
+        "micropad/page/current",
+        "micropad/keymap",
+    }
+
+
+def test_mqtt_verifier_mismatch_rolls_back_and_reports_partial_failure() -> None:
+    from micropad.ha_deploy import HADeploymentPartialError
+
+    client = RollbackRecordingClient(existing=None)
+    mismatched = ["micropad/keymap"]
+
+    def verifier(expected: dict[str, str]) -> list[str]:
+        return mismatched
+
+    with pytest.raises(HADeploymentPartialError) as excinfo:
+        HomeAssistantDeployer(client).deploy(default_config(), mqtt_verifier=verifier)
+    assert excinfo.value.remaining == ("micropad/keymap",)
+    assert client.deleted == ["micropad_controller"]
+
+
+def test_mqtt_verifier_success_marks_the_deployment_verified() -> None:
+    client = RollbackRecordingClient(existing=None)
+    seen: dict[str, str] = {}
+
+    def verifier(expected: dict[str, str]) -> list[str]:
+        seen.update(expected)
+        return []
+
+    result = HomeAssistantDeployer(client).deploy(default_config(), mqtt_verifier=verifier)
+    assert result.mqtt_verified is True
+    assert result.verified is True
+    assert result.unverified_topics == ()
+    assert set(seen) == {"micropad/pages/all", "micropad/page/current", "micropad/keymap"}
+
+
+def test_load_approved_preview_reads_the_rendered_artifacts(tmp_path) -> None:
+    from micropad.ha_deploy import load_approved_preview, preview_sha256
+    from scripts.render_live_ha_preview import main as render_main
+
+    config_path = tmp_path / "config.json"
+    config_path.write_text(default_config().model_dump_json(by_alias=True), encoding="utf-8")
+    preview_dir = tmp_path / "preview"
+    assert render_main(["--config", str(config_path), "--output", str(preview_dir)]) == 0
+
+    approved = load_approved_preview(preview_dir)
+    assert approved.digest == preview_sha256(preview_dir)
+    assert [topic for topic, _ in approved.publications] == [
+        "micropad/pages/all",
+        "micropad/page/current",
+        "micropad/keymap",
+    ]
+
+
+def test_load_approved_preview_refuses_an_incomplete_preview(tmp_path) -> None:
+    from micropad.ha_deploy import load_approved_preview
+
+    (tmp_path / "automation.json").write_text("{}", encoding="utf-8")
+    with pytest.raises(HADeploymentError, match="incomplete"):
+        load_approved_preview(tmp_path)

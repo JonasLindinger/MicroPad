@@ -1427,3 +1427,192 @@ class FirmwareReleaseAssertionTest(FirmwareStaticContractTest):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FirmwareRobustnessFindingsTest(FirmwareStaticContractTest):
+    """P1.3 (partial spacing), P1.4 (MQTT buffer allocation), P1.5 (NVS reads).
+
+    The sketch is not host-compiled, so these pin the sketch-side guarantees
+    that cannot be exercised on the host: the spacing condition must not be
+    disabled by MAX_PARTIAL_REFRESHES == 0, a failed 16 KiB widening must never
+    be followed by a connect, and no NVS field may be read without a
+    length/size check.
+    """
+
+    def ino(self) -> str:
+        return self.source("firmware/MicroPad_HA_Controller.ino")
+
+    # --- P1.3 -----------------------------------------------------------------
+
+    def test_partial_spacing_is_not_disabled_by_zero_partial_limit(self):
+        body = self.function_body(self.ino(), "void waitForRefreshSpacing()")
+        self.assertIn("micropad::MAX_PARTIAL_REFRESHES == 0", body)
+        self.assertIn("remainingSpacingMs(", body)
+        # The spacing must still be applied for every normal partial refresh.
+        self.assertIn("vTaskDelay(", body)
+        self.assertNotIn("Serial", body)
+
+    def test_zero_partial_limit_means_no_forced_full_refresh(self):
+        policy = self.function_body(self.source("firmware/micropad_core.h"),
+                                  "RefreshMode beginRefresh(")
+        # The forced-full guard is limited to a positive limit, so a zero limit
+        # never forces periodic full refreshes.
+        self.assertIn("MAX_PARTIAL_REFRESHES > 0", policy)
+        self.assertIn("snapshotForceFull", policy)
+
+    # --- P1.4 -----------------------------------------------------------------
+
+    def test_every_buffer_widening_is_checked(self):
+        text = self.ino()
+        self.assertEqual(text.count("mqttClient.setBufferSize("), 2)
+        setup = self.function_body(text, "void setup()")
+        self.assertIn(
+            "if (!mqttClient.setBufferSize(micropad::MQTT_BUFFER_BYTES))", setup
+        )
+        # A failed widening must leave the client unconfigured, and the
+        # configured flag may only be set on the success path.
+        self.assertIn("mqttClientConfigured = false;", setup)
+        self.assertIn("mqttClientConfigured = true;", setup)
+
+    def test_failed_widening_never_connects(self):
+        body = self.function_body(self.ino(), "void mqttTick(uint32_t nowMs)")
+        self.assertIn(
+            "if (!mqttClient.setBufferSize(micropad::MQTT_BUFFER_BYTES))", body
+        )
+        configure = body[body.index("if (!mqttClientConfigured)") :]
+        guard = configure[: configure.index("mqttClientConfigured = true;")]
+        # The failure branch returns without reaching the connect site, and the
+        # retry stays throttled and non-blocking.
+        self.assertIn("return;", guard)
+        self.assertIn("mqttNextAttemptMs = nowMs;", guard)
+        self.assertNotIn("connect(", guard)
+        # mqttTick still has exactly one connect site and never blocks.
+        self.assertEqual(body.count("connect("), 1)
+        self.assertNotIn("while ", body)
+        self.assertNotIn("delay(", body)
+
+    # --- P1.5 -----------------------------------------------------------------
+
+    def test_settings_reads_are_length_and_size_checked(self):
+        text = self.ino()
+        helper = self.function_body(text, "bool readSettingString(")
+        self.assertIn("getBytesLength(", helper)
+        self.assertIn("getString(", helper)
+        self.assertIn("capacity - 1", helper)
+        port_helper = self.function_body(text, "bool readSettingUShort(")
+        self.assertIn("getBytesLength(", port_helper)
+        self.assertIn("sizeof(uint16_t)", port_helper)
+
+    def test_load_settings_uses_checked_reads_for_every_field(self):
+        body = self.function_body(self.ino(), "bool loadSettings()")
+        for field in ("wifi_ssid", "wifi_pass", "mqtt_host", "mqtt_user",
+                      "mqtt_pass", "client_id"):
+            self.assertIn(f'readSettingString(preferences, "{field}"', body)
+        self.assertIn('readSettingUShort(preferences, "mqtt_port"', body)
+        self.assertIn("fieldsOk", body)
+        # No unchecked read may remain: every stored value is length-verified.
+        self.assertNotIn('preferences.getString("wifi_ssid"', body)
+        self.assertNotIn('preferences.getString("mqtt_host"', body)
+        # A corrupt record must not be accepted and nothing may be logged.
+        self.assertNotIn("deviceSettings = candidate;", body.split("fieldsOk", 1)[0])
+        self.assertNotIn("Serial", body)
+        self.assertNotIn("println", body)
+
+    def test_empty_ssid_is_only_valid_in_the_unconfigured_portal_state(self):
+        body = self.function_body(self.ino(), "bool loadSettings()")
+        # The SSID is a required field, so an empty value fails the read and
+        # setup() falls through to the setup portal instead of a broker connect.
+        self.assertIn('"wifi_ssid"', body)
+        self.assertIn("sizeof(candidate.wifiSsid), true", body)
+        setup = self.function_body(self.ino(), "void setup()")
+        # setup() never synchronously connects; a portal start replaces any
+        # network start while the settings record is invalid.
+        self.assertNotIn("mqttClient.connect(", setup)
+        self.assertIn("startPortal(", setup)
+        self.assertLess(setup.index("startPortal("),
+                        setup.index("WiFi.mode(WIFI_STA)"))
+
+
+class FirmwareStrictJsonTest(FirmwareStaticContractTest):
+    """P1.6: MQTT JSON fields are strictly typed — present-but-wrong types and
+    non-finite numbers reject the payload; absent fields keep documented
+    defaults; a rejected payload leaves the previous state untouched."""
+
+    def ino(self) -> str:
+        return self.source("firmware/MicroPad_HA_Controller.ino")
+
+    def test_numeric_and_boolean_fields_are_strictly_typed(self):
+        body = self.function_body(self.ino(), "bool parseItem(")
+        for field in ("value", "min", "max", "step"):
+            self.assertIn(f'numericField(obj["{field}"]', body)
+        self.assertIn('booleanField(obj["editable"]', body)
+        # The silent-default pattern must be gone.
+        self.assertNotIn('obj["value"].is<float>()', body)
+        self.assertNotIn('obj["editable"].is<bool>()', body)
+
+    def test_helpers_reject_present_wrong_type_and_non_finite(self):
+        numeric = self.function_body(self.ino(), "bool numericField(")
+        self.assertIn("value.isNull()", numeric)
+        self.assertIn("is<float>()", numeric)
+        self.assertIn("std::isfinite(", numeric)
+        boolean = self.function_body(self.ino(), "bool booleanField(")
+        self.assertIn("is<bool>()", boolean)
+        self.assertIn("value.isNull()", boolean)
+
+    def test_rejected_payload_keeps_previous_state_and_no_draw(self):
+        current = self.function_body(
+            self.ino(), "void onMqttMessage(char *topic, uint8_t *payload, unsigned int length)"
+        )
+        # The current-page branch commits and draws only on successful parse +
+        # authoritative change; every failure path returns untouched.
+        self.assertIn("if (parseCurrentPage(root, page)) {", current)
+        self.assertIn("requestDraw(", current)
+        self.assertIn("contentChanged", current)
+        self.assertNotIn("Serial", current)
+
+
+class FirmwareSleepInterlockTest(FirmwareStaticContractTest):
+    """P1.2: the sleep path and the render task serialize through the core
+    SleepInterlock inside critical sections; a suspended renderer is never
+    mid-draw and hasPending reads are race-free."""
+
+    def ino(self) -> str:
+        return self.source("firmware/MicroPad_HA_Controller.ino")
+
+    def test_enter_sleep_grants_interlock_before_suspend(self):
+        body = self.function_body(self.ino(), "void enterLightSleep(")
+        self.assertIn("sleepInterlock.setSleepEntered(busy, pending)", body)
+        self.assertIn("portENTER_CRITICAL(&snapshotMux)", body)
+        self.assertIn("if (!granted) return;", body)
+        # The suspend must come strictly after the grant.
+        self.assertLess(body.index("granted"), body.index("vTaskSuspend("))
+        # Wake releases the interlock again.
+        self.assertIn("sleepInterlock.wake()", body)
+        self.assertIn("pendingAfterWake", body)
+        self.assertIn("requestDraw(micropad::DrawReason::StateChange)", body)
+
+    def test_sleep_gate_reads_pending_under_the_mutex(self):
+        body = self.function_body(self.ino(), "bool sleepGateReady(")
+        self.assertIn("portENTER_CRITICAL(&snapshotMux)", body)
+        self.assertIn("snapshotMailbox.hasPending()", body)
+        self.assertIn("renderBusy.load", body)
+        self.assertIn("portEXIT_CRITICAL(&snapshotMux)", body)
+
+    def test_render_task_claims_through_the_interlock(self):
+        body = self.function_body(self.ino(), "void renderTask(")
+        self.assertIn("sleepInterlock.tryBeginDraw()", body)
+        self.assertIn("if (!mayDraw)", body)
+        # On refusal the renderer delays and skips the draw instead of
+        # starting a transaction while sleep owns the interlock.
+        self.assertIn("vTaskDelay(pdMS_TO_TICKS(20))", body)
+        self.assertLess(body.index("if (!mayDraw)"),
+                        body.index("drawSnapshot("))
+        # renderBusy flips inside the same critical section the sleep path
+        # reads, so the busy check cannot race a draw start.
+        busy_region = body[body.index("waitForRefreshSpacing();") :
+                           body.index("drawSnapshot(")]
+        self.assertIn("portENTER_CRITICAL", busy_region)
+        self.assertIn("renderBusy.store(true", busy_region)
+        # Only the loop task is watchdog-subscribed; the renderer never arms a
+        # busy wait that could trip the TWDT.
+        self.assertIn("esp_task_wdt_reset()", body)

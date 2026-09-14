@@ -659,25 +659,33 @@ ApplyResult PadController::applyAction(Action action, const Binding &binding,
       break;
     }
     case Action::Toggle: {
-      if (item == nullptr) break;
-      const bool isOn = std::strcmp(item->state, "on") == 0;
-      safeCopy(item->state, isOn ? "off" : "on");
-      changed = true;
+      // P1.1: an entity action addresses exactly the binding's entity — the
+      // currently selected item is never substituted for it. A missing entity
+      // is a defined no-op; the backend and UI reject it visibly instead.
+      if (binding.entity[0] == '\0') break;
+      safeCopy(out.entity, binding.entity);
       wantEvent = true;
-      safeCopy(out.entity, item->entity);
+      if (item != nullptr && std::strcmp(item->entity, binding.entity) == 0) {
+        const bool isOn = std::strcmp(item->state, "on") == 0;
+        safeCopy(item->state, isOn ? "off" : "on");
+        changed = true;
+      }
       break;
     }
     case Action::On:
     case Action::Off: {
-      if (item == nullptr) break;
-      safeCopy(item->state, action == Action::On ? "on" : "off");
-      changed = true;
+      if (binding.entity[0] == '\0') break;
+      safeCopy(out.entity, binding.entity);
       wantEvent = true;
-      safeCopy(out.entity, item->entity);
+      if (item != nullptr && std::strcmp(item->entity, binding.entity) == 0) {
+        safeCopy(item->state, action == Action::On ? "on" : "off");
+        changed = true;
+      }
       break;
     }
     case Action::Press: {
-      if (item != nullptr) safeCopy(out.entity, item->entity);
+      if (binding.entity[0] == '\0') break;
+      safeCopy(out.entity, binding.entity);
       wantEvent = true;
       break;
     }
@@ -685,24 +693,37 @@ ApplyResult PadController::applyAction(Action action, const Binding &binding,
     case Action::VolumeDown:
     case Action::MediaNext:
     case Action::MediaPrev: {
-      // Documented media-control events: the backend dispatches on the
-      // selected item's entity; local state stays unchanged.
-      if (item != nullptr) safeCopy(out.entity, item->entity);
+      // Documented media-control events address the bound entity; local state
+      // stays unchanged.
+      if (binding.entity[0] == '\0') break;
+      safeCopy(out.entity, binding.entity);
       wantEvent = true;
       break;
     }
     case Action::Keymap: {
-      // A keymap request event: the backend republishes the effective map
-      // for the current page. Carries the origin page id only.
+      // A keymap request event: the backend republishes the effective map for
+      // the requested page. A binding target page requests that page's map;
+      // otherwise the current page is the origin (P1.1: target_page honoured).
       wantEvent = true;
+      if (binding.targetPage[0] != '\0') {
+        const Page *dest = findPage(catalog, binding.targetPage);
+        safeCopy(out.targetPage,
+                 dest != nullptr ? dest->pageId : binding.targetPage);
+      }
       break;
     }
     case Action::Edit: {
-      if (item == nullptr || item->type != ItemType::Number) break;
+      // Editing drives local edit state, so it applies to the selected number
+      // item — and only while that item is the bound entity.
+      if (binding.entity[0] == '\0' || item == nullptr ||
+          item->type != ItemType::Number ||
+          std::strcmp(item->entity, binding.entity) != 0) {
+        break;
+      }
       state.editing = true;
       changed = true;
       wantEvent = true;
-      safeCopy(out.entity, item->entity);
+      safeCopy(out.entity, binding.entity);
       out.value = item->value;
       break;
     }
@@ -715,7 +736,10 @@ ApplyResult PadController::applyAction(Action action, const Binding &binding,
       changed = true;
       wantEvent = true;
       out.action = Action::Edit;
-      safeCopy(out.entity, item->entity);
+      // The confirmed item is the target; an Enter-resolved binding carries the
+      // same entity, so both agree (P1.1).
+      safeCopy(out.entity,
+               binding.entity[0] != '\0' ? binding.entity : item->entity);
       out.value = item->value;
       break;
     }

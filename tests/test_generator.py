@@ -744,3 +744,53 @@ def test_live_state_is_truncated_to_display_budget_not_rejected() -> None:
     assert len(text.encode("utf-8")) <= 8192
     assert len(payload["items"][0]["state"].encode("utf-8")) == MAX_REFLECTED_STATE_BYTES
     assert payload["items"][0]["state"] == "é" * (MAX_REFLECTED_STATE_BYTES // 2)
+
+
+def test_keymap_binding_target_page_publishes_the_target_pages_map() -> None:
+    """P1.1: a keymap event carrying target_page dispatches to exactly that
+    page's keymap; an origin-only event still publishes the origin page's map
+    and the two branches never double-fire."""
+    config = default_config()
+    automation = generate_bundle(config).automation
+    keymap_branches = []
+
+    def collect(branches):
+        for branch in branches:
+            template = " ".join(
+                str(c.get("value_template", "")) for c in branch.get("conditions", [])
+            )
+            if 'event.action == "keymap"' in template:
+                keymap_branches.append(branch)
+            for step in branch.get("sequence", []):
+                collect(step.get("choose", []))
+                if "choose" in step:
+                    pass
+    collect(automation["actions"][0]["choose"])
+    # One branch per page for each of the two semantics.
+    assert len(keymap_branches) == 2 * len(config.pages)
+    target = [
+        b for b in keymap_branches
+        if 'event.target_page == "home"' in
+        " ".join(str(c.get("value_template", "")) for c in b["conditions"])
+    ]
+    origin = [
+        b for b in keymap_branches
+        if 'event.page_id == "home"' in
+        " ".join(str(c.get("value_template", "")) for c in b["conditions"])
+    ]
+    assert len(target) == 1
+    assert len(origin) == 1
+    # The origin branch must not fire for a target-carrying event.
+    origin_template = " ".join(
+        str(c.get("value_template", "")) for c in origin[0]["conditions"]
+    )
+    assert "target_page | default('') == ''" in origin_template
+    target_template = " ".join(
+        str(c.get("value_template", "")) for c in target[0]["conditions"]
+    )
+    assert 'event.target_page == "home"' in target_template
+    sequences = " ".join(
+        json.dumps(step) for step in target[0]["sequence"]
+    )
+    assert '"micropad/keymap"' in sequences
+    assert "home" in sequences

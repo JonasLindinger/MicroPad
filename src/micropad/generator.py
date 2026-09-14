@@ -227,8 +227,17 @@ def generate_keymap_payload(config: AppConfig, page_id: str) -> str:
 
 
 def _event_condition(
-    action: str, entity: str = "", page_id: str = "", target_page: str = ""
+    action: str,
+    entity: str = "",
+    page_id: str = "",
+    target_page: str = "",
+    no_target: bool = False,
 ) -> list[dict[str, str]]:
+    """Build an HA automation condition on the uc event payload (P1.1).
+
+    ``no_target`` restricts the match to events WITHOUT a target page, so an
+    origin keymap publication never also matches the target-page branch.
+    """
     checks = [f"event.action == {json.dumps(action)}"]
     if entity:
         checks.append(f"event.entity == {json.dumps(entity)}")
@@ -236,6 +245,8 @@ def _event_condition(
         checks.append(f"event.page_id == {json.dumps(page_id)}")
     if target_page:
         checks.append(f"event.target_page == {json.dumps(target_page)}")
+    if no_target:
+        checks.append("event.target_page | default('') == ''")
     return [{"condition": "template", "value_template": "{{ " + " and ".join(checks) + " }}"}]
 
 
@@ -376,8 +387,31 @@ def generate_automation(config: AppConfig) -> dict[str, object]:
         )
         choices.append(
             {
-                "conditions": _event_condition("keymap", page_id=page.page_id),
-                "sequence": [_publish("keymap", generate_keymap_payload(config, page.page_id))],
+                # P1.1: a keymap binding with a target page really requests that
+                # page's keymap; an origin-only event still publishes the origin
+                # page's map (no_target keeps the two branches exclusive).
+                "conditions": _event_condition(
+                    "keymap", target_page=page.page_id
+                ),
+                "sequence": [
+                    _publish(
+                        "keymap",
+                        generate_keymap_payload(config, page.page_id),
+                    )
+                ],
+            }
+        )
+        choices.append(
+            {
+                "conditions": _event_condition(
+                    "keymap", page_id=page.page_id, no_target=True
+                ),
+                "sequence": [
+                    _publish(
+                        "keymap",
+                        generate_keymap_payload(config, page.page_id),
+                    )
+                ],
             }
         )
     choices.extend(

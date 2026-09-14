@@ -706,6 +706,7 @@ void testOptimisticValues() {
   items[0].type = ItemType::Switch;
   safeCopy(items[0].entity, "switch.x");
   safeCopy(items[0].state, "off");
+  safeCopy(b.entity, "switch.x");  // P1.1: entity actions steer binding.entity
   assert(pad.applyAction(Action::Toggle, b, 1000).stateChanged);
   assert(std::strcmp(items[0].state, "on") == 0);
   assert(pad.applyAction(Action::Toggle, b, 1100).stateChanged);
@@ -722,6 +723,7 @@ void testOptimisticValues() {
   items[1].max = 10.0f;
   items[1].step = 3.0f;
 
+  safeCopy(b.entity, "number.x");  // P1.1: the edited number is the bound entity
   assert(pad.applyAction(Action::Edit, b, 2000).stateChanged);
   assert(pad.state.editing);
   assert(pad.applyAction(Action::ScrollDown, b, 2100).stateChanged);
@@ -760,6 +762,8 @@ void testLocalNavigationAndResync() {
   nav.catalog.pages[0].items[0].type = ItemType::Category;
   safeCopy(nav.catalog.pages[0].items[0].targetPage, "target");
   Binding b{};
+  safeCopy(nav.catalog.pages[0].items[0].entity, "light.nav");
+  safeCopy(b.entity, "light.nav");
 
   // Home selects the cached page "home".
   safeCopy(nav.state.pageId, "child");
@@ -1036,6 +1040,7 @@ void testQueuedEventsCarryOriginPage() {
   safeCopy(pad.catalog.pages[0].items[0].entity, "switch.x");
   safeCopy(pad.catalog.pages[0].items[0].state, "off");
   Binding b{};
+  safeCopy(b.entity, "switch.x");
 
   assert(pad.applyAction(Action::Toggle, b, 100).eventReady);
   assert(pad.applyAction(Action::ScrollDown, b, 200).eventReady);
@@ -1822,6 +1827,7 @@ void testAuthoritativeCorrectionScenario() {
   safeCopy(item.entity, "switch.living");
   safeCopy(item.state, "off");
   Binding b{};
+  safeCopy(b.entity, "switch.living");
 
   ApplyResult r = pad.applyAction(Action::Toggle, b, 2100);
   assert(r.stateChanged && r.eventReady);
@@ -1975,9 +1981,10 @@ void testAllActionsReachDefinedOutcome() {
     pad.queue.pop(drained);
   }
 
-  // Press and the media/volume actions queue a documented MQTT event with
-  // the selected item's entity; local state is untouched.
+  // Press and the media/volume actions queue a documented MQTT event for the
+  // bound entity; local state is untouched.
   pad.state.selected = 2;
+  safeCopy(b.entity, "media.x");
   for (Action action : {Action::Press, Action::VolumeUp, Action::VolumeDown,
                         Action::MediaNext, Action::MediaPrev}) {
     r = pad.applyAction(action, b, 900);
@@ -1992,6 +1999,7 @@ void testAllActionsReachDefinedOutcome() {
 
   // Edit enters edit mode; ScrollDown adjusts the value; Confirm exits.
   pad.state.selected = 1;
+  safeCopy(b.entity, "number.x");
   r = pad.applyAction(Action::Edit, b, 1000);
   assert(r.stateChanged && r.eventReady);
   assert(pad.state.editing);
@@ -2020,6 +2028,196 @@ void testAllActionsReachDefinedOutcome() {
   assert(e.action == Action::Keymap);
   assert(std::strcmp(e.pageId, "home") == 0);
   assert(pad.queue.size() == 0);
+}
+
+
+// P1.1: entity actions steer exactly the binding's entity. A missing entity is
+// a defined no-op, an empty page still emits the event, and the selected item
+// is never substituted for the bound entity.
+void testEntityBindingSemantics() {
+  // Empty home page: an entity action still emits exactly one matching event
+  // and nothing local is flipped.
+  PadController padEmpty;
+  addPage(padEmpty, "home", "", 0);
+  safeCopy(padEmpty.state.pageId, "home");
+  Binding light{};
+  light.action = Action::Toggle;
+  safeCopy(light.entity, "light.desk");
+  ApplyResult r = padEmpty.applyAction(Action::Toggle, light, 1000);
+  assert(r.eventReady);
+  assert(!r.stateChanged);  // nothing local to flip on an empty page
+  Event e{};
+  assert(padEmpty.queue.size() == 1);
+  assert(padEmpty.queue.pop(e));
+  assert(e.action == Action::Toggle);
+  assert(std::strcmp(e.entity, "light.desk") == 0);
+  assert(std::strcmp(e.pageId, "home") == 0);
+
+  // Missing entity: defined no-op — no event, no local change.
+  Binding bare{};
+  bare.action = Action::Toggle;
+  r = padEmpty.applyAction(Action::Toggle, bare, 1100);
+  assert(!r.eventReady && !r.stateChanged);
+  r = padEmpty.applyAction(Action::On, bare, 1200);
+  assert(!r.eventReady && !r.stateChanged);
+  r = padEmpty.applyAction(Action::Press, bare, 1300);
+  assert(!r.eventReady && !r.stateChanged);
+
+  // Selected item with a DIFFERENT entity: the event keeps the bound entity
+  // and the unrelated item's local state is untouched.
+  PadController pad;
+  addPage(pad, "home", "", 2);
+  Item (&items)[MAX_ITEMS_PER_PAGE] = pad.catalog.pages[0].items;
+  items[0].type = ItemType::Switch;
+  safeCopy(items[0].entity, "switch.other");
+  safeCopy(items[0].state, "off");
+  items[1].type = ItemType::Light;
+  safeCopy(items[1].entity, "light.desk");
+  safeCopy(items[1].state, "off");
+  safeCopy(pad.state.pageId, "home");
+  pad.state.selected = 0;  // selected item is NOT the bound entity
+  r = pad.applyAction(Action::Toggle, light, 1400);
+  assert(r.eventReady);
+  assert(!r.stateChanged);
+  assert(std::strcmp(items[0].state, "off") == 0);  // not touched
+  assert(pad.queue.pop(e));
+  assert(std::strcmp(e.entity, "light.desk") == 0);
+  // Exactly one event for exactly one detent press.
+  assert(pad.queue.size() == 0);
+
+  // Selected item WITH the same entity: local state flips optimistically and
+  // the event still carries the bound entity.
+  pad.state.selected = 1;
+  r = pad.applyAction(Action::Toggle, light, 1500);
+  assert(r.eventReady && r.stateChanged);
+  assert(std::strcmp(items[1].state, "on") == 0);
+  assert(pad.queue.pop(e));
+  assert(std::strcmp(e.entity, "light.desk") == 0);
+  assert(pad.queue.size() == 0);
+
+  // On/Off: same discipline.
+  r = pad.applyAction(Action::On, light, 1600);
+  assert(r.eventReady && r.stateChanged);
+  assert(std::strcmp(items[1].state, "on") == 0);
+  assert(std::strcmp(items[0].state, "off") == 0);
+  r = pad.applyAction(Action::Off, light, 1700);
+  assert(r.eventReady && r.stateChanged);
+  assert(std::strcmp(items[1].state, "off") == 0);
+
+  // Drain the On/Off events so the keymap section inspects exactly its own.
+  while (pad.queue.size() > 0) {
+    Event drained{};
+    pad.queue.pop(drained);
+  }
+
+  // Keymap with a binding target page requests exactly that page's keymap.
+  addPage(pad, "child", "home", 0);
+  Binding km{};
+  km.action = Action::Keymap;
+  safeCopy(km.targetPage, "child");
+  r = pad.applyAction(Action::Keymap, km, 1800);
+  assert(r.eventReady);
+  assert(pad.queue.pop(e));
+  assert(e.action == Action::Keymap);
+  assert(std::strcmp(e.targetPage, "child") == 0);
+  // Unknown target degenerates to the raw id, never to the current page.
+  Binding km2{};
+  km2.action = Action::Keymap;
+  safeCopy(km2.targetPage, "missing");
+  r = pad.applyAction(Action::Keymap, km2, 1900);
+  assert(r.eventReady);
+  assert(pad.queue.pop(e));
+  assert(std::strcmp(e.targetPage, "missing") == 0);
+  // No target page keeps the origin-only event (no targetPage field).
+  Binding km3{};
+  km3.action = Action::Keymap;
+  r = pad.applyAction(Action::Keymap, km3, 2000);
+  assert(r.eventReady);
+  assert(pad.queue.pop(e));
+  assert(e.targetPage[0] == '\0');
+}
+
+// P1.3: the 100 ms spacing is applied to every normal partial refresh even
+// when MAX_PARTIAL_REFRESHES == 0 (which only disables periodic forced fulls),
+// and wrap-around millis remain safe.
+void testRefreshSpacingPolicy() {
+  static_assert(MAX_PARTIAL_REFRESHES == 0);
+  RefreshPolicy policy;
+
+  // First refresh is immediate.
+  assert(policy.spacingElapsed(1000));
+  RefreshMode first = policy.beginRefresh(1000, /*snapshotForceFull=*/false);
+  assert(first == RefreshMode::Partial);  // zero limit never forces periodic fulls
+
+  // 50 ms later the spacing still applies.
+  assert(!policy.spacingElapsed(1050));
+  assert(policy.remainingSpacingMs(1050) == 50);
+  assert(policy.remainingSpacingMs(1099) == 1);
+
+  // Exactly at the interval the spacing is available again.
+  assert(policy.spacingElapsed(1100));
+  assert(policy.remainingSpacingMs(1100) == 0);
+
+  // Wrap-around millis (~49 days uptime): a start just before 2^32 and a check
+  // just after the wrap must compute the correct elapsed time.
+  policy.beginRefresh(0xFFFFFFF0U, false);
+  const uint32_t afterWrap = static_cast<uint32_t>(0x00000014U);
+  assert(policy.remainingSpacingMs(afterWrap) == 64);  // 36 ms elapsed -> 64 left
+  assert(!policy.spacingElapsed(afterWrap));
+  const uint32_t atBoundary = static_cast<uint32_t>(0x00000054U);  // +100 ms
+  assert(policy.spacingElapsed(atBoundary));
+
+  // Many successful partials never force a full refresh when the limit is 0.
+  for (uint8_t i = 0; i < 200; ++i) {
+    policy.completeRefresh(true);
+    RefreshMode mode = policy.beginRefresh(2000 + i, false);
+    assert(mode == RefreshMode::Partial);
+  }
+  // A demanded snapshot full is still honoured, and it resets the counter.
+  RefreshMode forced = policy.beginRefresh(5000, true);
+  assert(forced == RefreshMode::Full);
+  policy.completeRefresh(true);
+  policy.beginRefresh(5100, false);
+  assert(policy.partialCount() == 0 || policy.partialCount() <= 200);
+}
+
+
+// P1.2: the sleep/render interlock resolves the TOCTOU between the sleep gate
+// and the render task claim. Simulates every required interleaving as
+// single-threaded state transitions (the sketch supplies the atomicity).
+void testSleepInterlockInterleavings() {
+  SleepInterlock il;
+
+  // 1. Claim BEFORE the gate: the drawn frame must block sleep.
+  assert(il.tryBeginDraw());
+  assert(!il.setSleepEntered(/*renderBusy=*/true, /*snapshotPending=*/false));
+  assert(il.tryBeginDraw());  // still awake
+
+  // 2. Claim BETWEEN gate and sleep: on a fresh, idle renderer the gate may
+  // grant sleep; once granted, a later claim is refused until wake.
+  SleepInterlock il2;
+  assert(il2.setSleepEntered(false, false));  // gate sees an idle renderer
+  assert(il2.sleeping());
+  assert(!il2.tryBeginDraw());  // render task may not start a draw now
+  assert(!il2.setSleepEntered(false, false));  // already entered: refused
+  assert(il2.wake());
+  assert(il2.tryBeginDraw());  // draws resume after wake
+
+  // 3. Publish during sleep approach: a pending snapshot blocks sleep.
+  SleepInterlock il3;
+  assert(!il3.setSleepEntered(false, /*snapshotPending=*/true));
+  assert(!il3.sleeping());
+  assert(il3.tryBeginDraw());
+
+  // 4. Wake with a pending frame: sleep entered, wake, then the frame draws.
+  SleepInterlock il4;
+  assert(il4.setSleepEntered(false, false));
+  assert(!il4.tryBeginDraw());
+  (void)il4.wake();
+  assert(il4.tryBeginDraw());
+  // A stray wake (no sleep entered) is a no-op.
+  SleepInterlock il5;
+  assert(!il5.wake());
 }
 
 int main() {
@@ -2053,6 +2251,9 @@ int main() {
   testSelectionWindow();
   testSelectedItemActions();
   testOptimisticValues();
+  testEntityBindingSemantics();
+  testRefreshSpacingPolicy();
+  testSleepInterlockInterleavings();
   testLocalNavigationAndResync();
   testSettingsDefaults();
   testSettingsValidation();

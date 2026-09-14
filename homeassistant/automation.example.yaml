@@ -61,8 +61,19 @@ actions:
             qos: 0
       - conditions:
         - condition: template
-          value_template: '{{ event.action == "keymap" and event.page_id == "home"
+          value_template: '{{ event.action == "keymap" and event.target_page == "home"
             }}'
+        sequence:
+        - action: mqtt.publish
+          data:
+            topic: micropad/keymap
+            payload: '{"r0c0":{"action":"home","entity":"","target_page":""},"r0c1":{"action":"none","entity":"","target_page":""},"r0c2":{"action":"none","entity":"","target_page":""},"r0c3":{"action":"enter","entity":"","target_page":""},"r1c0":{"action":"none","entity":"","target_page":""},"r1c1":{"action":"none","entity":"","target_page":""},"r1c2":{"action":"none","entity":"","target_page":""},"r1c3":{"action":"enter","entity":"","target_page":""},"r2c0":{"action":"none","entity":"","target_page":""},"r2c1":{"action":"none","entity":"","target_page":""},"r2c2":{"action":"none","entity":"","target_page":""},"r2c3":{"action":"back","entity":"","target_page":""},"enc_up":{"action":"scroll_up","entity":"","target_page":""},"enc_down":{"action":"scroll_down","entity":"","target_page":""}}'
+            retain: true
+            qos: 0
+      - conditions:
+        - condition: template
+          value_template: '{{ event.action == "keymap" and event.page_id == "home"
+            and event.target_page | default('''') == '''' }}'
         sequence:
         - action: mqtt.publish
           data:

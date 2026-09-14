@@ -285,9 +285,50 @@ def test_upload_api_returns_success_only_after_deployer_result(action_harness) -
         "created": True,
         "automation_id": "micropad_controller",
         "published_topics": ["micropad/pages/all", "micropad/page/current", "micropad/keymap"],
-        "message": "Home Assistant upload verified.",
+        "verified": False,
+        "unverified_topics": ["micropad/pages/all", "micropad/page/current", "micropad/keymap"],
+        "message": (
+            "Automation read-back verified; retained MQTT topics were published but "
+            "NOT read back: micropad/pages/all, micropad/page/current, micropad/keymap"
+        ),
     }
     assert recording_ha.read_back_count == 1
+
+
+def test_upload_api_reports_verified_only_with_a_passing_mqtt_verifier(store) -> None:
+    """P1.14: 'verified' is claimed only after the retained topics were read back."""
+    ha = RecordingHA()
+    app = create_app(
+        store.path,
+        ha_client_factory=lambda settings: ha,
+        mqtt_verifier_factory=lambda settings: (lambda expected: []),
+    )
+    response = app.test_client().post("/api/upload/api")
+    assert response.status_code == 200
+    assert response.json["verified"] is True
+    assert response.json["unverified_topics"] == []
+    assert response.json["message"] == (
+        "Home Assistant upload verified (automation read-back + retained topics)."
+    )
+
+
+def test_upload_api_partial_failure_reports_exact_remaining_changes(store) -> None:
+    """P1.14: a verifier mismatch is a 502 partial failure listing what remains."""
+
+    class PartialHA(RecordingHA):
+        def delete_automation(self, automation_id):  # pragma: no cover - exercised via rollback
+            return None
+
+    ha = PartialHA()
+    app = create_app(
+        store.path,
+        ha_client_factory=lambda settings: ha,
+        mqtt_verifier_factory=lambda settings: (lambda expected: ["micropad/keymap"]),
+    )
+    response = app.test_client().post("/api/upload/api")
+    assert response.status_code == 502
+    assert response.json["error"]["code"] == "ha_partial_deployment"
+    assert response.json["error"]["details"] == ["micropad/keymap"]
 
 
 def test_ha_entities_normalizes_and_persists_cache(action_harness, store) -> None:

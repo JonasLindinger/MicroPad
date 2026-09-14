@@ -20,6 +20,7 @@ import hashlib
 import json
 import sys
 import time
+from collections.abc import Callable, Mapping
 from pathlib import Path
 
 from micropad.constants import CATALOG_TOPIC, CURRENT_PAGE_TOPIC, KEYMAP_TOPIC
@@ -52,6 +53,63 @@ def _load_expected(preview_publications: Path) -> dict[str, str]:
         return {}
     data = json.loads(preview_publications.read_text(encoding="utf-8"))
     return {entry["topic"]: entry["payload"] for entry in data.get("publications", [])}
+
+
+def build_retained_verifier(
+    host: str,
+    port: int,
+    username: str,
+    mqttCredential: str,
+    timeout: float = 15.0,
+) -> Callable[[Mapping[str, str]], list[str]]:
+    """Build a deferred-retained-MQTT verifier for the deploy path (P1.14).
+
+    The returned callable subscribes to the three retained MicroPad topics and
+    returns the topics whose live payload does not byte-match the expected value
+    (payload SHA-256 comparison, identical to this script's own check).
+    """
+
+    def verify(expected: Mapping[str, str]) -> list[str]:
+        try:
+            import paho.mqtt.client as mqtt  # type: ignore[import-not-found]
+        except ImportError as error:  # pragma: no cover - dependency guard
+            raise RuntimeError(
+                "paho-mqtt is required for MQTT read-back (pip install paho-mqtt)"
+            ) from error
+
+        collected: dict[str, str] = {}
+
+        def on_message(client, userdata, message) -> None:  # type: ignore[no-untyped-def]
+            if message.topic in _TOPICS and message.topic not in collected:
+                collected[message.topic] = _sha256(
+                    message.payload.decode("utf-8", errors="replace")
+                )
+
+        client = mqtt.Client()
+        if username:
+            client.username_pw_set(username, mqttCredential)
+        client.on_message = on_message
+        client.connect(host, port, keepalive=30)
+        for topic in _TOPICS:
+            client.subscribe(topic)
+        client.loop_start()
+        deadline = time.monotonic() + max(0.0, timeout)
+        while time.monotonic() < deadline:
+            if all(
+                collected.get(topic) == _sha256(expected.get(topic, ""))
+                for topic in _TOPICS
+            ):
+                break
+            time.sleep(0.1)
+        client.loop_stop()
+        client.disconnect()
+        return [
+            topic
+            for topic in _TOPICS
+            if collected.get(topic) != _sha256(expected.get(topic, ""))
+        ]
+
+    return verify
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -131,7 +189,7 @@ def main(argv: list[str] | None = None) -> int:
 
     client = mqtt.Client()
     if username:
-        client.username_pw_set(username, password)
+        client.username_pw_set(username, mqttCredential)
     try:
         client.connect(host, port, keepalive=30)
         client.on_message = on_message

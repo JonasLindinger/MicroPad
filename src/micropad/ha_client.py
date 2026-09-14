@@ -106,6 +106,11 @@ class HomeAssistantClient:
         path = f"/api/config/automation/config/{automation_id}"
         self._request("POST", path, "automation write", json=automation)
 
+    def delete_automation(self, automation_id: str) -> None:
+        """Delete an automation (used to roll back a first-time create)."""
+        path = f"/api/config/automation/config/{automation_id}"
+        self._request("DELETE", path, "automation delete")
+
     def call_service(
         self, domain: str, service: str, data: dict[str, object]
     ) -> list[dict[str, object]]:

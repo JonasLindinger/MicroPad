@@ -10,6 +10,10 @@ credentials are never embedded or written to disk.
 
 Run only against a configured live endpoint you intend to modify. This is the
 explicit operator gate — the preview must be rendered and reviewed first.
+
+Exit codes: 0 = applied AND fully verified; 1 = refused/failed; 2 = usage error;
+3 = applied but the retained MQTT topics were not read back (pass --mqtt-verify
+to read them back and reach a verified deployment).
 """
 
 from __future__ import annotations
@@ -25,8 +29,21 @@ from pathlib import Path
 from micropad.constants import AUTOMATION_ID
 from micropad.generator import canonical_automation, generate_bundle
 from micropad.ha_client import HAClientError, HomeAssistantClient
-from micropad.ha_deploy import HADeploymentError, HomeAssistantDeployer, preview_sha256
+from micropad.ha_deploy import (
+    HADeploymentError,
+    HomeAssistantDeployer,
+    load_approved_preview,
+    preview_sha256,
+)
 from micropad.models import parse_config
+
+# Running `python scripts/apply_live_ha_preview.py` puts scripts/ (not the repo
+# root) on sys.path; add the root so the sibling verifier module is importable.
+_REPO = Path(__file__).resolve().parents[1]
+if str(_REPO) not in sys.path:
+    sys.path.insert(0, str(_REPO))
+
+from scripts.verify_live_mqtt import build_retained_verifier  # noqa: E402
 
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 
@@ -49,6 +66,18 @@ def main(argv: list[str] | None = None) -> int:
         "--readback-output",
         default="build/live-ha-readback.json",
         help="secret-free read-back evidence destination (default: build/live-ha-readback.json)",
+    )
+    parser.add_argument(
+        "--mqtt-verify",
+        action="store_true",
+        help=(
+            "read the three retained topics back from the broker (settings.mqtt_host in "
+            "the config) and require them to match the approved preview; without this flag "
+            "the deployment is reported as published-but-unverified and exits nonzero"
+        ),
+    )
+    parser.add_argument(
+        "--mqtt-timeout", type=float, default=15.0, help="seconds to wait for MQTT read-back"
     )
     args = parser.parse_args(argv)
 
@@ -83,6 +112,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # The approved preview locks the automation an operator already reviewed; if the
     # config was edited since rendering, do not push an unreviewed automation live.
+    approved = load_approved_preview(preview_dir)
     bundle = generate_bundle(config)
     preview_automation = json.loads((preview_dir / "automation.json").read_text(encoding="utf-8"))
     if canonical_automation(bundle.automation) != canonical_automation(preview_automation):
@@ -92,11 +122,28 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
 
+    # P1.14: publish exactly the approved bytes; optionally read the retained
+    # topics back from the broker before claiming the deployment verified.
+    mqtt_verifier = None
+    if args.mqtt_verify:
+        raw_settings = json.loads(config_path.read_text(encoding="utf-8")).get("settings", {})
+        host = str(raw_settings.get("mqtt_host", "")).strip()
+        if not host:
+            print("error: --mqtt-verify needs settings.mqtt_host in the config")
+            return 2
+        mqtt_verifier = build_retained_verifier(
+            host,
+            int(raw_settings.get("mqtt_port") or 1883),
+            str(raw_settings.get("mqtt_user", "")),
+            str(raw_settings.get("mqtt_password", "")),
+            args.mqtt_timeout,
+        )
+
     evidence: dict[str, object] = {}
     client = HomeAssistantClient(config.settings)
     deployer = HomeAssistantDeployer(client, evidence_sink=evidence.update)
     try:
-        result = deployer.deploy(config)
+        result = deployer.deploy(config, approved=approved, mqtt_verifier=mqtt_verifier)
     except HADeploymentError as error:
         print(f"error: deployment failed: {error}")
         return 1
@@ -117,6 +164,10 @@ def main(argv: list[str] | None = None) -> int:
         "automation_id": AUTOMATION_ID,
         "deploy_created": result.created,
         "published_topics": list(result.published_topics),
+        "approved_digest": approved.digest,
+        "deployment_verified": result.verified,
+        "mqtt_verified": result.mqtt_verified,
+        "unverified_topics": list(result.unverified_topics),
         "deploy_evidence": evidence,
         "live_readback_sha256": _sha256_bytes(json.dumps(readback, sort_keys=True, ensure_ascii=False)),
         "live_readback_matches_approved": True,
@@ -126,9 +177,18 @@ def main(argv: list[str] | None = None) -> int:
     readback_path.write_text(
         json.dumps(readback_doc, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
     )
+    if not result.verified:
+        unverified = ", ".join(result.unverified_topics) or "none"
+        print(
+            "WARNING: the approved automation is applied and verified, but the retained "
+            f"MQTT topics were NOT read back ({unverified}); the deployment is therefore "
+            "NOT reported as verified. Re-run with --mqtt-verify against the broker to "
+            f"confirm them. Evidence written to {readback_path}"
+        )
+        return 3
     print(
-        f"applied approved automation to {config.settings.ha_url} "
-        f"(created={result.created}); evidence written to {readback_path}"
+        f"applied and verified the approved automation to {config.settings.ha_url} "
+        f"(created={result.created}, retained topics read back); evidence written to {readback_path}"
     )
     return 0
 

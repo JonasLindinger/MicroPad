@@ -319,6 +319,10 @@ def test_apply_refuses_config_drifted_from_approved_preview(tmp_path: Path) -> N
 
 
 def test_apply_with_matching_approved_hash_deploys_to_fake_ha(tmp_path: Path) -> None:
+    """P1.14: the approved bytes are applied, but the script only exits 0 when the
+    deployment is fully verified. Without a broker read-back it exits 3 and says
+    so explicitly instead of claiming success (the verified exit-0 path is covered
+    by the deployer/API tests with an injected verifier)."""
     with FakeHomeAssistant() as ha:
         config_path = _write_config(tmp_path, ha_url=ha.url)
         preview = _render(tmp_path, config_path)
@@ -337,7 +341,8 @@ def test_apply_with_matching_approved_hash_deploys_to_fake_ha(tmp_path: Path) ->
             cwd=tmp_path,
             env={"MICROPAD_HA_TOKEN": "test-token"},
         )
-        assert result.returncode == 0, result.stdout + result.stderr
+        assert result.returncode == 3, result.stdout + result.stderr
+        assert "NOT read back" in (result.stdout + result.stderr)
         assert ha.automation is not None
         assert ha.reload_count == 1
         assert readback_path.is_file()
@@ -345,6 +350,14 @@ def test_apply_with_matching_approved_hash_deploys_to_fake_ha(tmp_path: Path) ->
         assert document["automation_id"] == "micropad_controller"
         assert document["deploy_created"] is True
         assert document["live_readback_matches_approved"] is True
+        # Honest verification status: applied, but the retained topics are unverified.
+        assert document["deployment_verified"] is False
+        assert document["mqtt_verified"] is False
+        assert document["unverified_topics"] == [
+            "micropad/pages/all",
+            "micropad/page/current",
+            "micropad/keymap",
+        ]
         assert document["published_topics"] == [
             "micropad/pages/all",
             "micropad/page/current",

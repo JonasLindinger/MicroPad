@@ -22,7 +22,12 @@ from micropad.generator import (
     load_contract,
 )
 from micropad.ha_client import HAClientError, HomeAssistantClient
-from micropad.ha_deploy import HADeploymentError, HomeAssistantDeployer
+from micropad.ha_deploy import (
+    HADeploymentError,
+    HADeploymentPartialError,
+    HomeAssistantDeployer,
+    MqttVerifier,
+)
 from micropad.models import (
     AppConfig,
     Settings,
@@ -99,6 +104,7 @@ def create_app(
     *,
     ha_client_factory: Callable[[Settings], HomeAssistantClient] = HomeAssistantClient,
     ssh_deployer_factory: Callable[[Settings], SSHDeployer] = SSHDeployer,
+    mqtt_verifier_factory: Callable[[Settings], MqttVerifier | None] | None = None,
     admin_secret: str | None = None,
 ) -> Flask:
     """Build the configurator application with a validated config store.
@@ -173,6 +179,16 @@ def create_app(
     @app.errorhandler(HADeploymentError)
     def ha_verification_error(error: HADeploymentError) -> tuple[Response, int]:
         return _error("ha_verification_error", "Home Assistant deployment verification failed", 502)
+
+    @app.errorhandler(HADeploymentPartialError)
+    def ha_partial_error(error: HADeploymentPartialError) -> tuple[Response, int]:
+        # P1.14: a partial deployment reports exactly what remains changed.
+        return _error(
+            "ha_partial_deployment",
+            "Home Assistant deployment was only partially applied",
+            502,
+            list(error.remaining),
+        )
 
     @app.errorhandler(SSHUploadError)
     def ssh_error(error: SSHUploadError) -> tuple[Response, int]:
@@ -297,14 +313,28 @@ def create_app(
     @app.post("/api/upload/api")
     def upload_api() -> Response:
         config = store.load()
-        result = HomeAssistantDeployer(ha_client_factory(config.settings)).deploy(config)
+        verifier = mqtt_verifier_factory(config.settings) if mqtt_verifier_factory else None
+        result = HomeAssistantDeployer(ha_client_factory(config.settings)).deploy(
+            config, mqtt_verifier=verifier
+        )
+        # P1.14: never claim "verified" before the retained topics were read back.
+        if result.verified:
+            message = "Home Assistant upload verified (automation read-back + retained topics)."
+        else:
+            unverified = ", ".join(result.unverified_topics) or "none"
+            message = (
+                "Automation read-back verified; retained MQTT topics were published but "
+                f"NOT read back: {unverified}"
+            )
         return jsonify(
             {
                 "ok": True,
                 "created": result.created,
                 "automation_id": result.automation_id,
                 "published_topics": list(result.published_topics),
-                "message": "Home Assistant upload verified.",
+                "verified": result.verified,
+                "unverified_topics": list(result.unverified_topics),
+                "message": message,
             }
         )
 
