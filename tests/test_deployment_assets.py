@@ -18,18 +18,29 @@ from micropad.constants import AI_NOTICE
 def test_gunicorn_and_systemd_contract() -> None:
     gunicorn = Path("gunicorn.conf.py").read_text(encoding="utf-8")
     service = Path("deploy/micropad.service").read_text(encoding="utf-8")
-    assert 'bind = "0.0.0.0:8080"' in gunicorn
+    # The bind must go through secure_bind so an unauthenticated deployment is
+    # never exposed on a non-loopback address by default (P0.1).
+    assert "bind = security.secure_bind()" in gunicorn
     assert "workers = 2" in gunicorn
     assert "User=micropad" in service
     assert "WorkingDirectory=/opt/micropad/app" in service
     assert "micropad.wsgi:app" in service
     assert "Restart=on-failure" in service
+    assert "EnvironmentFile=-/etc/micropad/admin.env" in service
+
+
+def test_local_docker_image_includes_runtime_contracts() -> None:
+    dockerfile = Path("Dockerfile.local").read_text(encoding="utf-8")
+
+    assert "COPY contracts/ ./contracts/" in dockerfile
 
 
 def test_gunicorn_config_loads_as_python_safely() -> None:
     namespace: dict[str, object] = {}
     exec(Path("gunicorn.conf.py").read_text(encoding="utf-8"), namespace)  # noqa: S102
-    assert namespace["bind"] == "0.0.0.0:8080"
+    # With no MICROPAD_ADMIN_SECRET / MICROPAD_BIND the secure default bind is
+    # loopback only, so the process must not come up publicly unauthenticated.
+    assert namespace["bind"] == "127.0.0.1:8080"
     assert namespace["workers"] == 2
     assert namespace["timeout"] == 30
     assert namespace["accesslog"] == "-"

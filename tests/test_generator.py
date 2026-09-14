@@ -106,6 +106,34 @@ def test_automation_maps_only_supported_domain_actions(
     assert branch["sequence"][0] == expected
 
 
+def test_super_productivity_virtual_task_dispatches_start_task() -> None:
+    entity = "script.sp_start_01ABC-def_XYZ"
+    config = config_with_item(PageItem(name="Task", type="script", entity=entity))
+
+    branch = find_mqtt_branch(
+        generate_automation(config), action="press", entity=entity, page_id="home"
+    )
+
+    assert branch["sequence"][0] == {
+        "action": "super_productivity.start_task",
+        "data": {"task_id": "01ABC-def_XYZ"},
+    }
+
+
+def test_full_twenty_item_super_productivity_page_fits_protocol() -> None:
+    config = default_config().model_copy(deep=True)
+    config.pages[0].items = [
+        PageItem(
+            name=f"Super Productivity task number {index} with a useful title",
+            type="script",
+            entity=f"script.sp_start_01ABC{index:02d}-def_XYZ",
+        )
+        for index in range(20)
+    ]
+
+    assert len(generate_page_payload(config, "home")["items"]) == 20
+
+
 def test_mqtt_payload_is_parsed_once_and_only_in_the_mqtt_path() -> None:
     automation = yaml.safe_load(
         automation_yaml(
@@ -411,9 +439,9 @@ def test_generated_bundle_contains_matching_deterministic_artifacts_and_live_sta
 
 def test_bundle_rejects_oversize_page_before_returning_partial_artifacts() -> None:
     config = default_config().model_copy(deep=True)
-    config.pages[0].items = [PageItem(name="é" * 900, type="back")]
+    config.pages[0].items = [PageItem(name="é" * 5000, type="back")]
 
-    with pytest.raises(GenerationError, match="page home exceeds 1800 bytes"):
+    with pytest.raises(GenerationError, match="page home exceeds 8192 bytes"):
         generate_bundle(config)
 
 
@@ -550,9 +578,9 @@ def test_reflection_is_limited_to_supported_matching_domains() -> None:
 
 def test_generation_rejects_page_over_utf8_byte_limit() -> None:
     config = default_config().model_copy(deep=True)
-    config.pages[0].items = [PageItem(name="é" * 900, type="back")]
+    config.pages[0].items = [PageItem(name="é" * 5000, type="back")]
 
-    with pytest.raises(GenerationError, match="page home exceeds 1800 bytes"):
+    with pytest.raises(GenerationError, match="page home exceeds 8192 bytes"):
         validate_generated_bounds(config)
 
 
@@ -701,9 +729,9 @@ def test_live_state_cannot_push_current_page_over_byte_limit() -> None:
             entity_id="sensor.status",
             friendly_name="Status",
             domain="sensor",
-            state="é" * 900,
+            state="é" * 5000,
         )
     ]
 
-    with pytest.raises(GenerationError, match="page home exceeds 1800 bytes"):
+    with pytest.raises(GenerationError, match="page home exceeds 8192 bytes"):
         generate_page_payload(config, "home", states)

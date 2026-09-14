@@ -12,8 +12,7 @@
     "ssh_key": "",
     "ssh_known_hosts": "~/.ssh/known_hosts",
     "remote_path": "/config/automations/micropad.yaml",
-    "ssh_validate_command": "test -s {temp_path}",
-    "ssh_reload_command": "ha core restart"
+    "ssh_reload_strategy": "core_restart"
   },
   "pages": [
     {

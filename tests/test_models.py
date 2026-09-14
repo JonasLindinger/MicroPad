@@ -48,6 +48,16 @@ def test_unknown_action_is_rejected() -> None:
         AppConfig.model_validate(raw)
 
 
+def test_sensor_item_accepts_binary_sensor_entity() -> None:
+    item = PageItem(
+        name="Tracking",
+        type="sensor",
+        entity="binary_sensor.tracking",
+    )
+
+    assert item.entity == "binary_sensor.tracking"
+
+
 def test_twenty_five_pages_are_rejected() -> None:
     raw = default_config().model_dump(mode="json", by_alias=True)
     raw["pages"] = [

@@ -12,7 +12,8 @@ ROOT = Path(__file__).resolve().parents[2]
 def test_gunicorn_has_exact_worker_and_port_contract():
     conf = runpy.run_path(str(ROOT / "gunicorn.conf.py"))
     assert conf["workers"] == 2
-    assert conf["bind"] == "0.0.0.0:8080"
+    # Secure default bind: loopback only unless MICROPAD_ADMIN_SECRET is set.
+    assert conf["bind"] == "127.0.0.1:8080"
     assert conf["accesslog"] == "-"
     assert conf["errorlog"] == "-"
 

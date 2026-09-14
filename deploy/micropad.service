@@ -11,6 +11,10 @@ Group=micropad
 WorkingDirectory=/opt/micropad/app
 Environment=PYTHONUNBUFFERED=1
 Environment=MICROPAD_CONFIG_PATH=/var/lib/micropad/config.json
+# Optional admin secrets supplied by the operator (0600): MICROPAD_ADMIN_SECRET
+# (required for any non-loopback bind) and MICROPAD_BIND. Without them the app
+# binds 127.0.0.1 only and is not exposed to the network.
+EnvironmentFile=-/etc/micropad/admin.env
 ExecStart=/opt/micropad/app/.venv/bin/gunicorn --config /opt/micropad/app/gunicorn.conf.py micropad.wsgi:app
 Restart=on-failure
 RestartSec=5

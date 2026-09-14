@@ -30,6 +30,17 @@ from micropad.models import (
     parse_config,
     public_config,
 )
+from micropad.security import (
+    CSRF_HEADER,
+    CSRF_VALUE,
+    UNSAFE_METHODS,
+    bearer_token,
+    constant_time_equal,
+    is_loopback,
+)
+from micropad.security import (
+    admin_secret as env_admin_secret,
+)
 from micropad.ssh_upload import SSHDeployer, SSHUploadError, downloadable_ssh_script
 from micropad.ui_meta import action_metadata, page_templates
 
@@ -44,14 +55,64 @@ def _error(
     ), status
 
 
+def _requires_auth(path: str) -> bool:
+    """Only sensitive API routes require authentication.
+
+    ``/healthz`` stays anonymous by contract and returns no sensitive data.
+    ``/api/meta`` exposes public protocol metadata only.  The index page and
+    static assets are inert.
+    """
+    if path == "/healthz" or path == "/api/meta":
+        return False
+    if path == "/" or path.startswith("/static/"):
+        return False
+    return path.startswith("/api/")
+
+
+def _authorize(secret: str | None) -> tuple[Response, int] | None:
+    """Fail-closed gate for sensitive routes (see ``security.py``)."""
+    remote_is_loopback = is_loopback(request.remote_addr)
+    authorized = False
+    if secret:
+        authorized = constant_time_equal(
+            bearer_token(request.headers.get("Authorization")), secret
+        )
+    else:
+        # No secret configured: allow only genuine loopback clients (dev posture).
+        authorized = remote_is_loopback
+
+    if not authorized:
+        return _error("unauthorized", "Administrator authentication required", 401)
+
+    # Defense in depth against cross-site requests writing state.  A cross-site
+    # HTML form cannot send a custom header without a CORS preflight, which we
+    # never grant; requiring it here stops any write that was not issued by the
+    # micro-pad origin itself.  Loopback clients (same host, local dev) are exempt.
+    if request.method in UNSAFE_METHODS and not remote_is_loopback:
+        if request.headers.get(CSRF_HEADER) != CSRF_VALUE:
+            return _error("csrf_required", "Missing cross-site request guard", 403)
+    return None
+
+
 def create_app(
     config_path: Path | None = None,
     *,
     ha_client_factory: Callable[[Settings], HomeAssistantClient] = HomeAssistantClient,
     ssh_deployer_factory: Callable[[Settings], SSHDeployer] = SSHDeployer,
+    admin_secret: str | None = None,
 ) -> Flask:
-    """Build the configurator application with a validated config store."""
+    """Build the configurator application with a validated config store.
+
+    ``admin_secret`` overrides the ``MICROPAD_ADMIN_SECRET`` environment
+    variable (used by tests and the process entry point)."""
     app = Flask(__name__)
+    if admin_secret is None:
+        admin_secret = env_admin_secret()
+    app.extensions["micropad_admin_secret"] = admin_secret
+
+    app.before_request(
+        lambda: _authorize(admin_secret) if _requires_auth(request.path) else None
+    )
     project_root = Path.cwd()
     resolved_config = config_path or Path(
         os.environ.get(

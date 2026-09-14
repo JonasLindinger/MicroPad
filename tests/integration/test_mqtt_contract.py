@@ -86,11 +86,11 @@ def test_contract_has_exact_topics_actions_and_keys():
 
 
 def test_contract_preserves_payload_ceiling_facts():
-    # The ship set carries three payload ceilings: 1800 bytes per page, 16000
+    # The ship set carries three payload ceilings: 8192 bytes per page, 16000
     # bytes for the full catalog, and the keymap plugin ceiling (16380) that
     # stays inside the firmware's 16384-byte MQTT buffer.
     contract = read_json("mqtt-contract.json")
-    assert contract["limits"]["page_bytes"] == 1800
+    assert contract["limits"]["page_bytes"] == 8192
     assert contract["limits"]["catalog_bytes"] == 16000
     assert contract["limits"]["keymap_bytes"] == 16380
     assert contract["limits"]["mqtt_buffer_bytes"] == 16384

@@ -31,6 +31,20 @@
       </div>
     </div>
   </main>
+  <div id="auth-dialog" hidden>
+    <form id="auth-form">
+      <h2>Administrator sign-in</h2>
+      <p>This configuration API requires the administrator secret to view or
+      change anything. The secret is held only in this browser tab and is never
+      saved to the configuration or any file.</p>
+      <label for="auth-secret">Admin secret</label>
+      <input id="auth-secret" type="password" autocomplete="off" spellcheck="false">
+      <p id="auth-error" class="error" hidden></p>
+      <div class="auth-actions">
+        <button type="submit">Sign in</button>
+      </div>
+    </form>
+  </div>
   <script type="module" src="{{ url_for('static', filename='js/app.js', v=asset_version) }}"></script>
 </body>
 </html>

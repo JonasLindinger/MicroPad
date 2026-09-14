@@ -28,6 +28,7 @@ ItemType = Literal[
     "category", "light", "switch", "script", "button", "scene", "sensor",
     "media_player", "number", "settings", "back",
 ]
+ReloadStrategy = Literal["none", "core_restart"]
 
 if frozenset(get_args(Action)) != ACTIONS:
     raise RuntimeError("Action type and ACTIONS constant differ")
@@ -67,8 +68,10 @@ class Settings(StrictModel):
     ssh_key: str = ""
     ssh_known_hosts: str = "~/.ssh/known_hosts"
     remote_path: str = "/config/automations/micropad.yaml"
-    ssh_validate_command: str = "test -s {temp_path}"
-    ssh_reload_command: str = "ha core restart"
+    # No free-form remote commands are accepted from the API (P0.2). The remote
+    # reload action is one of a small fixed set, defined here and executed
+    # against a fixed command in the deployer. "none" skips the reload.
+    ssh_reload_strategy: ReloadStrategy = "core_restart"
 
     @field_validator("ha_url")
     @classmethod
@@ -117,7 +120,8 @@ class PageItem(StrictModel):
         }
         if self.type in entity_types and not self.entity:
             raise ValueError(f"{self.type} items require entity")
-        if self.entity and self.type in entity_types and self.entity.partition(".")[0] != self.type:
+        allowed_domains = {"sensor", "binary_sensor"} if self.type == "sensor" else {self.type}
+        if self.entity and self.type in entity_types and self.entity.partition(".")[0] not in allowed_domains:
             raise ValueError(f"{self.type} items require an entity in the {self.type} domain")
         return self
 
