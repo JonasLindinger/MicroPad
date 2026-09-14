@@ -1090,7 +1090,8 @@ RenderSnapshot uiSnapshot() {
   const float values[4] = {23.0f, 22.5f, 120.0f, 40.0f};
   for (uint8_t i = 0; i < 4; ++i) {
     safeCopy(snap.rows[i].name, names[i]);
-    safeCopy(snap.rows[i].state, "on");
+    // No state: the value/unit edit span is what the normal UI tests cover.
+    safeCopy(snap.rows[i].state, "");
     safeCopy(snap.rows[i].unit, units[i]);
     snap.rows[i].value = values[i];
     snap.rows[i].selected = (i == 1);
@@ -1410,6 +1411,24 @@ void testFormatRowValue() {
   assert(std::strlen(dst) <=
          static_cast<size_t>((ROW_VALUE_RIGHT_X - ROW_NAME_CLIP_X) /
                              MONO_CHAR_W));
+  // Live HA state wins over the numeric glyph; categories with neither state
+  // nor a value render empty (this killed the trailing "0" on every row).
+  safeCopy(row.state, "on");
+  row.value = 0.0f;
+  safeCopy(row.unit, "");
+  formatRowValue(dst, row);
+  assert(std::strcmp(dst, "on") == 0);
+  safeCopy(row.state, "off");
+  formatRowValue(dst, row);
+  assert(std::strcmp(dst, "off") == 0);
+  safeCopy(row.state, "");
+  row.value = 0.0f;
+  formatRowValue(dst, row);
+  assert(dst[0] == '\0');
+  // Editing an item with a zero value still shows the editable numeric span.
+  row.editing = true;
+  formatRowValue(dst, row);
+  assert(std::strcmp(dst, "<0>") == 0);
 }
 
 void testClipTextSpan() {
@@ -1472,12 +1491,12 @@ void testRefreshPolicySpacingWrapSafe() {
   RefreshPolicy policy;
   // Previous refresh started just before the 2^32 ms rollover.
   policy.beginRefresh(0xFFFFFF00u, false);
-  // 0x10 - 0xFFFFFF00 = 0x110 = 272 ms elapsed: 78 ms remaining.
-  assert(policy.remainingSpacingMs(0x00000010u) == 350 - 272);
-  assert(policy.remainingSpacingMs(0x00000010u) == 78);
-  assert(!policy.spacingElapsed(0x00000050u));  // 0x150 = 336 < 350
-  assert(policy.spacingElapsed(0x00000060u));   // 0x160 = 352 >= 350
-  assert(policy.remainingSpacingMs(0x00000060u) == 0);
+  // 0x10 - 0xFFFFFF00 = 0x110 = 272 ms elapsed: ceiling at 0 (>= 100 spacing
+  // already elapsed), then exact boundaries around the 100 ms window.
+  assert(policy.remainingSpacingMs(0x00000010u) == 0);
+  assert(policy.spacingElapsed(0x00000050u));   // 336 ms elapsed >= 100
+  assert(policy.spacingElapsed(0x00000070u));   // 0x170 = 368 >= 100
+  assert(policy.remainingSpacingMs(0x00000070u) == 0);
   // No previous refresh: zero elapsed means the full spacing applies.
   RefreshPolicy fresh;
   assert(fresh.remainingSpacingMs(0) == MIN_REFRESH_SPACING_MS);

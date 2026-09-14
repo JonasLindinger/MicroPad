@@ -886,14 +886,26 @@ size_t clipText(char (&dst)[RENDER_TEXT_CAP], const char *src,
 
 void formatRowValue(char (&dst)[RENDER_TEXT_CAP], const RenderRow &row) {
   char value[16];
-  const int truncated = static_cast<int>(row.value);
-  const bool integral =
-      row.value == static_cast<float>(truncated) && row.value >= -100000.0f &&
-      row.value <= 100000.0f;
-  if (integral) {
-    std::snprintf(value, sizeof(value), "%.0f", row.value);
+  if (row.state[0] != '\0') {
+    // Prefer the live HA state (on/off, sensor reading) over the numeric
+    // glyph; categories and other items with no state stay empty instead of
+    // showing a meaningless "0". The value column only fits 16 chars, and a
+    // long state is clipped like any other span.
+    std::snprintf(value, sizeof(value), "%.*s",
+                  static_cast<int>(sizeof(value) - 1), row.state);
+  } else if (row.value != 0.0f || row.editing) {
+    const int truncated = static_cast<int>(row.value);
+    const bool integral =
+        row.value == static_cast<float>(truncated) && row.value >= -100000.0f &&
+        row.value <= 100000.0f;
+    if (integral) {
+      std::snprintf(value, sizeof(value), "%.0f", row.value);
+    } else {
+      std::snprintf(value, sizeof(value), "%.1f", row.value);
+    }
   } else {
-    std::snprintf(value, sizeof(value), "%.1f", row.value);
+    dst[0] = '\0';
+    return;
   }
   char whole[40];
   std::snprintf(whole, sizeof(whole), "%s%s", value, row.unit);

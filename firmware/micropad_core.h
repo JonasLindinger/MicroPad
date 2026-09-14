@@ -31,7 +31,7 @@ constexpr size_t EVENT_BUFFER_BYTES = 512;
 // ghosting: MAX_PARTIAL_REFRESHES = 0 plus the > 0 guard means the partial
 // limit never forces a visible full-refresh flash.
 constexpr uint8_t MAX_PARTIAL_REFRESHES = 0;
-constexpr uint32_t MIN_REFRESH_SPACING_MS = 350;
+constexpr uint32_t MIN_REFRESH_SPACING_MS = 100;
 
 // Physical matrix geometry. The first MATRIX_KEY_COUNT KeyId values (r0c0 ..
 // r2c3) map directly to (row * MATRIX_COLS + col).

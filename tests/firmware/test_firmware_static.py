@@ -644,7 +644,7 @@ class FirmwareDisplayContractTest(FirmwareStaticContractTest):
         # MIN_REFRESH_SPACING_MS; the counter resets only after a full refresh
         # and increments only after a successful partial refresh.
         core = self.core_header()
-        self.assertIn("constexpr uint32_t MIN_REFRESH_SPACING_MS = 350;", core)
+        self.assertIn("constexpr uint32_t MIN_REFRESH_SPACING_MS = 100;", core)
         self.assertIn("constexpr uint8_t MAX_PARTIAL_REFRESHES = 0;", core)
         self.assertIn("class RefreshPolicy", core)
         self.assertIn("remainingSpacingMs(", core)
