@@ -189,7 +189,7 @@ def main(argv: list[str] | None = None) -> int:
 
     client = mqtt.Client()
     if username:
-        client.username_pw_set(username, mqttCredential)
+        client.username_pw_set(username, password)
     try:
         client.connect(host, port, keepalive=30)
         client.on_message = on_message
