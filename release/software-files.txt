@@ -55,6 +55,7 @@ release/allowed-public-values.json
 release/hardware-acceptance.schema.json
 release/replacement-commit-message.txt
 requirements-dev.txt
+requirements-lock.txt
 requirements.txt
 scripts/apply_live_ha_preview.py
 scripts/audit_notices.py
@@ -110,6 +111,7 @@ tests/conftest.py
 tests/cpp/test_protocol_contract.cpp
 tests/deployment/__init__.py
 tests/deployment/test_deployment_assets.py
+tests/deployment/test_workflows.py
 tests/factories.py
 tests/fakes/__init__.py
 tests/fakes/fake_ha.py
@@ -131,6 +133,7 @@ tests/release/test_public_audit.py
 tests/release/test_target_integration.py
 tests/test_api.py
 tests/test_config_store.py
+tests/test_contract_schemas.py
 tests/test_deployment_assets.py
 tests/test_fake_ha_round_trip.py
 tests/test_foundation.py
@@ -142,3 +145,4 @@ tests/test_keymaps.py
 tests/test_models.py
 tests/test_security.py
 tests/test_ssh_upload.py
+uv.lock
