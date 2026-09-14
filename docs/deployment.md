@@ -30,12 +30,36 @@ What the script does:
 5. installs `deploy/micropad.service` into systemd and, with `--enable-service`,
    runs `systemctl enable --now micropad.service`.
 
-The unit (see `deploy/micropad.service`) runs gunicorn on `0.0.0.0:8080`
-(`gunicorn.conf.py`: 2 sync workers, 30 s timeout) with hard hardening:
-`NoNewPrivileges`, `PrivateTmp`, `ProtectSystem=strict`, `ProtectHome`,
-`PrivateDevices`, empty `CapabilityBoundingSet`, and write access restricted to
-`/var/lib/micropad`. The config path is `/var/lib/micropad/config.json`
-(`MICROPAD_CONFIG_PATH`).
+The unit (see `deploy/micropad.service`) runs gunicorn from the deployment venv
+(`/opt/micropad/app/.venv/bin/python`) with working directory
+`/opt/micropad/app` (`gunicorn.conf.py`: 2 sync workers, 30 s timeout) with hard
+hardening: `NoNewPrivileges`, `PrivateTmp`, `ProtectSystem=strict`,
+`ProtectHome`, `PrivateDevices`, empty `CapabilityBoundingSet`, and write access
+restricted to `/var/lib/micropad`. The config path is
+`/var/lib/micropad/config.json` (`MICROPAD_CONFIG_PATH`).
+
+**Admin authentication (fail-closed).** Every sensitive `/api/*` route requires
+the admin secret. The secret is read from the `MICROPAD_ADMIN_SECRET`
+environment variable, which the unit loads from the optional `EnvironmentFile`
+`/etc/micropad/admin.env` (create it mode `0600`, owned by root). Until that
+file exists the service binds **loopback only** (`127.0.0.1:8080`) and is not
+reachable from the network — that is the safe default. To expose the API on the
+LAN (typically behind HTTPS or a reverse proxy), write:
+
+```bash
+sudo install -d -m 0700 /etc/micropad
+# paste your secret; never commit it, never put it in config.json
+echo 'MICROPAD_ADMIN_SECRET=replace-me-with-a-long-random-secret' |
+  sudo tee /etc/micropad/admin.env >/dev/null
+sudo chmod 0600 /etc/micropad/admin.env
+echo 'MICROPAD_BIND=0.0.0.0:8080' | sudo tee -a /etc/micropad/admin.env
+sudo systemctl restart micropad.service
+```
+
+Prefer HTTPS (a reverse proxy such as Caddy/nginx) for any remote access. An
+HTTP `ha_url` is accepted only as a local-trust-network value (e.g.
+`http://homeassistant.local:8123`); prefer
+`https://homeassistant.local:8123` when TLS is available.
 
 Verify it is up:
 

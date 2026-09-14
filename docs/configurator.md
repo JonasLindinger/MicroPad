@@ -25,6 +25,27 @@ public response — only `ha_token_configured` / `ssh_key_configured` booleans a
 exposed. All placeholder values used in this documentation are neutral
 (`192.168.0.100`, user `micropad`, password `replace-me`).
 
+## Authentication
+
+Sensitive API routes are fail-closed. The admin secret comes only from the
+`MICROPAD_ADMIN_SECRET` environment variable (in production, the optional
+`EnvironmentFile` `/etc/micropad/admin.env` described in `docs/deployment.md`):
+
+- `GET /healthz` and `GET /api/meta` are anonymous and expose no sensitive data.
+- With a secret configured, every other `/api/*` route requires
+  `Authorization: Bearer <secret>` (constant-time comparison). Without a
+  configured secret, sensitive routes are served to loopback clients only, and a
+  non-loopback bind refuses to start — an unauthenticated public endpoint cannot
+  come up silently.
+- State-changing requests from non-loopback clients also require the
+  `X-Requested-With: XMLHttpRequest` cross-site guard.
+- The browser holds the secret in `sessionStorage` only (never in the URL, the
+  persisted config, logs, or generated files) and sends it as a request header.
+  On a `401` it shows the sign-in dialog; entering the secret re-loads the app.
+
+Use HTTPS (reverse proxy) for remote `ha_url` values; `http` is accepted only as
+a local-trust-network value such as `http://homeassistant.local:8123`.
+
 ## Pages editor
 
 A configuration contains up to 24 pages. Each page has an id (a normalized
@@ -73,7 +94,7 @@ Validation is strict and real:
   rules (category needs `target_page`; entity types need a matching-domain
   entity; `min <= max`).
 - **Generation validation**: every publishable payload is generated and rejected
-  if it exceeds its byte budget (page 1800, catalog 16000, keymap 16380).
+  if it exceeds its byte budget (page 8192, catalog 16000, keymap 16380).
 - **Template safety**: user-controlled Jinja delimiters (`{{`, `{%`, `{#`) and
   malformed entity ids are rejected before any payload is embedded.
 - **Net effect**: `POST /api/validate`, `POST /api/config`, and every upload
