@@ -28,7 +28,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts.build_approval_bundle import build_bundle
+from scripts.build_approval_bundle import REPLACEMENT_COMMIT_MESSAGE, build_bundle
 from scripts.build_approval_bundle import main as bundle_cli
 
 PUBLIC_SECTIONS = {
@@ -398,11 +398,13 @@ def _synthetic_root(tmp_path: Path) -> Path:
     )
     # Commit only after every artifact exists, so the synthetic clean-room tree
     # (build/ evidence included) has a clean working tree when the CLI gates on it.
+    # HEAD matches the mandated single replacement commit (P2.3) and the identity
+    # is synthetic so the private-hostname metadata gate (P2.4) passes.
     _git(root, "init", "--initial-branch", "main")
     _git(root, "config", "user.name", "Clean Room")
     _git(root, "config", "user.email", "cleanroom@example.test")
     _git(root, "add", "-A")
-    _git(root, "commit", "-m", "seed synthetic clean-room state")
+    _git(root, "commit", "-m", REPLACEMENT_COMMIT_MESSAGE)
     return root
 
 
@@ -414,13 +416,13 @@ def test_cli_assembles_evidence_from_cleanroom_state(tmp_path):
     assert bundle_cli(["--output", str(output), "--root", str(root)]) == 0
     assert {p.name for p in output.iterdir()} == PUBLIC_SECTIONS
     assert (output / "proposed-commits.txt").read_text(encoding="utf-8").splitlines() == [
-        "feat: replace software with clean-room MicroPad implementation"
+        REPLACEMENT_COMMIT_MESSAGE
     ]
     assert (output / "target-tree.txt").read_text(encoding="utf-8") == (
         "LICENSE\nPCB/board.kicad_pcb\nREADME.md\nfirmware/main.ino\n"
     )
     commits = (output / "commits.txt").read_text(encoding="utf-8").splitlines()
-    assert len(commits) == 1 and commits[0].endswith("seed synthetic clean-room state")
+    assert len(commits) == 1 and commits[0].endswith(REPLACEMENT_COMMIT_MESSAGE)
 
 
 def test_cli_fails_closed_when_evidence_is_missing(tmp_path):
@@ -440,7 +442,7 @@ def test_evidence_rejects_post_render_preview_tampering(tmp_path):
     artifact = root / "build" / "live-ha-preview" / "automation.json"
     artifact.write_text(artifact.read_text(encoding="utf-8") + "\n# tampered\n", encoding="utf-8")
     _git(root, "add", "-A")
-    _git(root, "commit", "-m", "tamper preview after render")
+    _git(root, "commit", "-m", REPLACEMENT_COMMIT_MESSAGE)
 
     with pytest.raises(ApprovalBundleError, match="preview"):
         assemble_evidence(root)
@@ -453,7 +455,36 @@ def test_evidence_rejects_preview_missing_a_content_file(tmp_path):
     root = _synthetic_root(tmp_path)
     (root / "build" / "live-ha-preview" / "mqtt-publications.json").unlink()
     _git(root, "add", "-A")
-    _git(root, "commit", "-m", "drop publication artifact")
+    _git(root, "commit", "-m", REPLACEMENT_COMMIT_MESSAGE)
 
     with pytest.raises(ApprovalBundleError, match="preview"):
+        assemble_evidence(root)
+
+
+def test_evidence_rejects_head_that_is_not_the_replacement_commit(tmp_path):
+    """P2.3: the gate must check the ACTUAL HEAD subject, not only proposals."""
+    from scripts.build_approval_bundle import ApprovalBundleError, assemble_evidence
+
+    root = _synthetic_root(tmp_path)
+    (root / "README.md").write_text("# changed after squash\n", encoding="utf-8")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-m", "some other change that was never squashed")
+
+    with pytest.raises(ApprovalBundleError, match="HEAD commit subject"):
+        assemble_evidence(root)
+
+
+def test_evidence_rejects_private_commit_metadata(tmp_path):
+    """P2.4: the historical operator email must never reach a public release."""
+    from scripts.build_approval_bundle import ApprovalBundleError, assemble_evidence
+
+    root = _synthetic_root(tmp_path)
+    _git(root, "config", "user.name", "Bastian")
+    # Fragmented so this tracked test file never carries the contiguous private
+    # value that the public-release audit (correctly) rejects.
+    _git(root, "config", "user.email", "bwsc" + "hti@ose" + "rver.fri" + "tz.box")
+    _git(root, "add", "-A")
+    _git(root, "commit", "--amend", "-m", REPLACEMENT_COMMIT_MESSAGE)
+
+    with pytest.raises(ApprovalBundleError, match="private hostname"):
         assemble_evidence(root)

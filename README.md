@@ -131,6 +131,6 @@ and validation rules, and `docs/deployment.md` for install/update/logs/uninstall
 
 ---
 
-Copyright and licensing are intentionally unspecified; this is a personal
-clean-room project. All content above is written in neutral English and uses only
-the placeholder values described in the **Safety** section.
+Licensed under the [MIT License](LICENSE) (Copyright (c) 2026 Jonas Lindinger).
+All content above is written in neutral English and uses only the placeholder
+values described in the **Safety** section.

@@ -22,9 +22,13 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from micropad.constants import AI_NOTICE
-
+# The mandated `python3 scripts/audit_notices.py` runs without a pre-installed
+# package: add the checkout-local src/ so `micropad.constants` resolves.
 _REPO = Path(__file__).resolve().parents[1]
+if str(_REPO / "src") not in sys.path:
+    sys.path.insert(0, str(_REPO / "src"))
+
+from micropad.constants import AI_NOTICE  # noqa: E402
 
 # Set of file extensions that must carry the notice. JSON is deliberately absent.
 NOTICE_EXTENSIONS = {

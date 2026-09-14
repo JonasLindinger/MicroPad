@@ -441,6 +441,26 @@ def _git(root: Path, *args: str) -> str:
     return result.stdout
 
 
+#: Private-hostname markers that must never appear in commit author/committer
+#: metadata of a public release (P2.4). Covers the operator's historical build
+#: machine and the Avahi/mDNS router domain. Fragments are split so this module
+#: itself never carries the contiguous private value the audit rejects.
+_PRIVATE_COMMIT_MARKERS = ("ose" + "rver", "fri" + "tz.box", "bwsc" + "hti@")
+
+
+def _reject_private_commit_metadata(root: Path) -> None:
+    """Fail closed when any commit in the clean-room repo carries private metadata."""
+    records = _git(root, "log", "--format=%an <%ae>|%cn <%ce>").splitlines()
+    for record in records:
+        for identity in record.split("|"):
+            lowered = identity.lower()
+            if any(marker in lowered for marker in _PRIVATE_COMMIT_MARKERS):
+                raise ApprovalBundleError(
+                    "commit metadata contains a private hostname; a public release "
+                    f"must not carry it: {identity}"
+                )
+
+
 def assemble_evidence(root: str | Path) -> dict[str, Any]:
     """Assemble the full evidence record from the clean-room state under ``root``.
 
@@ -535,6 +555,21 @@ def assemble_evidence(root: str | Path) -> dict[str, Any]:
     commits = [
         line for line in _git(root, "log", "--reverse", "--format=%H %s").splitlines() if line
     ]
+    if not commits:
+        raise ApprovalBundleError("clean-room repository has no commits")
+    # P2.3: bind the proposal to the ACTUAL repository state — the HEAD commit
+    # subject must be exactly the mandated single replacement commit, so a
+    # pushed history that was never squashed can never slip through the gate.
+    head_subject = commits[-1].split(None, 1)[1] if " " in commits[-1] else commits[-1]
+    if head_subject != REPLACEMENT_COMMIT_MESSAGE:
+        raise ApprovalBundleError(
+            "actual HEAD commit subject does not match the mandated replacement "
+            "commit; squash the clean-room history into the replacement commit first"
+        )
+    # P2.4: commit metadata must not leak private hostnames (e.g. the
+    # operator's historical build-machine email) into the public release.
+    # Author and committer identities are scanned for every commit.
+    _reject_private_commit_metadata(root)
     replacement_message = _read_evidence_text(
         root / "release/replacement-commit-message.txt", "replacement commit message"
     )

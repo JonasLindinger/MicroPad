@@ -13,8 +13,16 @@ const XHR = 'XMLHttpRequest';
 function publicMessage(payload, status) {
   if (!payload || typeof payload !== 'object') return `Request failed (${status}).`;
   const copy = Object.fromEntries(Object.entries(payload).filter(([key]) => !SECRET_KEYS.test(key)));
-  if (copy.error && typeof copy.error === 'object' && typeof copy.error.message === 'string') {
-    return copy.error.message;
+  if (copy.error && typeof copy.error === 'object') {
+    const message = typeof copy.error.message === 'string' ? copy.error.message : `Request failed (${status}).`;
+    if (Array.isArray(copy.error.details) && copy.error.details.length) {
+      const first = copy.error.details[0];
+      const detail = first && typeof first === 'object'
+        ? `${first.path || ''}: ${first.message || ''}`.trim()
+        : String(first);
+      if (detail) return `${message} (${detail})`;
+    }
+    return message;
   }
   return typeof copy.error === 'string' ? copy.error : `Request failed (${status}).`;
 }

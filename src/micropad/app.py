@@ -204,6 +204,13 @@ def create_app(
             # Leave a non-dict settings value untouched so the model rejects it
             # with a structured 422 validation error.
             incoming["settings"] = settings_raw
+        # P1.11: entity_cache is server-managed (filled by /api/ha/entities). A
+        # stale UI config that omits or empties it must never wipe the cache, so
+        # preserve the stored cache unless the client genuinely supplies a fresh
+        # non-empty list.
+        cache_raw = incoming.get("entity_cache")
+        if not isinstance(cache_raw, list) or not cache_raw:
+            incoming["entity_cache"] = current.entity_cache
         return parse_config(incoming)
 
     @app.get("/api/config")

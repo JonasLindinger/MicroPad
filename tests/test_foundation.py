@@ -41,7 +41,9 @@ def tracked_project_text_paths() -> list[Path]:
         path
         for pattern in ("*.toml", "*.txt", "*.py")
         for path in Path(".").glob(pattern)
-        if path.name != ".coverage"
+        # .coverage and requirements-lock.txt are machine-generated (uv export
+        # --frozen), not authored, so they carry no AI notice by design.
+        if path.name not in (".coverage", "requirements-lock.txt")
     )
     paths.add(Path("config.example.json"))
     return sorted(paths)

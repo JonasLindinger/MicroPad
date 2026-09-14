@@ -50,10 +50,31 @@ class Binding(StrictModel):
     entity: str = ""
     target_page: str = ""
 
+    @field_validator("entity")
+    @classmethod
+    def validate_entity_value(cls, value: str) -> str:
+        # Free-text entities from the keymap editor are validated server-side
+        # (P1.10): a binding entity must be a well-formed Home Assistant entity
+        # id, or a Super-Productivity virtual task entity.
+        if not value:
+            return value
+        if _ENTITY_ID_PATTERN.fullmatch(value):
+            return value
+        if value.startswith(_SP_TASK_PREFIX) and _SP_TASK_ID_PATTERN.fullmatch(
+            value[len(_SP_TASK_PREFIX):]
+        ):
+            return value
+        raise ValueError("entity must be a valid Home Assistant entity id")
+
     @field_validator("target_page")
     @classmethod
     def normalize_target(cls, value: str) -> str:
         return normalize_identifier(value)
+
+
+_ENTITY_ID_PATTERN = re.compile(r"^[a-z_][a-z0-9_]*\.[a-z0-9_]+$")
+_SP_TASK_PREFIX = "script.sp_start_"
+_SP_TASK_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
 class Settings(StrictModel):

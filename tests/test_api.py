@@ -162,6 +162,26 @@ def test_config_get_redacts_secrets(client, store: ConfigStore) -> None:
     assert response.json["settings"]["ssh_key_configured"] is True
 
 
+def test_saving_stale_ui_config_preserves_server_entity_cache(client, store) -> None:
+    """P1.11: an old UI config (empty/stale entity_cache) must not wipe the cache
+    the server filled via /api/ha/entities."""
+    config = store.load().model_copy(deep=True)
+    config.entity_cache = [
+        EntitySummary(
+            entity_id="light.desk", friendly_name="Desk", domain="light", state="on"
+        )
+    ]
+    store.save(config)
+
+    stale = client.get("/api/config").json
+    stale["entity_cache"] = []
+    stale["pages"][0]["title"] = "Changed"
+    response = client.post("/api/config", json=stale)
+    assert response.status_code == 200
+    assert store.load().pages[0].title == "Changed"
+    assert [c.entity_id for c in store.load().entity_cache] == ["light.desk"]
+
+
 # --- Home Assistant and SSH action/upload routes (Task 12) -------------------
 
 

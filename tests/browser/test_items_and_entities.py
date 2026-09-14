@@ -10,11 +10,16 @@ from playwright.sync_api import expect
 @pytest.mark.browser
 def test_item_editor_persists_every_field(page, app_url, captured_requests):
     page.goto(app_url)
+    # P1.8: a new item is created as a draft and only becomes a card once its
+    # required fields are set and "Save item" is pressed.
     page.get_by_role("button", name="Add item").click()
+    draft = page.locator("fieldset.item-draft")
+    draft.get_by_label("Draft name").fill("Desk brightness")
+    draft.get_by_label("Draft type").select_option("number")
+    draft.get_by_label("Draft entity ID").fill("number.desk_brightness")
+    draft.locator("button:has-text('Save item')").click()
     card = page.locator('[data-item-index="0"]')
-    card.get_by_label("Name").fill("Desk brightness")
-    card.get_by_label("Type").select_option("number")
-    card.get_by_label("Entity ID").fill("number.desk_brightness")
+    expect(card).to_be_visible()
     card.get_by_label("State").fill("42")
     card.get_by_label("Value").fill("42")
     card.get_by_label("Minimum").fill("0")
@@ -33,6 +38,12 @@ def test_item_editor_persists_every_field(page, app_url, captured_requests):
 def test_item_editor_removes_item(page, app_url, captured_requests):
     page.goto(app_url)
     page.get_by_role("button", name="Add item").click()
+    draft = page.locator("fieldset.item-draft")
+    draft.get_by_label("Draft name").fill("Temporary")
+    draft.get_by_label("Draft type").select_option("light")
+    draft.get_by_label("Draft entity ID").fill("light.temporary")
+    draft.locator("button:has-text('Save item')").click()
+    expect(page.locator('[data-item-index="0"]')).to_be_visible()
     page.locator('[data-item-index="0"]').get_by_label("Remove item").click()
     expect(page.locator("#save-status")).to_have_text("Saved")
     saved_items = captured_requests[-1]["json"]["pages"][0]["items"]

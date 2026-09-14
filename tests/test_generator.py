@@ -606,7 +606,9 @@ def test_catalog_generation_rejects_oversize_without_separate_validation() -> No
 
 def test_generation_rejects_keymap_over_mqtt_byte_limit() -> None:
     config = default_config().model_copy(deep=True)
-    config.global_keymap["r0c0"].entity = "light." + ("é" * 8200)
+    # Valid entity syntax (survives the Binding validator, P1.10) but far past
+    # the 16 KB keymap wire budget.
+    config.global_keymap["r0c0"].entity = "light." + ("a" * 17000)
 
     with pytest.raises(GenerationError, match="keymap home exceeds 16380 bytes"):
         validate_generated_bounds(config)
@@ -614,7 +616,7 @@ def test_generation_rejects_keymap_over_mqtt_byte_limit() -> None:
 
 def test_keymap_generation_rejects_oversize_without_separate_validation() -> None:
     config = default_config().model_copy(deep=True)
-    config.global_keymap["r0c0"].entity = "light." + ("é" * 8200)
+    config.global_keymap["r0c0"].entity = "light." + ("a" * 17000)
 
     with pytest.raises(GenerationError, match="keymap home exceeds 16380 bytes"):
         generate_keymap_payload(config, "home")

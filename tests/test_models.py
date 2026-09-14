@@ -3,7 +3,15 @@ import pytest
 from pydantic import ValidationError
 
 from micropad.constants import KEY_IDS
-from micropad.models import AppConfig, Page, PageItem, default_config, parse_config, public_config
+from micropad.models import (
+    AppConfig,
+    Binding,
+    Page,
+    PageItem,
+    default_config,
+    parse_config,
+    public_config,
+)
 from micropad.page_graph import PageGraphError, ancestor_chain, index_pages, validate_page_graph
 
 
@@ -189,3 +197,17 @@ def test_app_config_rejects_unparented_non_home_page() -> None:
 
     with pytest.raises(ValidationError, match="non-home page must have a parent"):
         AppConfig.model_validate(raw)
+
+
+def test_binding_accepts_valid_free_text_entities() -> None:
+    for entity in ("", "light.desk", "sensor.temperature_1", "script.sp_start_my-task", "script.sp_start_12"):
+        assert Binding(action="toggle", entity=entity).entity == entity
+
+
+@pytest.mark.parametrize(
+    "entity",
+    ["light.", ".desk", "Light.Desk", "light desk", "light.desk ", "light.éé", "light..desk"],
+)
+def test_binding_rejects_invalid_free_text_entities(entity: str) -> None:
+    with pytest.raises(ValueError, match="entity"):
+        Binding(action="toggle", entity=entity)

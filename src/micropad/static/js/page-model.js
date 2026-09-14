@@ -93,6 +93,12 @@ export function addItem(config, pageId) {
   return patchPage(config, pageId, page => ({...page, items: [{...NEW_ITEM}, ...page.items.map(item => ({...item}))]}));
 }
 
+// Insert a COMPLETE item (validated by the caller) at the top of a page.
+// Used by the draft save path (P1.8): only fully valid items reach the config.
+export function insertItem(config, pageId, item) {
+  return patchPage(config, pageId, page => ({...page, items: [{...item}, ...page.items.map(existing => ({...existing}))]}));
+}
+
 export function updateItem(config, pageId, index, patch) {
   return patchPage(config, pageId, page => ({
     ...page,

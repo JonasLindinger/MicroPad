@@ -1,15 +1,34 @@
 // AI-assisted development — firmware, HA automation, config generator and docs were created with AI (LLM) help, reviewed and tested by the author. Provided as-is, without warranty; verify on your own hardware, don't use for safety-critical applications.
 // Complete page item editor (add / edit / delete / reorder). ES module; window-free at import.
-// Renders from the store state only; every mutation flows through store.replaceConfig. A
-// rejected non-finite number is announced without persisting (the field reverts in place).
+// Renders from the store state only; every mutation flows through store.replaceConfig.
+// New items are UI DRAFTS (P1.8): they live in store state and reach the persisted
+// config only when every required field is set, so the backend never sees a
+// placeholder/invalid item. After a failed save the editor re-renders from the
+// last confirmed server state (P1.12).
 
-import { addItem, moveItem, removeItem, updateItem } from './page-model.js';
+import { insertItem, moveItem, removeItem, updateItem } from './page-model.js';
 import { loadEntities } from './api.js';
 import { attachEntityAutocomplete } from './entity-autocomplete.js';
 
 function commitChange(store, pageId, index, patch) {
   if (!patch) return;
   store.replaceConfig(updateItem(store.getState().config, pageId, index, patch));
+}
+
+// Client-side mirror of the backend's required-field rules (P1.8): the save
+// button only enables when the draft could round-trip through parse_config.
+const ENTITY_TYPES = new Set(['light', 'switch', 'script', 'button', 'scene', 'sensor', 'media_player', 'number']);
+
+function draftErrors(draft) {
+  const errors = [];
+  if (!draft.name || !String(draft.name).trim()) errors.push('Name is required.');
+  if (ENTITY_TYPES.has(draft.type) && !draft.entity.trim()) {
+    errors.push(`Entity is required for type "${draft.type}".`);
+  }
+  if (draft.type === 'category' && !draft.target_page) {
+    errors.push('Target page is required for type "category".');
+  }
+  return errors;
 }
 
 // A string that could still grow into a finite number after more keystrokes — a
@@ -56,7 +75,8 @@ export function mountItemEditor(element, store) {
   // Only rebuild the DOM when the page scope or the item *structure* changes
   // (page switch, add, remove, reorder, type). Value edits must not destroy the
   // very inputs being edited — that would clobber in-flight `change` events from
-  // browser automation and drop focus for human typing.
+  // browser automation and drop focus for human typing. A failed save (rollback,
+  // P1.12) always forces a full rebuild from the confirmed server state.
   let structureSignature = null;
   let autocompletes = [];
 
@@ -69,22 +89,16 @@ export function mountItemEditor(element, store) {
       structureSignature = null;
       return;
     }
-    const signature = state.selectedPageId + '|' + page.items.map((item, i) => `${i}:${item.type}`).join(',');
-    if (structureSignature === signature) return;
+    const itemSig = page.items.map((item, i) => `${i}:${item.type}`).join(',');
+    const draftSig = state.drafts.map((draft, i) => `${i}:${draft.type}`).join(',');
+    const signature = `${state.selectedPageId}|${itemSig}|drafts:${draftSig}`;
+    const forceRebuild = state.saveState === 'error';
+    if (structureSignature === signature && !forceRebuild) return;
     structureSignature = signature;
     autocompletes.forEach(ac => ac.destroy());
     autocompletes = [];
     element.replaceChildren();
     element.setAttribute('aria-label', 'Item editor');
-
-    const addButton = document.createElement('button');
-    addButton.type = 'button';
-    addButton.textContent = 'Add item';
-    addButton.addEventListener('click', () => {
-      const current = store.getState();
-      store.replaceConfig(addItem(current.config, current.selectedPageId));
-    });
-    element.appendChild(addButton);
 
     const typeOptions = Array.isArray(state.meta.item_types) ? state.meta.item_types : [];
     const pageOptions = state.config.pages.map(p => p.page_id);
@@ -197,6 +211,106 @@ export function mountItemEditor(element, store) {
 
       element.appendChild(fieldset);
     });
+
+    // --- Draft area (P1.8): nothing here reaches the persisted config until valid ---
+    state.drafts.forEach((draft, dIndex) => {
+      const fieldset = document.createElement('fieldset');
+      fieldset.dataset.draftIndex = String(dIndex);
+      fieldset.className = 'item-draft';
+
+      const heading = document.createElement('legend');
+      heading.textContent = 'New item (not saved yet)';
+      fieldset.appendChild(heading);
+
+      const refreshDraft = () => {
+        const current = store.getState().drafts[dIndex] || draft;
+        const errors = draftErrors(current);
+        errorsEl.textContent = errors.join(' ');
+        errorsEl.hidden = errors.length === 0;
+        saveBtn.disabled = errors.length !== 0;
+      };
+
+      const nameInput = makeTextInput('Draft name', draft.name, value => {
+        store.dispatch({ type: 'draft-update', index: dIndex, patch: { name: value } });
+        refreshDraft();
+      });
+      appendLabeledControl(fieldset, 'Name', nameInput);
+
+      const typeSelect = document.createElement('select');
+      typeSelect.setAttribute('aria-label', 'Draft type');
+      typeOptions.forEach(type => {
+        const option = document.createElement('option');
+        option.value = type;
+        option.textContent = type;
+        typeSelect.appendChild(option);
+      });
+      typeSelect.value = draft.type;
+      typeSelect.addEventListener('change', () => {
+        store.dispatch({ type: 'draft-update', index: dIndex, patch: { type: typeSelect.value } });
+        refreshDraft();
+      });
+      appendLabeledControl(fieldset, 'Type', typeSelect);
+
+      const entityInput = makeTextInput('Draft entity ID', draft.entity, value => {
+        store.dispatch({ type: 'draft-update', index: dIndex, patch: { entity: value } });
+        refreshDraft();
+      });
+      appendLabeledControl(fieldset, 'Entity ID', entityInput);
+
+      const targetSelect = document.createElement('select');
+      targetSelect.setAttribute('aria-label', 'Draft target page');
+      const targetEmpty = document.createElement('option');
+      targetEmpty.value = '';
+      targetEmpty.textContent = '';
+      targetSelect.appendChild(targetEmpty);
+      pageOptions.forEach(pageId => {
+        const option = document.createElement('option');
+        option.value = pageId;
+        option.textContent = pageId;
+        targetSelect.appendChild(option);
+      });
+      targetSelect.value = draft.target_page;
+      targetSelect.addEventListener('change', () => {
+        store.dispatch({ type: 'draft-update', index: dIndex, patch: { target_page: targetSelect.value } });
+        refreshDraft();
+      });
+      appendLabeledControl(fieldset, 'Target page', targetSelect);
+
+      const errorsEl = document.createElement('p');
+      errorsEl.className = 'draft-errors';
+      errorsEl.setAttribute('role', 'alert');
+      errorsEl.hidden = true;
+      fieldset.appendChild(errorsEl);
+
+      const saveBtn = document.createElement('button');
+      saveBtn.type = 'button';
+      saveBtn.textContent = 'Save item';
+      saveBtn.setAttribute('aria-label', 'Save draft item');
+      saveBtn.disabled = true;
+      saveBtn.addEventListener('click', () => {
+        const current = store.getState().drafts[dIndex];
+        if (!current || draftErrors(current).length !== 0) return;
+        store.dispatch({ type: 'draft-commit', index: dIndex });
+        store.replaceConfig(insertItem(store.getState().config, page.page_id, current));
+      });
+      fieldset.appendChild(saveBtn);
+
+      const discardBtn = document.createElement('button');
+      discardBtn.type = 'button';
+      discardBtn.textContent = 'Discard draft';
+      discardBtn.setAttribute('aria-label', 'Discard draft item');
+      discardBtn.addEventListener('click', () => store.dispatch({ type: 'draft-remove', index: dIndex }));
+      fieldset.appendChild(discardBtn);
+
+      element.appendChild(fieldset);
+      refreshDraft();
+    });
+
+    const addButton = document.createElement('button');
+    addButton.type = 'button';
+    addButton.textContent = 'Add item';
+    addButton.addEventListener('click', () => store.dispatch({ type: 'draft-add' }));
+    element.appendChild(addButton);
   }
 
   return { render };

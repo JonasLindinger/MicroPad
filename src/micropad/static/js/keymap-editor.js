@@ -51,6 +51,23 @@ function treeOrder(config) {
 
 export function mountKeymapEditor(element, store) {
   let autocomplete = null;
+  // Rebuild only on structural change (scope/key/action/target/origin). Free-text
+  // entity typing must never destroy the input mid-keystroke (P1.10), and a
+  // failed save forces a full rebuild from the confirmed state (P1.12).
+  let lastSignature = null;
+
+  // Client-side mirror of the Binding entity validator (models.py): valid Home
+  // Assistant entity ids, or Super-Productivity virtual task entities. Invalid
+  // free-text stays local until it becomes valid — it never provokes a server
+  // rejection per keystroke (P1.10 + P1.12).
+  const ENTITY_ID_PATTERN = /^[a-z_][a-z0-9_]*\.[a-z0-9_]+$/;
+  const SP_TASK_PREFIX = 'script.sp_start_';
+  const isValidEntity = value => {
+    if (!value) return true;
+    if (ENTITY_ID_PATTERN.test(value)) return true;
+    if (value.startsWith(SP_TASK_PREFIX) && /^[A-Za-z0-9_-]+$/.test(value.slice(SP_TASK_PREFIX.length))) return true;
+    return false;
+  };
 
   // Guard-railed restore of the whole key layout. Opening the modal writes nothing;
   // only the explicit "Restore defaults now" confirms it, so it cannot be triggered by
@@ -91,14 +108,23 @@ export function mountKeymapEditor(element, store) {
   }
 
   function render(state) {
-    if (autocomplete) { autocomplete.destroy(); autocomplete = null; }
-    element.replaceChildren();
-    element.setAttribute('aria-label', 'Keymap editor');
-
     const complete = keymapMetadataComplete(state.config, state.meta);
     const selectedKeyId = state.selectedKeyId;
     const keyIds = Array.isArray(state.meta.key_ids) ? state.meta.key_ids : [];
     const scopeComplete = effectiveKeymapComplete(state.config, state.keyScope, state.meta);
+    const resolved = state.keyScope === 'global'
+      ? {binding: normalizeBinding(state.config.global_keymap[selectedKeyId]), inherited: false, sourceScopeId: 'global'}
+      : resolveBinding(state.config, state.keyScope, selectedKeyId);
+    const effective = normalizeBinding(resolved.binding);
+    const pagesSignature = (state.config.pages || []).map(
+        page => `${page.page_id}:${page.parent}:${page.title}`
+      ).join('|');
+    const signature = `${complete}|${scopeComplete}|${state.keyScope}|${selectedKeyId}|${effective.action}|${effective.target_page}|${pagesSignature}|${resolved.inherited}|${resolved.sourceScopeId}`;
+    if (lastSignature === signature && state.saveState !== 'error') return;
+    lastSignature = signature;
+    if (autocomplete) { autocomplete.destroy(); autocomplete = null; }
+    element.replaceChildren();
+    element.setAttribute('aria-label', 'Keymap editor');
 
     const metaHeading = document.createElement('h2');
     metaHeading.textContent = 'Keymap';
@@ -176,9 +202,6 @@ export function mountKeymapEditor(element, store) {
     element.appendChild(matrix);
 
     // --- effective binding for the active scope ---
-    const resolved = state.keyScope === 'global'
-      ? {binding: normalizeBinding(state.config.global_keymap[selectedKeyId]), inherited: false, sourceScopeId: 'global'}
-      : resolveBinding(state.config, state.keyScope, selectedKeyId);
     const selectedBinding = resolved.binding;
     const origin = state.keyScope === 'global' ? 'global' : resolved.inherited ? 'ancestor' : 'override';
 
@@ -253,12 +276,30 @@ export function mountKeymapEditor(element, store) {
       input.value = selectedBinding.entity;
       label.appendChild(text);
       label.appendChild(input);
-      if (!selectedBinding.entity) {
-        const hint = document.createElement('span');
-        hint.className = 'binding-hint';
-        hint.textContent = 'Choose an entity.';
-        label.appendChild(hint);
-      }
+      const hint = document.createElement('span');
+      hint.className = 'binding-hint';
+      label.appendChild(hint);
+      // P1.10: persist free-text entity on input/change/blur, not only on
+      // autocomplete selection; discovery stays an optional convenience.
+      const refreshHint = () => {
+        const value = input.value.trim();
+        if (!value) { hint.textContent = 'Choose an entity.'; hint.classList.remove('binding-error'); return; }
+        if (isValidEntity(value)) { hint.textContent = ''; hint.classList.remove('binding-error'); }
+        else { hint.textContent = 'Invalid entity id (use domain.entity).'; hint.classList.add('binding-error'); }
+      };
+      refreshHint();
+      const commitEntity = () => {
+        const value = input.value.trim();
+        if (isValidEntity(value)) {
+          writeBinding({...normalizeBinding(selectedBinding), entity: value});
+        }
+        // Invalid text stays local (and visible with the hint) and never reaches
+        // the server, so typing never triggers a per-keystroke rollback.
+        refreshHint();
+      };
+      input.addEventListener('input', commitEntity);
+      input.addEventListener('change', commitEntity);
+      input.addEventListener('blur', commitEntity);
       bindingPanel.appendChild(label);
       autocomplete = attachEntityAutocomplete(input, {
         getEntities: () => loadEntities(),
