@@ -22,6 +22,8 @@ from micropad.constants import (
     MAX_CATALOG_PAYLOAD_BYTES,
     MAX_MQTT_PAYLOAD_BYTES,
     MAX_PAGE_PAYLOAD_BYTES,
+    MAX_REFLECTED_STATE_BYTES,
+    MAX_REFLECTED_UNIT_BYTES,
 )
 from micropad.keymaps import effective_keymap
 from micropad.models import AppConfig, EntitySummary, PageItem
@@ -115,7 +117,19 @@ def _validate_ha_template_inputs(config: AppConfig) -> None:
 
 
 def _compact(value: object) -> str:
-    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    return json.dumps(
+        value, ensure_ascii=False, separators=(",", ":"), allow_nan=False
+    )
+
+
+def _truncate_utf8(value: str, max_bytes: int) -> str:
+    """Truncate a dynamic string to a UTF-8 byte budget without splitting a codepoint."""
+    raw = value.encode("utf-8")
+    if len(raw) <= max_bytes:
+        return value
+    # Cutting the byte span then decoding with errors='ignore' drops only the
+    # partial trailing codepoint, so the result is valid UTF-8 (and valid JSON).
+    return raw[:max_bytes].decode("utf-8", errors="ignore")
 
 
 def _state_index(config: AppConfig, states: list[EntitySummary] | None) -> dict[str, EntitySummary]:
@@ -154,9 +168,9 @@ def _item_payload(item: PageItem, states: dict[str, EntitySummary]) -> dict[str,
             payload["min"] = minimum
             payload["max"] = maximum
             payload["step"] = step
-    payload["state"] = reflected.state
+    payload["state"] = _truncate_utf8(reflected.state, MAX_REFLECTED_STATE_BYTES)
     if item.type == "sensor" and reflected.unit:
-        payload["unit"] = reflected.unit
+        payload["unit"] = _truncate_utf8(reflected.unit, MAX_REFLECTED_UNIT_BYTES)
     return payload
 
 

@@ -183,16 +183,27 @@ def create_app(
         return jsonify({"ok": True, "service": "micropad-configurator"})
 
     def parse_incoming_config() -> AppConfig:
-        incoming: dict[str, object] = dict(request.get_json(force=True))
+        raw = request.get_json(force=True)
+        if not isinstance(raw, dict):
+            # P1.13: a non-object top-level body is a structured JSON 400, never
+            # an HTML 500 from dict() on an int/list/None.
+            raise BadRequest("request body must be a JSON object")
+        incoming: dict[str, object] = dict(raw)
         current = store.load()
-        settings: dict[str, object] = dict(cast(dict[str, object], incoming.get("settings", {})))
-        settings.pop("ha_token_configured", None)
-        settings.pop("ssh_key_configured", None)
-        if not settings.get("ha_token"):
-            settings["ha_token"] = current.settings.ha_token
-        if not settings.get("ssh_key"):
-            settings["ssh_key"] = current.settings.ssh_key
-        incoming["settings"] = settings
+        settings_raw = incoming.get("settings", {})
+        if isinstance(settings_raw, dict):
+            settings: dict[str, object] = dict(settings_raw)
+            settings.pop("ha_token_configured", None)
+            settings.pop("ssh_key_configured", None)
+            if not settings.get("ha_token"):
+                settings["ha_token"] = current.settings.ha_token
+            if not settings.get("ssh_key"):
+                settings["ssh_key"] = current.settings.ssh_key
+            incoming["settings"] = settings
+        else:
+            # Leave a non-dict settings value untouched so the model rejects it
+            # with a structured 422 validation error.
+            incoming["settings"] = settings_raw
         return parse_config(incoming)
 
     @app.get("/api/config")

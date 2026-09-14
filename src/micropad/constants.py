@@ -31,3 +31,9 @@ MAX_ITEMS_PER_PAGE = 20
 MAX_PAGE_PAYLOAD_BYTES = 8192
 MAX_CATALOG_PAYLOAD_BYTES = 16000
 MAX_MQTT_PAYLOAD_BYTES = 16380
+# P1.9: dynamic Home Assistant state/unit strings are truncated to these UTF-8
+# byte budgets before JSON generation so a rendered page can never blow the
+# firmware's page buffer through a huge `states(...)` value. 128 bytes is well
+# beyond what one e-paper row can display and keeps 20 items far under 8192.
+MAX_REFLECTED_STATE_BYTES = 128
+MAX_REFLECTED_UNIT_BYTES = 8

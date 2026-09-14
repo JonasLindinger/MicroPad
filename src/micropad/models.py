@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 from collections.abc import Mapping
 from typing import Annotated, Literal, get_args
@@ -108,6 +109,20 @@ class PageItem(StrictModel):
     @classmethod
     def normalize_target(cls, value: str) -> str:
         return normalize_identifier(value)
+
+    @field_validator("name")
+    @classmethod
+    def reject_empty_name(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("name must not be empty")
+        return value
+
+    @field_validator("value", "min", "max", "step")
+    @classmethod
+    def reject_non_finite(cls, value: float) -> float:
+        if not math.isfinite(value):
+            raise ValueError("must be a finite number")
+        return value
 
     @model_validator(mode="after")
     def validate_shape(self) -> PageItem:

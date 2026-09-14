@@ -34,7 +34,7 @@ def canonical_preview_manifest(file_sha256: dict[str, str]) -> str:
     byte stream the release digest hashes, so render and apply agree deterministically.
     """
     manifest = {"files": {name: file_sha256[name] for name in sorted(file_sha256)}}
-    return json.dumps(manifest, sort_keys=True, indent=2, ensure_ascii=False) + "\n"
+    return json.dumps(manifest, sort_keys=True, indent=2, ensure_ascii=False, allow_nan=False) + "\n"
 
 
 def preview_sha256(preview_dir: Path) -> str:
@@ -124,7 +124,7 @@ class HomeAssistantDeployer:
                     {
                         "automation_id": AUTOMATION_ID,
                         "automation_sha256": self._sha256(
-                            json.dumps(bundle.automation, ensure_ascii=False, sort_keys=True)
+                            json.dumps(bundle.automation, ensure_ascii=False, sort_keys=True, allow_nan=False)
                         ),
                         "created": result.created,
                         "readback_verified": True,

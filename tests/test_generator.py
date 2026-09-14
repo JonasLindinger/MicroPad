@@ -721,7 +721,11 @@ def test_explicit_empty_states_do_not_fall_back_to_entity_cache() -> None:
     assert explicitly_empty["items"][0]["state"] == "configured"
 
 
-def test_live_state_cannot_push_current_page_over_byte_limit() -> None:
+def test_live_state_is_truncated_to_display_budget_not_rejected() -> None:
+    """P1.9: huge live states are truncated to a display-safe UTF-8 budget rather
+    than pushing the rendered page over the byte limit and failing generation."""
+    from micropad.constants import MAX_REFLECTED_STATE_BYTES
+
     config = default_config().model_copy(deep=True)
     config.pages[0].items = [PageItem(name="Status", type="sensor", entity="sensor.status")]
     states = [
@@ -733,5 +737,8 @@ def test_live_state_cannot_push_current_page_over_byte_limit() -> None:
         )
     ]
 
-    with pytest.raises(GenerationError, match="page home exceeds 8192 bytes"):
-        generate_page_payload(config, "home", states)
+    payload = generate_page_payload(config, "home", states)
+    text = json.dumps(payload, ensure_ascii=False)
+    assert len(text.encode("utf-8")) <= 8192
+    assert len(payload["items"][0]["state"].encode("utf-8")) == MAX_REFLECTED_STATE_BYTES
+    assert payload["items"][0]["state"] == "é" * (MAX_REFLECTED_STATE_BYTES // 2)

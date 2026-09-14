@@ -56,7 +56,7 @@ class ConfigStore:
         temporary = Path(temporary_name)
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as handle:
-                json.dump(payload, handle, indent=2, ensure_ascii=False)
+                json.dump(payload, handle, indent=2, ensure_ascii=False, allow_nan=False)
                 handle.write("\n")
                 handle.flush()
                 os.fsync(handle.fileno())
