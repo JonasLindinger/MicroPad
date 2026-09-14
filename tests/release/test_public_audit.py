@@ -200,6 +200,35 @@ def test_candidate_files_scanned_excludes_git_metadata(tmp_path):
     assert json.loads(output.read_text(encoding="utf-8"))["files_scanned"] == 1
 
 
+def test_missing_tree_fails_closed(tmp_path):
+    """A missing or non-directory --tree must be a nonzero gate (P1.18)."""
+    missing = tmp_path / "does-not-exist"
+    assert AUDIT.main(["--tree", str(missing), "--output", str(tmp_path / "audit.json")]) != 0
+    assert not (tmp_path / "audit.json").exists()
+
+
+def test_empty_tree_fails_closed(tmp_path):
+    """Zero scanned files must be a nonzero gate, never a silent pass (P1.18)."""
+    empty = tmp_path / "empty-tree"
+    empty.mkdir()
+    assert AUDIT.main(["--tree", str(empty), "--output", str(tmp_path / "audit.json")]) != 0
+    assert not (tmp_path / "audit.json").exists()
+
+
+def test_unreadable_file_fails_closed(tmp_path):
+    """A file that cannot be read must be a nonzero gate, not silently skipped."""
+    import os as _os
+
+    if _os.geteuid() == 0:  # pragma: no cover - root bypasses file permissions
+        pytest.skip("cannot simulate unreadable files as root")
+    tree = tmp_path / "tree"
+    tree.mkdir()
+    path = tree / "data.txt"
+    path.write_text("content\n", encoding="utf-8")
+    path.chmod(0)
+    assert AUDIT.main(["--tree", str(tree), "--output", str(tmp_path / "audit.json")]) != 0
+
+
 # --- explicit software manifest ---------------------------------------------------
 
 

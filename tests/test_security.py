@@ -235,7 +235,7 @@ def test_admin_secret_reads_from_environment_only(monkeypatch) -> None:
 
 @pytest.mark.parametrize(
     "bind",
-    ["0.0.0.0:8080", ":8080", "192.168.1.5:8080"],
+    ["0.0.0.0:8080", ":8080", "198.51.100.5:8080"],
 )
 def test_non_loopback_bind_is_rejected_without_secret(monkeypatch, bind: str) -> None:
     monkeypatch.delenv("MICROPAD_ADMIN_SECRET", raising=False)

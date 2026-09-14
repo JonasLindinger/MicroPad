@@ -472,6 +472,22 @@ def _auditable_file_count(root: Path, reject_dirs: frozenset = _REJECT_DIRS) -> 
     return count
 
 
+def _verify_readable(root: Path, reject_dirs: frozenset = _REJECT_DIRS) -> None:
+    """Fail-closed traversal/readability probe (P1.18).
+
+    Raises ``OSError`` on any directory that cannot be entered or any candidate
+    file that cannot be opened, so an unreadable tree can never pass silently.
+    """
+    def _raise(error: OSError) -> None:
+        raise error
+
+    for directory, dirs, files in os.walk(root, onerror=_raise):
+        dirs[:] = [name for name in dirs if name not in reject_dirs]
+        for name in files:
+            with (Path(directory) / name).open("rb"):
+                pass
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--tree", type=Path, default=None,
@@ -491,6 +507,17 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.tree is not None:
         root = args.tree
+        if not root.exists() or not root.is_dir():
+            print(
+                f"audit_public_release: tree not found or not a directory: {root}",
+                file=sys.stderr,
+            )
+            return 3
+        try:
+            _verify_readable(root)
+        except OSError as exc:
+            print(f"audit_public_release: cannot scan tree: {exc}", file=sys.stderr)
+            return 4
         findings = audit_tree(root, forbidden_terms=forbidden, allowlist=allowed)
         scanned = _auditable_file_count(root)
     else:
@@ -507,6 +534,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                     seen.add(key)
                     findings.append(finding)
         scanned = len(tracked_set)
+
+    if scanned == 0:
+        print("audit_public_release: no files scanned", file=sys.stderr)
+        return 5
 
     if findings:
         print(f"audit_public_release: FAILED with {len(findings)} forbidden finding(s)", file=sys.stderr)

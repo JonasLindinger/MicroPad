@@ -48,6 +48,7 @@
         "encoder-push-r0c3",
         "input-during-refresh",
         "portal-random-password",
+        "portal-never-sleeps",
         "portal-input-responsive",
         "portal-back-no-save",
         "wifi-mqtt-nonblocking",
@@ -92,7 +93,7 @@
           "const": true
         },
         "portal-never-sleeps": {
-          "type": "boolean"
+          "const": true
         },
         "portal-input-responsive": {
           "const": true

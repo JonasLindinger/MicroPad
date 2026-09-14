@@ -49,7 +49,7 @@ LAN (typically behind HTTPS or a reverse proxy), write:
 ```bash
 sudo install -d -m 0700 /etc/micropad
 # paste your secret; never commit it, never put it in config.json
-echo 'MICROPAD_ADMIN_SECRET=replace-me-with-a-long-random-secret' |
+echo 'MICROPAD_ADMIN_SECRET=replace-me' |
   sudo tee /etc/micropad/admin.env >/dev/null
 sudo chmod 0600 /etc/micropad/admin.env
 echo 'MICROPAD_BIND=0.0.0.0:8080' | sudo tee -a /etc/micropad/admin.env
