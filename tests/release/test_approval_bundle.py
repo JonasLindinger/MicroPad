@@ -28,15 +28,14 @@ from pathlib import Path
 
 import pytest
 
-from scripts.build_approval_bundle import build_bundle, main as bundle_cli
+from scripts.build_approval_bundle import build_bundle
+from scripts.build_approval_bundle import main as bundle_cli
 
 PUBLIC_SECTIONS = {
     "candidate.diff", "commits.txt", "test-evidence.json", "public-audit.json",
     "hardware-summary.json", "live-ha-preview.json", "target-tree.txt",
     "proposed-commits.txt", "manifest.sha256",
 }
-
-_LIVE_PREVIEW_SHA256 = "cdef0123" * 8
 
 
 def test_bundle_refuses_missing_or_failed_gate(tmp_path, complete_evidence):
@@ -283,6 +282,25 @@ def _git(repo: Path, *args: str) -> str:
     ).stdout
 
 
+def _render_preview(root: Path) -> str:
+    """Render a deterministic live-HA preview inside the synthetic root.
+
+    Uses the real renderer so the digest is computed over the ACTUAL preview
+    artifacts and the P1.19 recompute gate is exercised honestly.
+    """
+    from micropad.models import default_config
+    from scripts.render_live_ha_preview import main as render_main
+
+    config_path = root / "config.json"
+    config_path.write_text(
+        default_config().model_dump_json(by_alias=True), encoding="utf-8"
+    )
+    preview_dir = root / "build" / "live-ha-preview"
+    preview_dir.mkdir(parents=True, exist_ok=True)
+    assert render_main(["--config", str(config_path), "--output", str(preview_dir)]) == 0
+    return (preview_dir / "release.sha256").read_text(encoding="utf-8").strip()
+
+
 def _synthetic_root(tmp_path: Path) -> Path:
     """A self-contained clean-room state the CLI can assemble evidence from.
 
@@ -292,9 +310,8 @@ def _synthetic_root(tmp_path: Path) -> Path:
     integration evidence directory, and a rendered-preview digest.  No network,
     no real person, no credential.
     """
-    from tests.release.conftest import CI_STAGES, FIRMWARE_SHA256, HARDWARE_CHECK_IDS
-
     from scripts.validate_hardware_acceptance import redact_summary
+    from tests.release.conftest import CI_STAGES, FIRMWARE_SHA256, HARDWARE_CHECK_IDS
 
     root = tmp_path / "root"
     (root / "release").mkdir(parents=True)
@@ -377,12 +394,7 @@ def _synthetic_root(tmp_path: Path) -> Path:
         encoding="utf-8",
     )
     (root / "build" / "live-ha-preview" / "release.sha256").write_text(
-        _LIVE_PREVIEW_SHA256 + "\n", encoding="utf-8"
-    )
-    (root / "build" / "live-ha-preview" / "mqtt-publications.json").write_text(
-        json.dumps({"publications": [{"topic": "micropad/catalog/set", "retain": True}]})
-        + "\n",
-        encoding="utf-8",
+        _render_preview(root) + "\n", encoding="utf-8"
     )
     # Commit only after every artifact exists, so the synthetic clean-room tree
     # (build/ evidence included) has a clean working tree when the CLI gates on it.
@@ -416,3 +428,32 @@ def test_cli_fails_closed_when_evidence_is_missing(tmp_path):
     (root / "build" / "live-ha-preview" / "release.sha256").unlink()
     assert bundle_cli(["--output", str(tmp_path / "approval"), "--root", str(root)]) == 1
     assert not (tmp_path / "approval").exists()
+
+
+def test_evidence_rejects_post_render_preview_tampering(tmp_path):
+    """P1.19: changing automation JSON/YAML or MQTT publications after rendering
+    must block the approval, because the digest is recomputed from the actual
+    artifacts rather than trusting the stored value."""
+    from scripts.build_approval_bundle import ApprovalBundleError, assemble_evidence
+
+    root = _synthetic_root(tmp_path)
+    artifact = root / "build" / "live-ha-preview" / "automation.json"
+    artifact.write_text(artifact.read_text(encoding="utf-8") + "\n# tampered\n", encoding="utf-8")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-m", "tamper preview after render")
+
+    with pytest.raises(ApprovalBundleError, match="preview"):
+        assemble_evidence(root)
+
+
+def test_evidence_rejects_preview_missing_a_content_file(tmp_path):
+    """Deleting one preview artifact is a fail-closed recompute error (P1.19)."""
+    from scripts.build_approval_bundle import ApprovalBundleError, assemble_evidence
+
+    root = _synthetic_root(tmp_path)
+    (root / "build" / "live-ha-preview" / "mqtt-publications.json").unlink()
+    _git(root, "add", "-A")
+    _git(root, "commit", "-m", "drop publication artifact")
+
+    with pytest.raises(ApprovalBundleError, match="preview"):
+        assemble_evidence(root)

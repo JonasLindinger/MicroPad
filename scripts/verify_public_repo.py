@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 # AI-assisted development — firmware, HA automation, config generator and docs were created with AI (LLM) help, reviewed and tested by the author. Provided as-is, without warranty; verify on your own hardware, don't use for safety-critical applications.
-# ruff: noqa: E501, S603, S607
 """Verify an already-pushed public replacement from local, read-only evidence.
 
 This tool performs no network request and no write to Git, GitHub, Home Assistant,

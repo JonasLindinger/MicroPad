@@ -12,7 +12,7 @@
   "key_ids": ["r0c0", "r0c1", "r0c2", "r0c3", "r1c0", "r1c1", "r1c2", "r1c3", "r2c0", "r2c1", "r2c2", "r2c3", "enc_up", "enc_down"],
   "item_types": ["category", "light", "switch", "script", "button", "scene", "sensor", "media_player", "number", "settings", "back"],
   "limits": {
-    "page_bytes": 1800,
+    "page_bytes": 8192,
     "catalog_bytes": 16000,
     "keymap_bytes": 16380,
     "mqtt_buffer_bytes": 16384

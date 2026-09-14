@@ -38,7 +38,7 @@ def _run_script(script: str, *args: str, cwd: Path, env: dict[str, str] | None =
     full_env = os.environ.copy()
     if env:
         full_env.update(env)
-    return subprocess.run(  # noqa: S603 - launching a known project script under the test interpreter
+    return subprocess.run(
         [sys.executable, str(_SCRIPTS / script), *args],
         cwd=cwd,
         env=full_env,

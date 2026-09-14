@@ -1,5 +1,4 @@
 # AI-assisted development — firmware, HA automation, config generator and docs were created with AI (LLM) help, reviewed and tested by the author. Provided as-is, without warranty; verify on your own hardware, don't use for safety-critical applications.
-# ruff: noqa: S603, S607
 """Deterministic, offline verification of the deployment assets (Integration Task 4)."""
 
 import runpy

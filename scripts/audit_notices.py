@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 # AI-assisted development — firmware, HA automation, config generator and docs were created with AI (LLM) help, reviewed and tested by the author. Provided as-is, without warranty; verify on your own hardware, don't use for safety-critical applications.
-# ruff: noqa: E501
 """Audit every tracked doc/source file for the exact AI-assistance notice.
 
 The notice must appear verbatim in every authored file that is documentation or
@@ -57,7 +56,7 @@ def tracked_extension_paths() -> list[Path]:
     # S603/S607: argv is a fixed literal immutable list (never a shell string and
     # never user-controlled), so this is safe; fail closed if git itself errors.
     argv = ["git", "-C", str(_REPO), "ls-files", "-z"]
-    output = subprocess.run(argv, check=True, capture_output=True, text=True)  # noqa: S603
+    output = subprocess.run(argv, check=True, capture_output=True, text=True)
     return [
         Path(entry)
         for entry in output.stdout.split("\0")

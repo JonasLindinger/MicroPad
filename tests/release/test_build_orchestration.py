@@ -30,17 +30,17 @@ def _ci_stages() -> list[str]:
 
 def test_ci_has_all_required_stages_in_order():
     stages = _ci_stages()
-    # The full twelve-stage sequence, in the exact order ci.sh runs it.  Deliberately
-    # updated from the old ten-stage list (toolchain and post-push-verifier-unit
-    # were missing), which let the approval gate drift from the real CI.
+    # The full sixteen-stage sequence, in the exact order ci.sh runs it,
+    # including the P1.20 gates (lint, typecheck, workflow-validate, coverage).
     required = [
-        "toolchain", "python-unit", "mqtt-contract", "fake-ha-roundtrip",
+        "toolchain", "lint", "typecheck", "workflow-validate", "coverage",
+        "python-unit", "mqtt-contract", "fake-ha-roundtrip",
         "frontend", "firmware-host", "firmware-hwcdc", "firmware-tinyusb",
         "deployment", "docs-notice", "post-push-verifier-unit", "public-audit",
     ]
     positions = [stages.index(stage) for stage in required]
     assert positions == sorted(positions)
-    assert len(stages) == 12
+    assert len(stages) == 16
 
 
 def test_required_ci_stages_match_ci_sh_exactly():

@@ -82,7 +82,8 @@ def valid_hardware_report() -> dict:
 # scripts/build_approval_bundle.py (asserted by
 # tests/release/test_build_orchestration.py).
 CI_STAGES = [
-    "toolchain", "python-unit", "mqtt-contract", "fake-ha-roundtrip",
+    "toolchain", "lint", "typecheck", "workflow-validate", "coverage",
+    "python-unit", "mqtt-contract", "fake-ha-roundtrip",
     "frontend", "firmware-host", "firmware-hwcdc", "firmware-tinyusb",
     "deployment", "docs-notice", "post-push-verifier-unit", "public-audit",
 ]

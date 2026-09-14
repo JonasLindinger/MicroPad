@@ -14,10 +14,8 @@
 from __future__ import annotations
 
 import json
-import math
 from pathlib import Path
 
-import jsonschema
 import pytest
 from jsonschema import Draft202012Validator
 
@@ -28,7 +26,7 @@ from micropad.generator import (
     generate_keymap_payload,
     generate_page_payload,
 )
-from micropad.models import EntitySummary, Page, PageItem, parse_config
+from micropad.models import EntitySummary, PageItem, parse_config
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -41,7 +39,7 @@ def config_with_state_items(state: str) -> object:
     """A 20-item page where every entity carries the same enormous HA state."""
     items = [
         PageItem(
-            name=f"Item {index} 名" if index % 2 == 0 else f"Item {index} – ümlaut",
+            name=f"Item {index} 名" if index % 2 == 0 else f"Item {index} - ümlaut",
             type="sensor",
             entity=f"sensor.sensor_{index}",
         )

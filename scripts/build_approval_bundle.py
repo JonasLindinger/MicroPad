@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 # AI-assisted development — firmware, HA automation, config generator and docs were created with AI (LLM) help, reviewed and tested by the author. Provided as-is, without warranty; verify on your own hardware, don't use for safety-critical applications.
-# ruff: noqa: E501
 """Build the immutable, secret-free release approval bundle (Integration Task 9).
 
 This is the human-gating control: the producer of ``build/approval/`` whose
@@ -101,7 +100,8 @@ from typing import Any
 # scripts/ci.sh and asserted by tests/release/test_build_orchestration.py.  Any
 # stage missing from the evidence or reporting a non-zero exit blocks a bundle.
 REQUIRED_CI_STAGES = [
-    "toolchain", "python-unit", "mqtt-contract", "fake-ha-roundtrip",
+    "toolchain", "lint", "typecheck", "workflow-validate", "coverage",
+    "python-unit", "mqtt-contract", "fake-ha-roundtrip",
     "frontend", "firmware-host", "firmware-hwcdc", "firmware-tinyusb",
     "deployment", "docs-notice", "post-push-verifier-unit", "public-audit",
 ]
@@ -201,7 +201,7 @@ def _hardware_required_checks() -> frozenset[str]:
     schema_path = Path(__file__).resolve().parents[1] / "release" / "hardware-acceptance.schema.json"
     try:
         schema = json.loads(schema_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:  # noqa: PERF203
+    except (OSError, json.JSONDecodeError) as exc:
         raise ApprovalBundleError(
             f"hardware-acceptance schema is unreadable at {schema_path}: {exc}"
         ) from None
@@ -417,7 +417,7 @@ def build_bundle(output_dir: str | Path, evidence: dict[str, Any]) -> str:
 def _read_evidence_json(path: Path, label: str) -> Any:
     try:
         return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:  # noqa: PERF203
+    except (OSError, json.JSONDecodeError) as exc:
         raise ApprovalBundleError(f"cannot read {label} ({path}): {exc}") from None
 
 
@@ -482,9 +482,28 @@ def assemble_evidence(root: str | Path) -> dict[str, Any]:
         root / "build/public-integration-evidence/public-audit.json", "public audit"
     )
 
-    # 5. Live preview: canonical digest + informational retained topics.
+    # 5. Live preview: canonical digest + informational retained topics, with the
+    # digest RECOMPUTED from the actual preview artifacts (P1.19). Any post-render
+    # change to automation JSON/YAML or MQTT publications — bytes, file name, or
+    # manifest order — changes the recomputed digest and blocks the bundle.
     live_preview_dir = root / "build/live-ha-preview"
-    digest = _read_evidence_text(live_preview_dir / "release.sha256", "live preview digest").strip()
+    stored_digest = _read_evidence_text(
+        live_preview_dir / "release.sha256", "live preview digest"
+    ).strip()
+    try:
+        from micropad.ha_deploy import preview_sha256
+
+        recomputed_digest = preview_sha256(live_preview_dir)
+    except Exception as exc:  # OSError / HADeploymentError / json errors
+        raise ApprovalBundleError(
+            f"live preview digest cannot be recomputed from artifacts: {exc}"
+        ) from None
+    if stored_digest != recomputed_digest:
+        raise ApprovalBundleError(
+            "live preview digest does not match the recomputed manifest of the "
+            "actual preview artifacts; re-render the preview before approval"
+        )
+    digest = stored_digest
     topics: list[str] = []
     publications_path = live_preview_dir / "mqtt-publications.json"
     if publications_path.is_file():

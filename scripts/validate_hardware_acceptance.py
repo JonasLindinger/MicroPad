@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 # AI-assisted development — firmware, HA automation, config generator and docs were created with AI (LLM) help, reviewed and tested by the author. Provided as-is, without warranty; verify on your own hardware, don't use for safety-critical applications.
-# ruff: noqa: E501
 """Validate a physical MicroPad hardware acceptance record against the strict schema.
 
 The operator-filled local record ``release/local-hardware-acceptance.json`` is
@@ -31,8 +30,7 @@ import argparse
 import json
 import re
 import sys
-from datetime import datetime
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from jsonschema import Draft202012Validator
@@ -138,7 +136,7 @@ def main(argv: list[str] | None = None) -> int:
     input_path = Path(args.input)
     try:
         report = json.loads(input_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:  # noqa: PERF203
+    except (OSError, json.JSONDecodeError) as exc:
         print(f"error: cannot read {input_path}: {exc}", file=sys.stderr)
         return 1
 

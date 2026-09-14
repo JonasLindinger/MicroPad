@@ -65,6 +65,10 @@ run_stage() {
 # Actions the workflow caches this exact toolchain and runs the same install, so
 # this stage is quick there and idempotent everywhere.
 run_stage "toolchain"       bash scripts/install-arduino-toolchain.sh
+run_stage "lint"            .venv/bin/ruff check .
+run_stage "typecheck"       .venv/bin/mypy src/micropad
+run_stage "workflow-validate" .venv/bin/pytest tests/deployment/test_workflows.py -q
+run_stage "coverage"        .venv/bin/pytest tests/test_*.py tests/integration tests/deployment --cov=micropad --cov-fail-under=90 -q
 run_stage "python-unit"      .venv/bin/pytest tests/test_*.py -q
 run_stage "mqtt-contract"     .venv/bin/pytest tests/integration/test_mqtt_contract.py -q
 run_stage "fake-ha-roundtrip" .venv/bin/pytest tests/integration/test_fake_ha_roundtrip.py -q

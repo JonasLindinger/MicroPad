@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 # AI-assisted development — firmware, HA automation, config generator and docs were created with AI (LLM) help, reviewed and tested by the author. Provided as-is, without warranty; verify on your own hardware, don't use for safety-critical applications.
-# ruff: noqa: E501
 """Verify retained MicroPad MQTT publications on a live broker.
 
 Reads MQTT host/port/user from the git-ignored ``config.json`` and obtains the

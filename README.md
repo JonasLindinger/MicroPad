@@ -28,6 +28,16 @@ web configurator, and the deployment/service assets.
   and light sleep is allowed. Only an enumerated USB data host keeps the device
   fully awake. See `docs/hardware-acceptance.md`.
 
+## Reproducibility
+
+The Python dependency graph is locked: `uv.lock` is the resolved source of
+truth, and `requirements-lock.txt` is its content-hash materialization (every
+wheel pinned with `sha256`, regenerated with `uv export --frozen`). The build
+backend is pinned exactly (`setuptools==84.0.0`). This freezes dependency
+*versions and content*; it does **not** claim byte-identical builds, because
+pip/setuptools release artifacts can still vary between environments. Generated
+automation/payload artifacts are deterministic per configuration (see below).
+
 ## Quick start
 
 Create a virtualenv and install the package and dev tools (Ubuntu/Debian shown):
@@ -35,6 +45,14 @@ Create a virtualenv and install the package and dev tools (Ubuntu/Debian shown):
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install --requirement requirements-dev.txt
+```
+
+For a content-hash-pinned runtime install (every transitive dependency locked in
+`uv.lock` and materialized as `requirements-lock.txt` with `sha256` hashes)
+instead use:
+
+```bash
+.venv/bin/pip install --requirement requirements-lock.txt
 ```
 
 Run the configurator locally for development (Flask dev server):
