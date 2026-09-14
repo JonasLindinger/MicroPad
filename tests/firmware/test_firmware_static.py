@@ -326,6 +326,27 @@ class FirmwarePortalContractTest(FirmwareStaticContractTest):
         self.assertNotIn("while ", body)
         self.assertNotIn("delay(", body)
 
+    def test_setup_password_loaded_before_generate_on_entry(self):
+        # Issue #7: startPortal must try to load a password saved on the
+        # non-volatile storage and only generate + store one when none exists,
+        # so that the same pad always uses the same AP password.
+        text = self.ino()
+        self.assertIn("bool loadSetupPassword(", text)
+        self.assertIn("void saveSetupPassword(", text)
+        self.assertIn('preferences.getString("setup_pass"', text)
+        body = self.function_body(self.ino(), "void startPortal(uint32_t nowMs)")
+        # The load-or-generate decision happens before the AP is brought up.
+        self.assertLess(body.index("loadSetupPassword(setupPassword)"),
+                        body.index('WiFi.softAP("MicroPad-Setup", setupPassword)'))
+        self.assertIn("generateSetupPassword(setupPassword)", body)
+        self.assertIn("saveSetupPassword(setupPassword)", body)
+        # Generate is only reachable on the not-stored branch.
+        gen_at = body.index("generateSetupPassword(setupPassword)")
+        load_at = body.index("loadSetupPassword(setupPassword)")
+        save_at = body.index("saveSetupPassword(setupPassword)")
+        self.assertLess(load_at, gen_at)
+        self.assertLess(gen_at, save_at)
+
     def test_portal_view_state_published(self):
         text = self.ino()
         self.assertIn("struct PortalViewState", text)
@@ -499,7 +520,10 @@ class FirmwareSnapshotContractTest(FirmwareStaticContractTest):
         # be split across two lines by clang-format).
         self.assertEqual(text.count("xTaskCreatePinnedToCore(renderTask,"), 1)
         self.assertIn('"epaper"', text)
-        self.assertIn("6144", text)
+        # 8192 (v6-proven): one draw pass holds a 2.4 KB prim model plus the
+        # GxEPD2 frames; the former 6144 overflowed and panicked the render
+        # task mid-draw (blank panel / reboot, issue #6).
+        self.assertIn("8192", text)
         self.assertIn("&renderTaskHandle, 0)", text)
 
     def test_request_draw_builds_between_begin_write_and_publish(self):
@@ -821,6 +845,31 @@ class FirmwarePowerContractTest(FirmwareStaticContractTest):
             self.assertIn("if (snap.usbHost)", seam)
             self.assertIn("drawPowerSymbol(", seam)
 
+    def test_draw_seams_append_to_single_prim_model(self):
+        # The status cell and power icon append to the caller's prim model
+        # (single 2.4 KB RenderModel on the render task stack). Two nested
+        # models plus GxEPD2 frames overflowed the former 6144-byte stack and
+        # panicked mid-draw (blank panel / reboot, issue #6).
+        text = self.ino()
+        # Both seams take the caller's model in the signature (the body alone
+        # cannot show the parameter).
+        self.assertIn(
+            "void drawNetworkStatus(uint8_t networkState, "
+            "micropad::RenderModel &model)", text)
+        self.assertIn(
+            "void drawPowerSymbol(bool usbHost, micropad::RenderModel &model)",
+            text)
+        for signature in ("void drawNetworkStatus(", "void drawPowerSymbol("):
+            seam = self.function_body(text, signature)
+            # The seam appends prims but never draws or owns a model itself.
+            self.assertIn("model)", seam)
+            self.assertNotIn("drawRenderModel(", seam)
+            self.assertNotIn("RenderModel model;", seam)
+        for signature in ("void drawNormalUi(", "void drawPortalUi("):
+            body = self.function_body(text, signature)
+            self.assertEqual(body.count("RenderModel model;"), 1)
+            self.assertEqual(body.count("drawRenderModel(model)"), 1)
+
     def test_power_publish_retained_and_republished_on_connect(self):
         body = self.function_body(
             self.ino(), "void publishPowerStateRetained(bool usbHost)")
@@ -869,6 +918,21 @@ class FirmwareSleepContractTest(FirmwareStaticContractTest):
         body = self.function_body(
             self.ino(), "void enterLightSleep(uint32_t nowMs)")
         self.assertTrue(body.lstrip().startswith("if (isPowered()) return;"))
+
+    def test_portal_blocks_sleep_at_both_guards(self):
+        # The setup portal must never light-sleep (issue #6): light sleep
+        # silences the AP, DNS and web server mid-setup, so the pairing phone
+        # loses the pad and the session looks like a crash. The portal instead
+        # restarts on its own PORTAL_IDLE_MS inactivity timeout.
+        gate = self.function_body(
+            self.ino(), "bool sleepGateReady(uint32_t nowMs)")
+        portal_at = gate.index("portalActive")
+        self.assertLess(gate.index("isPowered()"), portal_at)
+        self.assertLess(portal_at, gate.index("canSleep("))
+        body = self.function_body(
+            self.ino(), "void enterLightSleep(uint32_t nowMs)")
+        self.assertLess(body.index("portalActive"),
+                        body.index("prepareWakeInputs("))
 
     def test_pre_sleep_wake_input_configuration(self):
         body = self.function_body(self.ino(), "void prepareWakeInputs()")

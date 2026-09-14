@@ -2,7 +2,7 @@
 """Shared fixtures for the hardware acceptance release gate.
 
 ``valid_hardware_report`` is a fully synthetic, complete acceptance record: every
-one of the 21 required physical check IDs is ``true``, the board is the anonymous
+one of the 22 required physical check IDs is ``true``, the board is the anonymous
 ``bench-01``, timestamps are fixed UTC strings, and each check has exactly one
 allowed evidence entry.  No real person, network device, entity ID, firmware
 digest, or credential value appears — the digests are fixed lab patterns and the
@@ -31,6 +31,7 @@ HARDWARE_CHECK_IDS = [
     "encoder-push-r0c3",
     "input-during-refresh",
     "portal-random-password",
+    "portal-never-sleeps",
     "portal-input-responsive",
     "portal-back-no-save",
     "wifi-mqtt-nonblocking",

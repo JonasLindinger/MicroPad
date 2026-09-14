@@ -66,13 +66,18 @@ at runtime through the setup portal and stored in NVS.
 ## Setup portal
 
 On first boot (or when no network settings are saved) the device starts a captive
-portal AP named `MicroPad-Setup` with a 16-character random password shown on the
-panel. From the portal you save the station Wi-Fi credentials and the MQTT broker
+portal AP named `MicroPad-Setup` with a 16-character password shown on the
+panel. The password is generated once from hardware entropy, stored in NVS, and
+**reused by every later portal entry** — it never rotates between sessions, so a
+phone that already joined the AP reconnects with the same saved network. From
+the portal you save the station Wi-Fi credentials and the MQTT broker
 settings (host, port, user, password), then the device restarts its AP and
 reconnects to the network and broker. The matrix and encoder remain responsive
 while the portal is open; `Back` cancels and leaves settings unchanged; the
 portal restarts itself after roughly 5 minutes of inactivity. Entering the portal
-is bound to the `settings` action.
+is bound to the `settings` action. While the setup portal is open the device
+**never enters light sleep** — sleeping would silence the AP, DNS and web server
+mid-setup.
 
 The broker host placeholder used in source is `192.168.0.100`, the user
 placeholder is `micropad`, and the password placeholder is `replace-me`. Replace

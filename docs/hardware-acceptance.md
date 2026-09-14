@@ -218,11 +218,29 @@ that must render fully across the 296-px-wide landscape canvas.
 ### `portal-random-password`
 
 - **Setup:** first boot with no saved settings.
-- **Action:** power on and observe the setup access point.
+- **Action:** power on and observe the setup access point, then exit and
+  re-enter the setup portal (or reboot twice).
 - **Observable:** AP `MicroPad-Setup` appears and the panel shows a
-  **16-character random password** (generated, never stored in firmware/source/docs).
+  **16-character password**. The password is **generated once from hardware
+  entropy and persisted in NVS** — the same password is shown on every later
+  portal entry, so a phone that already joined reconnects with the saved
+  network instead of a new code.
 - **Evidence kind:** `photo` + `manual-observation`.
-- **Pass gate:** AP name and a 16-character random password shown on the panel.
+- **Pass gate:** AP name present, a 16-character password shown, and the same
+  password after portal exit/re-entry.
+
+### `portal-never-sleeps`
+
+- **Setup:** setup portal open, battery powered.
+- **Action:** leave the portal idle past the normal battery idle-sleep
+  threshold (~60 s), then keep waiting.
+- **Observable:** the portal stays fully awake — the AP keeps beaconing, the
+  DNS/web server keeps answering, the phone stays connected. No light-sleep
+  entry while the portal is active; the portal's own
+  ≈5-minute inactivity restart is the only shutdown path.
+- **Evidence kind:** `video` + `manual-observation`.
+- **Pass gate:** no sleep entry while the portal is open (sleep only after
+  portal exit / settings saved).
 
 ### `portal-input-responsive`
 

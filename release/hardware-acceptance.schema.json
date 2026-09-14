@@ -61,27 +61,72 @@
         "charge-only-follows-battery-sleep"
       ],
       "properties": {
-        "boot-full-refresh": { "const": true },
-        "display-four-rows": { "const": true },
-        "full-panel-partial-refresh": { "const": true },
-        "ghosting-bound": { "const": true },
-        "matrix-all-twelve": { "const": true },
-        "encoder-clockwise-down": { "const": true },
-        "encoder-counterclockwise-up": { "const": true },
-        "encoder-push-r0c3": { "const": true },
-        "input-during-refresh": { "const": true },
-        "portal-random-password": { "const": true },
-        "portal-input-responsive": { "const": true },
-        "portal-back-no-save": { "const": true },
-        "wifi-mqtt-nonblocking": { "const": true },
-        "mqtt-reconnect-resubscribe": { "const": true },
-        "authoritative-resync": { "const": true },
-        "usb-host-icon-after-1500ms": { "const": true },
-        "usb-host-prevents-sleep": { "const": true },
-        "usb-disconnect-clears-after-1500ms": { "const": true },
-        "battery-idle-sleeps-near-60s": { "const": true },
-        "wake-action-immediate": { "const": true },
-        "charge-only-follows-battery-sleep": { "const": true }
+        "boot-full-refresh": {
+          "const": true
+        },
+        "display-four-rows": {
+          "const": true
+        },
+        "full-panel-partial-refresh": {
+          "const": true
+        },
+        "ghosting-bound": {
+          "const": true
+        },
+        "matrix-all-twelve": {
+          "const": true
+        },
+        "encoder-clockwise-down": {
+          "const": true
+        },
+        "encoder-counterclockwise-up": {
+          "const": true
+        },
+        "encoder-push-r0c3": {
+          "const": true
+        },
+        "input-during-refresh": {
+          "const": true
+        },
+        "portal-random-password": {
+          "const": true
+        },
+        "portal-never-sleeps": {
+          "type": "boolean"
+        },
+        "portal-input-responsive": {
+          "const": true
+        },
+        "portal-back-no-save": {
+          "const": true
+        },
+        "wifi-mqtt-nonblocking": {
+          "const": true
+        },
+        "mqtt-reconnect-resubscribe": {
+          "const": true
+        },
+        "authoritative-resync": {
+          "const": true
+        },
+        "usb-host-icon-after-1500ms": {
+          "const": true
+        },
+        "usb-host-prevents-sleep": {
+          "const": true
+        },
+        "usb-disconnect-clears-after-1500ms": {
+          "const": true
+        },
+        "battery-idle-sleeps-near-60s": {
+          "const": true
+        },
+        "wake-action-immediate": {
+          "const": true
+        },
+        "charge-only-follows-battery-sleep": {
+          "const": true
+        }
       }
     },
     "evidence": {
@@ -118,7 +163,8 @@
               "usb-disconnect-clears-after-1500ms",
               "battery-idle-sleeps-near-60s",
               "wake-action-immediate",
-              "charge-only-follows-battery-sleep"
+              "charge-only-follows-battery-sleep",
+              "portal-never-sleeps"
             ]
           },
           "kind": {

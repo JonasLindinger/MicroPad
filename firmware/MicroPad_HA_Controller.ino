@@ -68,9 +68,10 @@ micropad::QuadratureDecoder encoderDecoder;
 // Nonblocking captive portal. One DNSServer + WebServer pass runs per loop
 // (portalTick), input scanning continues while the portal is active, Back
 // cancels without touching NVS, and a valid POST saves through saveSettings()
-// after the complete candidate validates. The AP password is random per boot
-// (hardware entropy) and exists only in RAM; no credential is a source
-// constant.
+// after the complete candidate validates. The AP password is generated once
+// from hardware entropy, saved to NVS, and reused by every later portal entry
+// (issue #7); while the portal is open the device never light-sleeps (issue
+// #6). No credential is a source constant.
 // ============================================================================
 
 // Fixed sketch-side portal display state, copied by the display task into
@@ -527,11 +528,38 @@ void portalTick(uint32_t nowMs) {
   }
 }
 
+// Persisted setup-portal AP password (issue #7). The random password is
+// generated exactly once and stored in NVS, so every later portal entry reuses
+// the same one instead of rotating it per session: the phone keeps its saved
+// network and the panel does not show a new code on every visit. Only a
+// complete 16-character record counts as stored; anything shorter is treated
+// as absent, regenerated, and written back.
+bool loadSetupPassword(char (&out)[micropad::SETUP_PASSWORD_LENGTH + 1]) {
+  Preferences preferences;
+  if (!preferences.begin("micropad", true)) return false;
+  const size_t length = preferences.getString("setup_pass", out, sizeof(out));
+  preferences.end();
+  return length == micropad::SETUP_PASSWORD_LENGTH;
+}
+
+void saveSetupPassword(const char *password) {
+  Preferences preferences;
+  if (!preferences.begin("micropad", false)) return;
+  preferences.putString("setup_pass", password);
+  preferences.end();
+}
+
 // Start the AP, wildcard DNS and WebServer once, publish the portal view
 // state, and request a forced full refresh. Never waits for clients.
 void startPortal(uint32_t nowMs) {
   if (portalActive) return;
-  generateSetupPassword(setupPassword);
+  // Reuse the stored password; only the very first portal ever generates one
+  // (issue #7). generateSetupPassword() stays the sole source of the random
+  // value and saveSetupPassword() persists it for every later session.
+  if (!loadSetupPassword(setupPassword)) {
+    generateSetupPassword(setupPassword);
+    saveSetupPassword(setupPassword);
+  }
   portalActive = true;
   portalExitSaved = false;
   portalLastActivityMs = nowMs;
@@ -1082,6 +1110,11 @@ constexpr uint64_t MQTT_KEEPALIVE_US = 15000000ULL;  // 15 s keepalive
 // mailbox-pending state, plus the wrap-safe idle and minimum-awake clocks.
 bool sleepGateReady(uint32_t nowMs) {
   if (isPowered()) return false;
+  // The setup portal must never sleep (issue #6): light sleep silences the
+  // AP, DNS and web server mid-setup, so the phone that is pairing loses the
+  // pad and the session looks like a crash. The portal has its own
+  // PORTAL_IDLE_MS restart instead.
+  if (portalActive) return false;
   return micropad::canSleep(false, anyKeyHeld(),
                             renderBusy.load(std::memory_order_acquire),
                             snapshotMailbox.hasPending(), nowMs,
@@ -1124,6 +1157,9 @@ void prepareWakeInputs() {
 // publish, or Preferences call occurs between the guard and the sleep start.
 void enterLightSleep(uint32_t nowMs) {
   if (isPowered()) return;
+  // Structural guard mirroring the gate: the setup portal never sleeps (issue
+  // #6), whatever the future call graph looks like.
+  if (portalActive) return;
   prepareWakeInputs();
   vTaskSuspend(renderTaskHandle);
   // The loop task is the only task watchdog subscriber (like the proven v6
@@ -1299,9 +1335,13 @@ void renderTask(void *) {
   }
 }
 
-// Called by setup() after display initialization (Task 12 integration).
+// Called by setup() after display initialization (Task 12 integration). The
+// stack is 8192 (the v6-proven size): one draw pass holds a 2.4 KB prim model
+// plus the GxEPD2/Adafruit_GFX frames, and the previous 6144 left no margin —
+// a render-task overrun panics and reboots the pad, leaving the panel blank
+// (issue #6). Nested second models are no longer built (see drawNetworkStatus).
 void createRenderTask() {
-  xTaskCreatePinnedToCore(renderTask, "epaper", 6144, nullptr, 1,
+  xTaskCreatePinnedToCore(renderTask, "epaper", 8192, nullptr, 1,
                           &renderTaskHandle, 0);
 }
 
@@ -1413,36 +1453,35 @@ void drawRenderModel(const micropad::RenderModel &model) {
 }
 
 // Network status cell geometry (solid square / ring / two dots) is built by
-// the dependency-free networkStatusPrims and only translated here; no font or
-// text call lives in this seam.
-void drawNetworkStatus(uint8_t networkState) {
-  micropad::RenderModel model;
+// the dependency-free networkStatusPrims and appended to the CALLER's prim
+// model; no font or text call lives in this seam. Appending keeps a single
+// 2.4 KB RenderModel on the render task's stack (issue #6: two nested models
+// plus the GxEPD2 frames overflowed the 6 KiB task stack).
+void drawNetworkStatus(uint8_t networkState, micropad::RenderModel &model) {
   micropad::networkStatusPrims(networkState, model);
-  drawRenderModel(model);
 }
 
 // USB power symbol: pure line/rectangle/circle geometry from the core builder
-// (powerIconPrims); deliberately no text or glyph call in this seam.
-void drawPowerSymbol(bool usbHost) {
-  micropad::RenderModel model;
+// (powerIconPrims), appended to the caller's prim model; deliberately no text
+// or glyph call in this seam.
+void drawPowerSymbol(bool usbHost, micropad::RenderModel &model) {
   micropad::powerIconPrims(usbHost, model);
-  drawRenderModel(model);
 }
 
 void drawNormalUi(const micropad::RenderSnapshot &snap) {
   micropad::RenderModel model;
   micropad::layoutNormalUi(snap, model);
+  drawNetworkStatus(snap.networkState, model);
+  if (snap.usbHost) drawPowerSymbol(true, model);
   drawRenderModel(model);
-  drawNetworkStatus(snap.networkState);
-  if (snap.usbHost) drawPowerSymbol(true);
 }
 
 void drawPortalUi(const micropad::RenderSnapshot &snap) {
   micropad::RenderModel model;
   micropad::layoutPortalUi(snap, model);
+  drawNetworkStatus(snap.networkState, model);
+  if (snap.usbHost) drawPowerSymbol(true, model);
   drawRenderModel(model);
-  drawNetworkStatus(snap.networkState);
-  if (snap.usbHost) drawPowerSymbol(true);
 }
 
 // Sample the panel BUSY line after the refresh with a wrap-safe 15 s timeout.

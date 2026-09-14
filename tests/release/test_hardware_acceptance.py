@@ -1,7 +1,7 @@
 # AI-assisted development — firmware, HA automation, config generator and docs were created with AI (LLM) help, reviewed and tested by the author. Provided as-is, without warranty; verify on your own hardware, don't use for safety-critical applications.
 """Hardware acceptance record: exact check coverage and schema / redaction gates.
 
-Pins the exact 21-ID ``REQUIRED`` contract, proves a complete synthetic record
+Pins the exact 22-ID ``REQUIRED`` contract, proves a complete synthetic record
 validates clean, and rejects incomplete, malformed, and un-redacted content.
 Forbidden canary values (plaintext SSID, broker hostname, token, email, entity
 ID) are assembled from adjacent string fragments at test runtime so the committed
@@ -21,7 +21,8 @@ REQUIRED = {
     "boot-full-refresh", "display-four-rows", "full-panel-partial-refresh",
     "ghosting-bound", "matrix-all-twelve", "encoder-clockwise-down",
     "encoder-counterclockwise-up", "encoder-push-r0c3", "input-during-refresh",
-    "portal-random-password", "portal-input-responsive", "portal-back-no-save",
+    "portal-random-password", "portal-never-sleeps", "portal-input-responsive",
+    "portal-back-no-save",
     "wifi-mqtt-nonblocking", "mqtt-reconnect-resubscribe", "authoritative-resync",
     "usb-host-icon-after-1500ms", "usb-host-prevents-sleep",
     "usb-disconnect-clears-after-1500ms", "battery-idle-sleeps-near-60s",

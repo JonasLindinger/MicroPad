@@ -114,7 +114,7 @@ During a display refresh (busy), hold a key and confirm the input state change i
 
 | # | Criterion | Observed result | Pass/Fail |
 |--:|---:|---|---:|
-| P1 | First boot with no saved settings shows AP `MicroPad-Setup` with a 16-character random password on the panel | *record* | [ ] |
+| P1 | First boot with no saved settings shows AP `MicroPad-Setup` with a 16-character password on the panel; the password persists in NVS and the same password appears on portal re-entry | *record* | [ ] |
 | P2 | Matrix/encoder remain responsive while the portal is open | *record* | [ ] |
 | P3 | Back/cancel exits the portal leaving NVS/settings unchanged (no save, no reconnect to saved network) | *record* | [ ] |
 | P4 | Valid save stores Wi-Fi/MQTT credentials, restarts the AP, and reconnects to the station network + broker | *record* | [ ] |
