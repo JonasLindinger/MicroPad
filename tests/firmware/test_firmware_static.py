@@ -743,13 +743,25 @@ class FirmwareDisplayContractTest(FirmwareStaticContractTest):
         self.assertIn("firstPage()", body)
         self.assertIn("nextPage()", body)
 
+    def test_panel_hibernates_after_successful_refresh(self):
+        # A completed refresh puts the SSD1680 into deep sleep so the bistable
+        # image keeps its charge (black pixels stay black instead of slowly
+        # turning grey). hibernate() must follow the successful refresh and be
+        # skipped on the recovery path, which re-inits the panel itself.
+        body = self.function_body(self.ino(), "void drawSnapshot(")
+        self.assertIn("if (panelReady) display.hibernate();", body)
+        self.assertLess(body.index("refreshPolicy.completeRefresh(panelReady)"),
+                        body.index("display.hibernate()"))
+        self.assertLess(body.index("display.hibernate()"),
+                        body.index("if (!panelReady) recoverDisplay();"))
+
     # --- Step 2: refresh policy ---
 
     def test_forced_full_reasons_reach_full(self):
         # Boot, portal enter/exit, BUSY recovery, and the partial limit all
         # reach a forced full refresh (behavior proven in the host binary).
         self.assertIn("refreshMustBeFull(", self.core_header())
-        self.assertIn("constexpr uint8_t MAX_PARTIAL_REFRESHES = 0;",
+        self.assertIn("constexpr uint8_t MAX_PARTIAL_REFRESHES = 10;",
                       self.core_header())
         body = self.function_body(self.ino(), "void requestDraw(")
         self.assertIn("micropad::refreshMustBeFull(", body)
@@ -760,7 +772,7 @@ class FirmwareDisplayContractTest(FirmwareStaticContractTest):
         # and increments only after a successful partial refresh.
         core = self.core_header()
         self.assertIn("constexpr uint32_t MIN_REFRESH_SPACING_MS = 100;", core)
-        self.assertIn("constexpr uint8_t MAX_PARTIAL_REFRESHES = 0;", core)
+        self.assertIn("constexpr uint8_t MAX_PARTIAL_REFRESHES = 10;", core)
         self.assertIn("class RefreshPolicy", core)
         self.assertIn("remainingSpacingMs(", core)
         self.assertIn("beginRefresh(", core)

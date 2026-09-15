@@ -1947,6 +1947,12 @@ void drawSnapshot(const micropad::RenderSnapshot &snap) {
   } while (display.nextPage());
   const bool panelReady = waitForPanelReady();
   refreshPolicy.completeRefresh(panelReady);
+  // Put the SSD1680 into deep sleep after a successful refresh: the panel
+  // stays bistable (black pixels keep their charge) and the driver no longer
+  // bleeds the display over time. hibernate() also wakes cleanly on the next
+  // firstPage() call, so no re-init is needed. Only skipped when the refresh
+  // failed and recoverDisplay() is about to re-init the panel anyway.
+  if (panelReady) display.hibernate();
   if (!panelReady) recoverDisplay();
 }
 

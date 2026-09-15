@@ -59,10 +59,12 @@ constexpr uint32_t USB_STABLE_MS = 1500;
 constexpr uint32_t SLEEP_GATE_SAMPLE_MS = 250;
 constexpr size_t MQTT_BUFFER_BYTES = 16384;
 constexpr size_t EVENT_BUFFER_BYTES = 512;
-// Periodic full-panel updates are disabled until hardware observation shows
-// ghosting: MAX_PARTIAL_REFRESHES = 0 plus the > 0 guard means the partial
-// limit never forces a visible full-refresh flash.
-constexpr uint8_t MAX_PARTIAL_REFRESHES = 0;
+// Periodic full-panel updates: a full refresh clears residual panel charge
+// that makes black pixels slowly drift toward grey after many partial
+// updates (hardware-observed ghosting on this panel). After
+// MAX_PARTIAL_REFRESHES partial refreshes the next refresh is forced full;
+// the visible flash is the accepted trade for staying black.
+constexpr uint8_t MAX_PARTIAL_REFRESHES = 10;
 constexpr uint32_t MIN_REFRESH_SPACING_MS = 100;
 // Loop-task task-WDT deadline (v6-proven 20 s). The default ESP-IDF deadline
 // is 5 s with panic; the setup portal's WebServer can block the loop for its

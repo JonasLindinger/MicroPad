@@ -1512,33 +1512,36 @@ void testRefreshPolicyModeAndCount() {
   assert(policy.beginRefresh(0, refreshMustBeFull(DrawReason::Boot)) ==
          RefreshMode::Full);
   assert(policy.beginRefresh(1, false) == RefreshMode::Partial);
-  // The partial counter never climbs while the limit is disabled (== 0), so
-  // a successful partial refresh leaves it at zero.
+  // A successful partial refresh increments the counter (bounded by the
+  // limit); a full refresh resets it again.
   policy.completeRefresh(true);
-  assert(policy.partialCount() == 0);
+  assert(policy.partialCount() == 1);
   assert(policy.beginRefresh(2, false) == RefreshMode::Partial);
   policy.completeRefresh(true);
-  assert(policy.partialCount() == 0);
+  assert(policy.partialCount() == 2);
 
-  // A BUSY failure never increments and forces the next refresh full.
+  // A BUSY failure does not increment (the counter keeps its value) and
+  // forces the next refresh full.
   assert(policy.beginRefresh(3, false) == RefreshMode::Partial);
   policy.completeRefresh(false);
-  assert(policy.partialCount() == 0);
+  assert(policy.partialCount() == 2);  // unchanged by the failed refresh
   assert(policy.recoveryPending());
   assert(policy.beginRefresh(4, false) == RefreshMode::Full);
   policy.completeRefresh(true);
   assert(policy.partialCount() == 0);  // full refresh resets the counter
   assert(!policy.recoveryPending());
 
-  // Partial-limit refresh is disabled (MAX_PARTIAL_REFRESHES == 0): repeated
-  // successful partials never force a visible full-panel flash; the counter
-  // stays at zero and every ordinary refresh remains partial.
-  for (uint8_t i = 0; i < 50; ++i) {
+  // Partial-limit refresh: after MAX_PARTIAL_REFRESHES successful partials
+  // the next refresh is forced full (anti-ghosting clear). The counter stays
+  // bounded and only successful partials climb it.
+  for (uint8_t i = 0; i < micropad::MAX_PARTIAL_REFRESHES; ++i) {
     assert(policy.beginRefresh(100 + i, false) == RefreshMode::Partial);
     policy.completeRefresh(true);
   }
-  assert(policy.partialCount() == 0);
-  assert(policy.beginRefresh(200, false) == RefreshMode::Partial);
+  assert(policy.partialCount() == MAX_PARTIAL_REFRESHES);
+  assert(policy.beginRefresh(200, false) == RefreshMode::Full);
+  policy.completeRefresh(true);
+  assert(policy.partialCount() == 0);  // full refresh resets the counter
 }
 
 void testRefreshPolicySpacingWrapSafe() {
@@ -2186,17 +2189,17 @@ void testEntityBindingSemantics() {
   assert(e.targetPage[0] == '\0');
 }
 
-// P1.3: the 100 ms spacing is applied to every normal partial refresh even
-// when MAX_PARTIAL_REFRESHES == 0 (which only disables periodic forced fulls),
-// and wrap-around millis remain safe.
+// P1.3: the 100 ms spacing is applied to every normal partial refresh
+// (the partial-limit counter only governs the periodic forced full), and
+// wrap-around millis remain safe.
 void testRefreshSpacingPolicy() {
-  static_assert(MAX_PARTIAL_REFRESHES == 0);
+  static_assert(MAX_PARTIAL_REFRESHES > 0);
   RefreshPolicy policy;
 
   // First refresh is immediate.
   assert(policy.spacingElapsed(1000));
   RefreshMode first = policy.beginRefresh(1000, /*snapshotForceFull=*/false);
-  assert(first == RefreshMode::Partial);  // zero limit never forces periodic fulls
+  assert(first == RefreshMode::Partial);  // counter below the limit
 
   // 50 ms later the spacing still applies.
   assert(!policy.spacingElapsed(1050));
@@ -2216,18 +2219,20 @@ void testRefreshSpacingPolicy() {
   const uint32_t atBoundary = static_cast<uint32_t>(0x00000054U);  // +100 ms
   assert(policy.spacingElapsed(atBoundary));
 
-  // Many successful partials never force a full refresh when the limit is 0.
-  for (uint8_t i = 0; i < 200; ++i) {
+  // The partial counter saturates at the limit: once MAX_PARTIAL_REFRESHES
+  // successful partials have run, every following ordinary refresh is forced
+  // full (anti-ghosting clear) until a full refresh resets the counter.
+  for (uint8_t i = 0; i < MAX_PARTIAL_REFRESHES; ++i) {
+    assert(policy.beginRefresh(2000 + i, false) == RefreshMode::Partial);
     policy.completeRefresh(true);
-    RefreshMode mode = policy.beginRefresh(2000 + i, false);
-    assert(mode == RefreshMode::Partial);
   }
+  assert(policy.beginRefresh(2100, false) == RefreshMode::Full);
   // A demanded snapshot full is still honoured, and it resets the counter.
   RefreshMode forced = policy.beginRefresh(5000, true);
   assert(forced == RefreshMode::Full);
   policy.completeRefresh(true);
   policy.beginRefresh(5100, false);
-  assert(policy.partialCount() == 0 || policy.partialCount() <= 200);
+  assert(policy.partialCount() <= MAX_PARTIAL_REFRESHES);
 }
 
 
