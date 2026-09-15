@@ -1566,23 +1566,9 @@ void buildSnapshot(micropad::RenderSnapshot &out) {
   }
   const micropad::Page *page = pad.currentPage();
   if (page == nullptr) return;
-  safeCopy(out.title, page->title);
-  out.totalItems = page->itemCount;
-  out.firstVisible = pad.state.firstVisible;
-  const uint8_t visible = static_cast<uint8_t>(micropad::VISIBLE_ROWS);
-  for (uint8_t i = 0; i < visible; ++i) {
-    const uint8_t itemIndex = static_cast<uint8_t>(pad.state.firstVisible + i);
-    if (itemIndex >= page->itemCount) break;
-    const micropad::Item &item = page->items[itemIndex];
-    micropad::RenderRow &row = out.rows[i];
-    safeCopy(row.name, item.name);
-    safeCopy(row.state, item.state);
-    safeCopy(row.unit, item.unit);
-    row.value = item.value;
-    row.selected = (itemIndex == pad.state.selected);
-    row.editing = row.selected && pad.state.editing;
-    ++out.rowCount;
-  }
+  // Row window, title and flags come from the core so the host simulator renders
+  // the same thing the panel does.
+  micropad::fillPageSnapshot(*page, pad.state, out);
 }
 
 // Pinned to Core 0 (xTaskCreatePinnedToCore(..., 0)). Blocks on the task

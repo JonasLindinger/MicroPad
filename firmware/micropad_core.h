@@ -592,6 +592,14 @@ void formatRowValue(char (&dst)[RENDER_TEXT_CAP], const RenderRow &row);
 // four fixed item rows with selection, and the conditional scrollbar.
 void layoutNormalUi(const RenderSnapshot &snap, RenderModel &model);
 
+// Fill the page-derived part of a snapshot: title, item count, the visible row
+// window (name/state/unit/value) and the selection/edit flags, using the same
+// safeCopy clipping the payload parser uses. The sketch adds the fields only it
+// knows (generation, portal flag and data, network state, USB host); the host
+// simulator calls this directly, so "what the panel shows for this page" has one
+// implementation instead of a second one mirrored in test code.
+void fillPageSnapshot(const Page &page, const AppState &state, RenderSnapshot &out);
+
 // Portal view: title strip plus SSID / password / address rows.
 void layoutPortalUi(const RenderSnapshot &snap, RenderModel &model);
 

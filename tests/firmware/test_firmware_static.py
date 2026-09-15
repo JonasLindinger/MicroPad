@@ -635,19 +635,25 @@ class FirmwareSnapshotContractTest(FirmwareStaticContractTest):
         self.assertNotIn("while (", body)
 
     def test_build_snapshot_side_effects_and_immutability(self):
-        # The snapshot carries copied strings/scalars only: the builder copies
-        # the title and every row field out of the catalog, never storing
-        # pointers into it (publication then never mutates the bytes).
+        # The snapshot carries copied strings/scalars only, and the page-derived
+        # part is built by the core (fillPageSnapshot), so the panel and the host
+        # preview cannot disagree about the row window.
         body = self.function_body(
             self.ino(), "void buildSnapshot(micropad::RenderSnapshot &out)")
         self.assertLess(body.index("out.generation ="),
                         body.index("safeCopy(out.title,"))
+        self.assertIn("micropad::fillPageSnapshot(*page, pad.state, out)", body)
         self.assertNotIn("&out.rows", body)
-        self.assertIn("&row = out.rows[i]", body)
+
+        core = self.source("firmware/micropad_core.cpp")
+        self.assertIn("void fillPageSnapshot(const Page &page, const AppState &state,",
+                      core)
+        self.assertIn("  safeCopy(out.title, page.title);", core)
+        self.assertIn("  for (uint8_t i = 0; i < static_cast<uint8_t>(VISIBLE_ROWS); ++i) {", core)
         for field in ("name", "state", "unit"):
-            self.assertIn(f"safeCopy(row.{field}, item.{field})", body)
+            self.assertIn(f"    safeCopy(row.{field}, item.{field});", core)
         for field in ("value", "selected", "editing"):
-            self.assertIn(f"row.{field} =", body)
+            self.assertIn(f"    row.{field} =", core)
 
 
 class FirmwareDisplayContractTest(FirmwareStaticContractTest):

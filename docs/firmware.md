@@ -171,6 +171,30 @@ checks) see `docs/hardware-acceptance.md`.
   what lets `/api/meta` report the pad's real field caps and warn before a value
   would be clipped on the panel.
 
+## Host simulator (panel preview)
+
+`tools/micropad_sim.cpp` compiles `micropad_core.cpp` into a host binary that
+answers "what does the panel render for this page, and what does this key do?":
+
+```bash
+./scripts/build-simulator.sh                 # g++ only, no Arduino toolchain
+printf 'page home Home\nitem Desk light\t on\t\t0\tlight\tlight.desk\t\nkey r0c3\tenter\tlight.desk\t\npress r0c3\n' \
+  | ./build/host/micropad_sim
+```
+
+It prints one JSON object: the row window, the prim list from `layoutNormalUi` /
+`layoutPortalUi`, `would_reject` plus `findings` for anything the pad would clip or
+refuse, and — when a `press` directive is given — what the binding and the item
+under the cursor resolve to. The configurator's preview and budget panel are
+driven by it (`docs/configurator.md`), and `tests/test_simulator.py` pins the
+output, including a check that the recorded browser fixture still matches the
+current core.
+
+The tool contains no geometry or policy of its own: it reads a small directive
+format and calls the core. `fillPageSnapshot()` in the core is the shared
+snapshot builder used by both the sketch and the simulator, so the row window,
+title and selection flags cannot differ between the panel and the preview.
+
 ## Not safety-critical
 
 This firmware drives an e-paper controller and sends MQTT events; it is a

@@ -14,10 +14,36 @@ generates or uploads the automation. It talks to the repo over these endpoints:
 | `POST /api/validate` | validate without saving |
 | `GET /api/meta` | contract version, key IDs, actions, item types **and their descriptors** (`item_type_meta`), payload ceilings (`limits`), device caps (`caps`), templates, default keymap |
 | `GET /api/generate` | generated automation YAML + retained MQTT payloads |
+| `POST /api/lint` | payload budgets (per page + catalog) and "what the device changes" findings for a candidate config |
+| `POST /api/simulate` | the panel's prim model for one page (or the setup portal), rendered by the firmware core |
 | `POST /api/ha/test` | test Home Assistant auth |
 | `GET /api/ha/entities` | discover and cache Home Assistant entities |
 | `POST /api/upload/api` | deploy via Home Assistant REST API |
 | `POST /api/upload/ssh` | deploy via SFTP/SSH (see `docs/home-assistant.md`) |
+
+## Panel preview and budgets
+
+The editor shows the panel as the device will draw it. The picture is not redrawn
+in JavaScript: `POST /api/simulate` runs `tools/micropad_sim.cpp`, which compiles
+the shipped core (`firmware/micropad_core.cpp`) and answers with the core's prim
+model for the page (296x128, FreeMono metrics, title/value clipping, selection
+cursor, scrollbar, status icons) or for the setup portal view. Build the tool once
+with `./scripts/build-simulator.sh`; when it is missing the endpoint answers 503
+`simulator_unavailable` and the UI says so instead of showing an invented panel.
+
+`POST /api/lint` reports the byte budgets and the changes the device would make:
+
+- per-page payload bytes against 8192, the catalog against 16000 and against the
+  pad's 16384-byte MQTT buffer (a catalog over the buffer is dropped by the MQTT
+  client without an error), pages against 24 and items against 20;
+- `field_clipped` warnings for display fields (title/name/state/unit) that exceed
+  the firmware's 32-character budgets, and `identifier_too_long` errors for
+  `page_id`/`entity`/`target_page`, which make the pad discard the whole payload.
+
+The limits and caps come from `contracts/mqtt-contract.json` — the same values the
+pad advertises on its retained `micropad/device` payload — and the byte sizes come
+from the real generator, so the meters cannot drift from what a deployment
+publishes. `docs/firmware.md` describes the firmware side.
 
 Configuration is stored in `config.json` (git-ignored local) or the path in
 `MICROPAD_CONFIG_PATH`. Secrets (`ha_token`, `ssh_key`) are redacted from every

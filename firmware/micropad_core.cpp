@@ -959,6 +959,27 @@ void formatRowValue(char (&dst)[RENDER_TEXT_CAP], const RenderRow &row) {
   clipText(dst, tagged, valueChars);
 }
 
+void fillPageSnapshot(const Page &page, const AppState &state,
+                      RenderSnapshot &out) {
+  safeCopy(out.title, page.title);
+  out.totalItems = page.itemCount;
+  out.firstVisible = state.firstVisible;
+  out.rowCount = 0;
+  for (uint8_t i = 0; i < static_cast<uint8_t>(VISIBLE_ROWS); ++i) {
+    const uint8_t itemIndex = static_cast<uint8_t>(state.firstVisible + i);
+    if (itemIndex >= page.itemCount) break;
+    const Item &item = page.items[itemIndex];
+    RenderRow &row = out.rows[i];
+    safeCopy(row.name, item.name);
+    safeCopy(row.state, item.state);
+    safeCopy(row.unit, item.unit);
+    row.value = item.value;
+    row.selected = (itemIndex == state.selected);
+    row.editing = row.selected && state.editing;
+    ++out.rowCount;
+  }
+}
+
 void layoutNormalUi(const RenderSnapshot &snap, RenderModel &model) {
   // Clipped title text never reaches the power slot. No horizontal separator:
   // on the compact panel it visually cuts through adjacent text.

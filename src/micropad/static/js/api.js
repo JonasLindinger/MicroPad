@@ -61,3 +61,7 @@ export const loadEntities = () => request('/api/ha/entities');
 export const validateConfig = config => request('/api/validate', {method:'POST', body:JSON.stringify(config)});
 export const generate = () => request('/api/generate');
 export const upload = mode => request(`/api/upload/${mode}`, {method:'POST', body:'{}'});
+// Preview and lint: the panel model comes from the firmware core, the budgets and
+// findings from the contract caps plus the real generator.
+export const analyzeConfig = config => request('/api/lint', {method:'POST', body:JSON.stringify(config)});
+export const simulate = payload => request('/api/simulate', {method:'POST', body:JSON.stringify(payload)});

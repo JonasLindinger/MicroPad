@@ -13,6 +13,7 @@ from flask import Flask, Response, jsonify, render_template, request
 from pydantic import ValidationError
 from werkzeug.exceptions import BadRequest, MethodNotAllowed, NotFound
 
+from micropad import simulator
 from micropad.config_store import ConfigStore
 from micropad.constants import AUTOMATION_ID, CAPS, FIELD_CAPS, ITEM_TYPES, LIMITS
 from micropad.generator import (
@@ -28,6 +29,7 @@ from micropad.ha_deploy import (
     HomeAssistantDeployer,
     MqttVerifier,
 )
+from micropad.lint import analyze
 from micropad.models import (
     AppConfig,
     Settings,
@@ -298,6 +300,65 @@ def create_app(
         config = store.load()
         page_id = request.args.get("page_id", "home")
         return jsonify(generate_page_payload(config, str(page_id)))
+
+    @app.post("/api/lint")
+    def lint_config() -> Response:
+        """Payload budgets and "what the device will change" for a candidate config.
+
+        Accepts the same body as ``/api/validate`` (a full configuration document)
+        so the editor can analyse an unsaved draft. Findings come from the contract
+        caps; byte budgets come from the real generator, so a valid config reports
+        the exact sizes the deployment will publish.
+        """
+        raw = request.get_json(force=True)
+        if not isinstance(raw, dict):
+            raise BadRequest("request body must be a JSON object")
+        return jsonify(analyze(raw).as_dict())
+
+    @app.post("/api/simulate")
+    def simulate_page() -> Response | tuple[Response, int]:
+        """Render one page (or the portal view) with the firmware core.
+
+        Body: ``{"page": {...}, "state": {...}, "key_id": "r0c3", "portal": {...}}``.
+        The page is accepted in draft form — the preview exists to show what a
+        half-finished page looks like on the panel — while identifiers are passed
+        through unclipped so the answer reports the pad's own rejection.
+        """
+        raw = request.get_json(force=True)
+        if not isinstance(raw, dict):
+            raise BadRequest("request body must be a JSON object")
+        page_raw = raw.get("page", {})
+        page = page_raw if isinstance(page_raw, dict) else {}
+        state_raw = raw.get("state", {})
+        state = state_raw if isinstance(state_raw, dict) else {}
+        portal_raw = raw.get("portal")
+        portal = portal_raw if isinstance(portal_raw, dict) else None
+        key_id = raw.get("key_id")
+        directives = simulator.page_directives(
+            page,
+            selected=int(state.get("selected", 0)),
+            first_visible=int(state.get("first_visible", 0)),
+            editing=bool(state.get("editing", False)),
+            network=int(raw.get("network", 0)),
+            usb_host=bool(raw.get("usb_host", False)),
+            portal=portal,
+            keys=(raw.get("keys") or ()),
+            press=str(key_id) if key_id else None,
+        )
+        try:
+            result = simulator.simulate(directives)
+        except simulator.SimulatorUnavailable as error:
+            # Fail loudly instead of inventing a preview: the caller must know the
+            # panel model is unavailable rather than trust a fake one.
+            return _error("simulator_unavailable", str(error), 503)
+        except simulator.SimulatorError as error:
+            # The simulator refused the input itself (unknown item type, too many
+            # items, malformed directive): that is a client-side problem, and the
+            # message names the offending field.
+            return _error("invalid_simulation_input", str(error), 400)
+        # The tool reports the firmware build it was compiled from, so the UI
+        # can say which core produced the preview.
+        return jsonify(result)
 
     @app.get("/api/download/api")
     def download_api() -> Response:

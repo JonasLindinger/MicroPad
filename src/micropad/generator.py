@@ -493,6 +493,15 @@ def automation_yaml(automation: dict[str, object]) -> str:
     return f"# {AI_NOTICE}\n" + yaml.safe_dump(automation, sort_keys=False, allow_unicode=True)
 
 
+def page_payload_bytes(config: AppConfig, page_id: str) -> int:
+    """Serialized UTF-8 size of the retained payload for one page.
+
+    Used by the configurator's budget meters: the number is produced by the same
+    serializer that publishes the payload, so the meter cannot drift from reality.
+    """
+    return len(_compact(generate_page_payload(config, page_id)).encode("utf-8"))
+
+
 def generate_bundle(
     config: AppConfig, states: list[EntitySummary] | None = None
 ) -> GeneratedBundle:

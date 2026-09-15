@@ -74,6 +74,10 @@ def app_url(captured_requests: list[dict], repo_root):
     """Serve the frontend shell and fake API, yielding its base URL."""
     config_payload = _load_fixture(repo_root, "frontend_config.json")
     meta_payload = _load_fixture(repo_root, "frontend_meta.json")
+    # Recorded output of the real firmware core (tools/micropad_sim.cpp run over
+    # the config fixture's first page), so the preview tests draw a genuine prim
+    # model instead of a hand-written one.
+    panel_payload = _load_fixture(repo_root, "frontend_panel.json")
 
     package_root = repo_root / "src" / "micropad"
     app = Flask(
@@ -115,6 +119,34 @@ def app_url(captured_requests: list[dict], repo_root):
     @app.get("/api/generate")
     def generate() -> Response:
         return jsonify({"yaml": "alias: MicroPad Controller\n", "filename": "micropad_controller.yaml"})
+
+    @app.post("/api/lint")
+    def lint() -> Response:
+        record()
+        config = request.get_json(silent=True) or {}
+        pages = config.get("pages") or []
+        page_bytes = {
+            page.get("page_id", f"#{index}"): 500 + 40 * index for index, page in enumerate(pages)
+        }
+        return jsonify(
+            {
+                "ok": True,
+                "findings": [],
+                "page_bytes": page_bytes,
+                "catalog_bytes": 1300,
+                "keymap_bytes": 700,
+                "limits": {"page_bytes": 8192, "catalog_bytes": 16000, "keymap_bytes": 16380,
+                           "mqtt_buffer_bytes": 16384},
+                "caps": {"field_caps": meta_payload["caps"]["field_caps"],
+                         "max_pages": meta_payload["caps"]["max_pages"],
+                         "max_items_per_page": meta_payload["caps"]["max_items_per_page"]},
+            }
+        )
+
+    @app.post("/api/simulate")
+    def simulate() -> Response:
+        record()
+        return jsonify(panel_payload["response"])
 
     @app.get("/api/load-current-page")
     def load_current_page() -> Response:

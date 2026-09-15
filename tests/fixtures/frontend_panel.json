@@ -1,0 +1,87 @@
+{
+  "_ai_assisted_notice": "AI-assisted development — firmware, HA automation, config generator and docs were created with AI (LLM) help, reviewed and tested by the author. Provided as-is, without warranty; verify on your own hardware, don't use for safety-critical applications.",
+  "page_id": "home",
+  "response": {
+    "ok": true,
+    "firmware": "1.1.0",
+    "mode": "normal",
+    "title": "Home",
+    "total_items": 1,
+    "first_visible": 0,
+    "row_count": 1,
+    "rows": [
+      {
+        "name": "Living room",
+        "state": "",
+        "unit": "",
+        "value": 0,
+        "selected": true,
+        "editing": false
+      }
+    ],
+    "prims": [
+      {
+        "kind": "text",
+        "x0": 4,
+        "y0": 0,
+        "x1": 0,
+        "y1": 0,
+        "w": 0,
+        "h": 24,
+        "radius": 0,
+        "color": 0,
+        "align": "left",
+        "text": "Home"
+      },
+      {
+        "kind": "filltriangle",
+        "x0": 2,
+        "y0": 33,
+        "x1": 8,
+        "y1": 37,
+        "w": 2,
+        "h": 41,
+        "radius": 0,
+        "color": 0,
+        "align": "left",
+        "text": ""
+      },
+      {
+        "kind": "text",
+        "x0": 10,
+        "y0": 24,
+        "x1": 0,
+        "y1": 0,
+        "w": 0,
+        "h": 26,
+        "radius": 0,
+        "color": 0,
+        "align": "left",
+        "text": "Living room"
+      },
+      {
+        "kind": "text",
+        "x0": 288,
+        "y0": 24,
+        "x1": 0,
+        "y1": 0,
+        "w": 0,
+        "h": 26,
+        "radius": 0,
+        "color": 0,
+        "align": "right",
+        "text": ""
+      }
+    ],
+    "prims_truncated": false,
+    "would_reject": false,
+    "findings": [],
+    "press": {
+      "key": "r0c3",
+      "binding_action": "",
+      "item_action": "navigate",
+      "entity": "",
+      "target_page": ""
+    }
+  }
+}

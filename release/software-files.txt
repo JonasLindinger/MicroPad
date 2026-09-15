@@ -60,6 +60,7 @@ requirements.txt
 scripts/apply_live_ha_preview.py
 scripts/audit_notices.py
 scripts/audit_public_release.py
+scripts/build-simulator.sh
 scripts/build_approval_bundle.py
 scripts/ci.sh
 scripts/compile-firmware.sh
@@ -81,11 +82,14 @@ src/micropad/generator.py
 src/micropad/ha_client.py
 src/micropad/ha_deploy.py
 src/micropad/keymaps.py
+src/micropad/lint.py
 src/micropad/models.py
 src/micropad/page_graph.py
 src/micropad/security.py
+src/micropad/simulator.py
 src/micropad/ssh_upload.py
 src/micropad/static/css/app.css
+src/micropad/static/js/analysis-panel.js
 src/micropad/static/js/api.js
 src/micropad/static/js/app.js
 src/micropad/static/js/contracts.js
@@ -96,6 +100,7 @@ src/micropad/static/js/keymap-model.js
 src/micropad/static/js/operations.js
 src/micropad/static/js/page-model.js
 src/micropad/static/js/page-tree.js
+src/micropad/static/js/panel-preview.js
 src/micropad/static/js/store.js
 src/micropad/static/js/template-picker.js
 src/micropad/templates/index.html
@@ -109,6 +114,7 @@ tests/browser/test_item_drafts.py
 tests/browser/test_items_and_entities.py
 tests/browser/test_keymap.py
 tests/browser/test_operations_and_layout.py
+tests/browser/test_preview_and_budgets.py
 tests/conftest.py
 tests/cpp/test_protocol_contract.cpp
 tests/deployment/__init__.py
@@ -123,6 +129,7 @@ tests/firmware/test_core.cpp
 tests/firmware/test_firmware_static.py
 tests/fixtures/frontend_config.json
 tests/fixtures/frontend_meta.json
+tests/fixtures/frontend_panel.json
 tests/integration/test_fake_ha_roundtrip.py
 tests/integration/test_mqtt_contract.py
 tests/release/conftest.py
@@ -146,5 +153,7 @@ tests/test_ha_deploy.py
 tests/test_keymaps.py
 tests/test_models.py
 tests/test_security.py
+tests/test_simulator.py
 tests/test_ssh_upload.py
+tools/micropad_sim.cpp
 uv.lock
