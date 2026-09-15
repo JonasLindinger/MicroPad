@@ -22,8 +22,9 @@ constexpr const char *kActionNames[ACTION_COUNT] = {
     "confirm"};
 
 constexpr const char *kItemTypeNames[ITEM_TYPE_COUNT] = {
-    "category", "light", "switch", "script", "button", "scene",
-    "sensor",   "media_player", "number", "settings", "back"};
+    "category", "light",   "switch", "script",       "button",
+    "scene",    "sensor",  "media_player", "number", "settings",
+    "back",     "cover",   "fan",    "input_boolean", "lock"};
 
 // Generic scalar lookup helpers over a constexpr name table.
 template <size_t N>
@@ -77,6 +78,14 @@ const ItemTypeDescriptor ITEM_TYPE_DESCRIPTORS[ITEM_TYPE_COUNT] = {
     {ItemType::Number, Action::Edit, Action::None, true},
     {ItemType::Settings, Action::Settings, Action::None, false},
     {ItemType::Back, Action::Back, Action::None, false},
+    // Cover: HA has toggle, open_cover and close_cover but no turn_off, so the hold
+    // has no second action (a tap toggles). Lock: HA has lock/unlock/open and no
+    // toggle, so "on" locks and the hold unlocks. Both verified against the
+    // integration service lists, not guessed.
+    {ItemType::Cover, Action::Toggle, Action::None, false},
+    {ItemType::Fan, Action::Toggle, Action::Off, false},
+    {ItemType::InputBoolean, Action::Toggle, Action::Off, false},
+    {ItemType::Lock, Action::On, Action::Off, false},
 };
 
 const ItemTypeDescriptor &itemTypeDescriptor(ItemType type) {

@@ -56,6 +56,10 @@ ITEM_TYPES = [
     "number",
     "settings",
     "back",
+    "cover",
+    "fan",
+    "input_boolean",
+    "lock",
 ]
 EXPECTED_TOPICS = {
     "event": {"name": "micropad/event", "retain": False},

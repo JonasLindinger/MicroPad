@@ -149,7 +149,7 @@ enum class DrawReason : uint8_t {
 };
 enum class ItemType : uint8_t {
   Category, Light, Switch, Script, Button, Scene, Sensor,
-  MediaPlayer, Number, Settings, Back
+  MediaPlayer, Number, Settings, Back, Cover, Fan, InputBoolean, Lock
 };
 // LongPress is emitted once per hold, LONG_PRESS_MS after the debounced press.
 enum class Edge : uint8_t { None, Pressed, Released, LongPress };
@@ -159,7 +159,9 @@ enum class PowerEdge : uint8_t { None, Connected, Disconnected };
 // new action/item type cannot leave a table short or a loop bound stale; the
 // static tests additionally assert these track contracts/mqtt-contract.json.
 constexpr size_t ACTION_COUNT = static_cast<size_t>(Action::Confirm) + 1;
-constexpr size_t ITEM_TYPE_COUNT = static_cast<size_t>(ItemType::Back) + 1;
+// Off the *last* enumerator: appending an item type must update this line, and
+// tests/integration/test_mqtt_contract.py fails if it stops matching the contract.
+constexpr size_t ITEM_TYPE_COUNT = static_cast<size_t>(ItemType::Lock) + 1;
 
 // One row per item type: what a press does by default and whether the type
 // accepts the edit/confirm gesture. This is the single place in the firmware

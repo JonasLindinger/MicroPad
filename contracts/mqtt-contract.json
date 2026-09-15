@@ -35,7 +35,7 @@
     {"id": "get_all_pages", "label": "Refresh all pages", "group": "System", "argument": "none"}
   ],
   "key_ids": ["r0c0", "r0c1", "r0c2", "r0c3", "r1c0", "r1c1", "r1c2", "r1c3", "r2c0", "r2c1", "r2c2", "r2c3", "enc_up", "enc_down"],
-  "item_types": ["category", "light", "switch", "script", "button", "scene", "sensor", "media_player", "number", "settings", "back"],
+  "item_types": ["category", "light", "switch", "script", "button", "scene", "sensor", "media_player", "number", "settings", "back", "cover", "fan", "input_boolean", "lock"],
   "item_type_meta": [
     {"id": "category", "label": "Category", "ha_domains": [], "default_action": "navigate", "alternate_action": "none", "editable": false, "has_value": false, "needs_target_page": true},
     {"id": "light", "label": "Light", "ha_domains": ["light"], "default_action": "toggle", "alternate_action": "off", "editable": false, "has_value": true, "needs_target_page": false},
@@ -47,7 +47,11 @@
     {"id": "media_player", "label": "Media player", "ha_domains": ["media_player"], "default_action": "none", "alternate_action": "none", "editable": false, "has_value": true, "needs_target_page": false},
     {"id": "number", "label": "Number", "ha_domains": ["number"], "default_action": "edit", "alternate_action": "none", "editable": true, "has_value": true, "needs_target_page": false},
     {"id": "settings", "label": "Settings", "ha_domains": [], "default_action": "settings", "alternate_action": "none", "editable": false, "has_value": false, "needs_target_page": false},
-    {"id": "back", "label": "Back", "ha_domains": [], "default_action": "back", "alternate_action": "none", "editable": false, "has_value": false, "needs_target_page": false}
+    {"id": "back", "label": "Back", "ha_domains": [], "default_action": "back", "alternate_action": "none", "editable": false, "has_value": false, "needs_target_page": false},
+    {"id": "cover", "label": "Cover", "ha_domains": ["cover"], "default_action": "toggle", "alternate_action": "none", "editable": false, "has_value": true, "needs_target_page": false},
+    {"id": "fan", "label": "Fan", "ha_domains": ["fan"], "default_action": "toggle", "alternate_action": "off", "editable": false, "has_value": true, "needs_target_page": false},
+    {"id": "input_boolean", "label": "Helper switch", "ha_domains": ["input_boolean"], "default_action": "toggle", "alternate_action": "off", "editable": false, "has_value": true, "needs_target_page": false},
+    {"id": "lock", "label": "Lock", "ha_domains": ["lock"], "default_action": "on", "alternate_action": "off", "editable": false, "has_value": true, "needs_target_page": false}
   ],
   "limits": {
     "page_bytes": 8192,

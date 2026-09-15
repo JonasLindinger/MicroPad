@@ -87,6 +87,15 @@ def find_mqtt_branch(
         ),
         ("number", "number.level", "edit", "number.set_value"),
         ("number", "number.level", "confirm", "number.set_value"),
+        # New item types (C4). The lock rows matter most: HA's lock integration has
+        # no toggle service, so locking is "on" and unlocking is "off".
+        ("cover", "cover.blind", "toggle", "cover.toggle"),
+        ("fan", "fan.ceiling", "toggle", "fan.toggle"),
+        ("fan", "fan.ceiling", "off", "fan.turn_off"),
+        ("input_boolean", "input_boolean.guest", "toggle", "input_boolean.toggle"),
+        ("input_boolean", "input_boolean.guest", "off", "input_boolean.turn_off"),
+        ("lock", "lock.front_door", "on", "lock.lock"),
+        ("lock", "lock.front_door", "off", "lock.unlock"),
     ],
 )
 def test_automation_maps_only_supported_domain_actions(

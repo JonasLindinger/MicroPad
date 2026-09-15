@@ -34,7 +34,8 @@ Action = Literal[
 ]
 ItemType = Literal[
     "category", "light", "switch", "script", "button", "scene", "sensor",
-    "media_player", "number", "settings", "back",
+    "media_player", "number", "settings", "back", "cover", "fan",
+    "input_boolean", "lock",
 ]
 ReloadStrategy = Literal["none", "core_restart"]
 

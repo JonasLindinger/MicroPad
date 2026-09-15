@@ -2273,7 +2273,7 @@ void testItemTypeDescriptorTable() {
   // The descriptor table is indexed by ItemType: every enum value needs a row, in
   // order. A missing or reordered row would silently give one item type another
   // type's action, which no other test would catch.
-  assert(ITEM_TYPE_COUNT == 11);
+  assert(ITEM_TYPE_COUNT == 15);
   assert(ACTION_COUNT == 21);
   for (size_t index = 0; index < ITEM_TYPE_COUNT; ++index) {
     assert(static_cast<size_t>(ITEM_TYPE_DESCRIPTORS[index].type) == index);
@@ -2302,6 +2302,22 @@ void testItemTypeDescriptorTable() {
   assert(itemTypeDescriptor(ItemType::MediaPlayer).defaultAction == Action::None);
   assert(itemTypeDescriptor(ItemType::Number).defaultAction == Action::Edit);
   assert(itemTypeDescriptor(ItemType::Number).editable);
+  // The four types added with C4: a tap toggles (or locks), a hold turns off (or
+  // unlocks), and a cover has no second action because HA's cover integration has
+  // no turn_off to map it to.
+  assert(itemTypeDescriptor(ItemType::Cover).defaultAction == Action::Toggle);
+  Item coverItem{};
+  coverItem.type = ItemType::Cover;
+  Item lockItem{};
+  lockItem.type = ItemType::Lock;
+  assert(alternateActionForSelectedItem(coverItem) == Action::None);
+  assert(alternateActionForSelectedItem(lockItem) == Action::Off);
+  assert(itemTypeDescriptor(ItemType::Fan).defaultAction == Action::Toggle);
+  assert(itemTypeDescriptor(ItemType::Fan).alternateAction == Action::Off);
+  assert(itemTypeDescriptor(ItemType::InputBoolean).defaultAction == Action::Toggle);
+  assert(itemTypeDescriptor(ItemType::InputBoolean).alternateAction == Action::Off);
+  assert(itemTypeDescriptor(ItemType::Lock).defaultAction == Action::On);
+  assert(itemTypeDescriptor(ItemType::Lock).alternateAction == Action::Off);
   assert(itemTypeDescriptor(ItemType::Settings).defaultAction == Action::Settings);
   assert(itemTypeDescriptor(ItemType::Back).defaultAction == Action::Back);
 
@@ -2518,7 +2534,7 @@ int main() {
   testLongPressGesture();
   testAllActionsReachDefinedOutcome();
   static_assert(micropad::ACTION_COUNT == 21, "21 supported actions");
-  static_assert(micropad::ITEM_TYPE_COUNT == 11, "11 supported item types");
+  static_assert(micropad::ITEM_TYPE_COUNT == 15, "15 supported item types");
   static_assert(micropad::USB_SAMPLE_MS == 500, "500 ms USB sample interval");
   static_assert(micropad::USB_STABLE_MS == 1500, "1500 ms USB stable window");
   static_assert(sizeof(RenderSnapshot) > 0, "snapshot type is defined");

@@ -139,9 +139,13 @@ a local-trust-network value such as `http://homeassistant.local:8123`.
 A configuration contains up to 24 pages. Each page has an id (a normalized
 lowercase slug), a title, an optional parent (for navigation), up to 20 items,
 and a per-page key-map override. Item types are: `category`, `light`, `switch`,
-`script`, `button`, `scene`, `sensor`, `media_player`, `number`, `settings`, and
-`back`. A `category` item requires a `target_page`; entity-backed item types
-require an entity in the matching domain (`light.foo` for a `light`, etc.).
+`script`, `button`, `scene`, `sensor`, `media_player`, `number`, `cover`, `fan`,
+`input_boolean`, `lock`, `settings`, and `back`. A `category` item requires a
+`target_page`; entity-backed item types require an entity in the matching domain
+(`light.foo` for a `light`, etc.). Tapping a `cover`/`fan`/`input_boolean` toggles it
+and holding turns it off; a `cover` has no hold action (the cover integration has no
+turn_off service); a `lock` locks on tap and unlocks on hold, because the lock
+integration has no toggle service.
 Editable starter templates (Spotify, Discord, Lights, generic media) are offered
 by the pages editor.
 
