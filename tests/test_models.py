@@ -4,6 +4,7 @@ from pydantic import ValidationError
 
 from micropad.constants import KEY_IDS
 from micropad.models import (
+    LEGACY_SETTINGS_KEYS,
     AppConfig,
     Binding,
     Page,
@@ -211,3 +212,28 @@ def test_binding_accepts_valid_free_text_entities() -> None:
 def test_binding_rejects_invalid_free_text_entities(entity: str) -> None:
     with pytest.raises(ValueError, match="entity"):
         Binding(action="toggle", entity=entity)
+
+
+def test_legacy_settings_keys_are_dropped_not_rejected() -> None:
+    """A config file from the legacy generation must still load.
+
+    The pre-clean-room configurator persisted free-form remote shell commands
+    (`ssh_validate_command`, `ssh_reload_command`). The P0.2 hardening removed those
+    fields, and the strict model then rejected the *whole file* with `extra_forbidden` -
+    a config written by the previous build became unreadable for the new one. They are
+    ignored on load (never honoured) so the operator's data stays reachable, while a typo
+    in any other key still fails.
+    """
+    # by_alias so the document notice keeps its `_ai_assisted_notice` spelling, exactly
+    # as the config store writes it.
+    raw = default_config().model_dump(mode="json", by_alias=True)
+    raw["settings"]["ssh_validate_command"] = "sudo -n true"
+    raw["settings"]["ssh_reload_command"] = "sudo -n systemctl restart home-assistant"
+    parsed = parse_config(raw)
+    for key in LEGACY_SETTINGS_KEYS:
+        assert key not in parsed.settings.model_dump()
+    assert parsed.settings.ssh_reload_strategy == "core_restart"
+
+    raw["settings"]["ssh_reload_strategyy"] = "typo"
+    with pytest.raises(ValidationError):
+        parse_config(raw)

@@ -43,6 +43,21 @@ def test_docker_image_includes_runtime_contracts() -> None:
     assert "COPY src/ ./src/" in dockerfile
 
 
+def test_docker_image_builds_the_panel_simulator() -> None:
+    """The image must carry the host simulator, not just the Python app.
+
+    The configurator renders the panel preview and derives its byte budgets from
+    ``build/host/micropad_sim``. An image without it starts fine and then answers 503 on
+    /api/simulate with the in-container path in the message, which reads as a broken
+    preview although the real cause is packaging - so the stage is pinned here.
+    """
+    dockerfile = Path("Dockerfile").read_text(encoding="utf-8")
+
+    assert "tools/micropad_sim.cpp" in dockerfile
+    assert "firmware/micropad_core.cpp" in dockerfile
+    assert "--from=simulator /build/micropad_sim /app/build/host/micropad_sim" in dockerfile
+
+
 def test_gunicorn_config_loads_as_python_safely() -> None:
     namespace: dict[str, object] = {}
     exec(Path("gunicorn.conf.py").read_text(encoding="utf-8"), namespace)  # noqa: S102

@@ -228,6 +228,61 @@ def test_lint_route_reports_budgets_caps_and_findings(client) -> None:
     assert body["findings"][0]["where"] == "pages[0].items[0].name"
 
 
+def test_linting_the_document_api_config_returns_is_not_an_error(client) -> None:
+    """The editor analyses exactly what GET /api/config handed it.
+
+    That document carries the redaction flags (`ha_token_configured`,
+    `ssh_key_configured`) and empty secret fields. Feeding it back through the strict
+    model used to produce `extra_forbidden` - the analysis panel then claimed a valid
+    configuration "cannot be published" and every byte budget read 0.
+    """
+    served = client.get("/api/config").get_json()
+    assert served["settings"]["ha_token_configured"] in {True, False}
+
+    body = client.post("/api/lint", json=served).get_json()
+    assert body["ok"] is True, body["findings"]
+    assert body["catalog_bytes"] > 0
+    assert not [finding for finding in body["findings"] if finding["code"] == "config_invalid"]
+
+
+def test_lint_flags_a_page_no_other_page_links_to(client) -> None:
+    """A page the pad cannot reach is a finding, not a silent dead end.
+
+    The pad builds menus from items, so an unlinked page (a page created from a template
+    without a parent entry, e.g. the reported Spotify page) is stored, published and
+    still unreachable on the device.
+    """
+    from tests.factories import valid_config
+
+    config = json.loads(valid_config().model_dump_json())
+    config["pages"].append(
+        {"page_id": "spotify", "title": "Spotify", "parent": "home", "items": []}
+    )
+    body = client.post("/api/lint", json=config).get_json()
+    unreachable = [f for f in body["findings"] if f["code"] == "page_unreachable"]
+    assert [f["where"] for f in unreachable] == ["pages[spotify]"]
+    assert body["ok"] is True  # a warning: the config still publishes
+
+    # Linking it from home clears the finding.
+    config["pages"][0]["items"].append(
+        {
+            "name": "Spotify",
+            "type": "category",
+            "entity": "",
+            "state": "",
+            "value": 0,
+            "min": 0,
+            "max": 100,
+            "step": 1,
+            "unit": "",
+            "editable": False,
+            "target_page": "spotify",
+        }
+    )
+    body = client.post("/api/lint", json=config).get_json()
+    assert [f for f in body["findings"] if f["code"] == "page_unreachable"] == []
+
+
 def _write_config(tmp_path: Path, mutate=None) -> Path:
     from tests.factories import valid_config
 

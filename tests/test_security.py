@@ -12,7 +12,12 @@ from __future__ import annotations
 import pytest
 
 from micropad.app import create_app
-from micropad.security import admin_secret, bind_loopback, secure_bind
+from micropad.security import (
+    admin_secret,
+    allow_unauthenticated_lan,
+    bind_loopback,
+    secure_bind,
+)
 
 REMOTE = {"REMOTE_ADDR": "192.0.2.10"}
 # The admin secret used throughout these tests (kept in a constant so it is a
@@ -254,3 +259,51 @@ def test_loopback_bind_is_allowed_without_secret(monkeypatch, bind: str) -> None
 def test_non_loopback_bind_is_allowed_with_secret(monkeypatch, bind="0.0.0.0:8080") -> None:
     monkeypatch.setenv("MICROPAD_ADMIN_SECRET", "topsecret")
     assert secure_bind(default_bind=bind) == bind
+
+
+# --- explicit trusted-LAN opt-in (no secret, no login dialog) ------------------
+
+
+def test_open_lan_requires_the_explicit_flag(monkeypatch) -> None:
+    """A missing secret plus a LAN bind keeps failing unless the operator opts in."""
+    monkeypatch.delenv("MICROPAD_ADMIN_SECRET", raising=False)
+    monkeypatch.delenv("MICROPAD_ALLOW_UNAUTHENTICATED_LAN", raising=False)
+    assert allow_unauthenticated_lan() is False
+    with pytest.raises(SystemExit):
+        secure_bind(default_bind="0.0.0.0:8080")
+
+
+@pytest.mark.parametrize("value", ["1", "true", "YES", "on"])
+def test_open_lan_flag_accepts_the_usual_truthy_spellings(monkeypatch, value: str) -> None:
+    monkeypatch.setenv("MICROPAD_ALLOW_UNAUTHENTICATED_LAN", value)
+    assert allow_unauthenticated_lan() is True
+
+
+@pytest.mark.parametrize("value", ["0", "false", "no", "off", ""])
+def test_open_lan_flag_rejects_everything_else(monkeypatch, value: str) -> None:
+    monkeypatch.setenv("MICROPAD_ALLOW_UNAUTHENTICATED_LAN", value)
+    assert allow_unauthenticated_lan() is False
+
+
+def test_open_lan_bind_succeeds_and_warns(monkeypatch, capsys) -> None:
+    monkeypatch.delenv("MICROPAD_ADMIN_SECRET", raising=False)
+    monkeypatch.setenv("MICROPAD_ALLOW_UNAUTHENTICATED_LAN", "1")
+    assert secure_bind(default_bind="0.0.0.0:8080") == "0.0.0.0:8080"
+    warning = capsys.readouterr().err
+    assert "WARNING" in warning and "MICROPAD_ADMIN_SECRET" in warning
+
+
+def test_open_lan_serves_remote_clients_but_still_guards_writes(store, monkeypatch) -> None:
+    """With the flag set a remote read works; a remote write still needs the CSRF header."""
+    monkeypatch.delenv("MICROPAD_ADMIN_SECRET", raising=False)
+    monkeypatch.delenv("MICROPAD_ALLOW_UNAUTHENTICATED_LAN", raising=False)
+    app = create_app(store.path)
+    remote = remote_client(app)
+    denied = remote.get("/api/config")
+    assert denied.status_code == 401
+
+    monkeypatch.setenv("MICROPAD_ALLOW_UNAUTHENTICATED_LAN", "1")
+    allowed = remote_client(app).get("/api/config")
+    assert allowed.status_code == 200
+    blocked_write = remote_client(app).post("/api/config", json={})
+    assert blocked_write.status_code == 403
