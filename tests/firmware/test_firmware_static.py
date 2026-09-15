@@ -1566,15 +1566,42 @@ class FirmwareRobustnessFindingsTest(FirmwareStaticContractTest):
 
     # --- P1.5 -----------------------------------------------------------------
 
-    def test_settings_reads_are_length_and_size_checked(self):
+    def test_settings_reads_use_the_type_correct_nvs_api(self):
+        """The NVS read helpers must not query a string with the blob API.
+
+        This check used to require ``getBytesLength()`` in both helpers, which is how
+        the outage stayed hidden: ``Preferences::getBytesLength()`` calls
+        ``nvs_get_blob``, and an IDF blob read on an entry written with ``nvs_set_str``
+        fails with ``ESP_ERR_NVS_TYPE_MISMATCH``. The helper therefore reported every
+        present string as absent, ``loadSettings()`` rejected the complete record, and a
+        configured pad re-entered the setup portal on every boot. The assertion below
+        pins the API that actually matches the stored type, and keeps the blob accessor
+        out of the sketch entirely.
+        """
         text = self.ino()
         helper = self.function_body(text, "bool readSettingString(")
-        self.assertIn("getBytesLength(", helper)
-        self.assertIn("getString(", helper)
-        self.assertIn("capacity - 1", helper)
+        self.assertIn("isKey(", helper)  # presence: the string-aware check
+        self.assertIn("getString(", helper)  # read: refuses overlong, never truncates
+        self.assertIn("written > capacity", helper)
         port_helper = self.function_body(text, "bool readSettingUShort(")
-        self.assertIn("getBytesLength(", port_helper)
-        self.assertIn("sizeof(uint16_t)", port_helper)
+        self.assertIn("getType(", port_helper)  # type-aware: putUShort stores PT_U16
+        self.assertIn("PT_U16", port_helper)
+        # Checked on the code only: the explanatory comment above the helper names the
+        # accessor it replaces, and a comment cannot read NVS.
+        code = "\n".join(
+            line for line in text.splitlines() if not line.lstrip().startswith("//")
+        )
+        self.assertNotIn(
+            "getBytesLength(",
+            code,
+            "getBytesLength() is a blob accessor and reports 0 for a stored string",
+        )
+
+    def test_portal_reports_which_field_is_invalid(self):
+        """A refused save must name the field, not just fail."""
+        body = self.function_body(self.ino(), "void handlePortalPost()")
+        self.assertIn("micropad::settingsError(candidate)", body)
+        self.assertNotIn('"invalid settings"', body)
 
     def test_load_settings_uses_checked_reads_for_every_field(self):
         body = self.function_body(self.ino(), "bool loadSettings()")

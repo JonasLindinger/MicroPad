@@ -227,15 +227,22 @@ bool mqttClientConfigured = false;
 // where the field is required, or longer than the field can hold must not be
 // accepted: silently keeping a truncated value would let a corrupt record pass
 // as a valid setting (and connect to a placeholder broker). Nothing is logged.
+// The presence check uses isKey() and the read uses getString(): both are
+// string-shaped APIs. getBytesLength() must NOT be used here - it is a blob
+// accessor (nvs_get_blob under the hood) and an IDF blob read on an entry that
+// was written with nvs_set_str fails with ESP_ERR_NVS_TYPE_MISMATCH, so it
+// reports 0 for a value that is present. That turned every stored string into
+// "absent", made loadSettings() reject a complete record, and sent a fully
+// configured pad back into the setup portal on every single boot.
+// getString() itself already refuses an oversized value (it returns 0 instead of
+// truncating), which is the guarantee the length pre-check was trying to add.
 bool readSettingString(Preferences &preferences, const char *key, char *out,
                        size_t capacity, bool required) {
   if (capacity == 0) return false;
   out[0] = '\0';
-  const size_t stored = preferences.getBytesLength(key);
-  if (stored == 0) return !required;  // absent or empty: ok only if optional
-  if (stored > capacity - 1) return false;  // overlong: reject, never truncate
+  if (!preferences.isKey(key)) return !required;  // absent: ok only if optional
   const size_t written = preferences.getString(key, out, capacity);
-  if (written == 0 || written > capacity - 1) {
+  if (written == 0 || written > capacity) {
     out[0] = '\0';
     return false;
   }
@@ -243,9 +250,12 @@ bool readSettingString(Preferences &preferences, const char *key, char *out,
 }
 
 // A wrong-sized or absent port record is not a valid setting either (P1.5).
+// Type-aware for the same reason: getType() probes with the typed accessors, so
+// a port stored with putUShort() is recognised as PT_U16. getBytesLength() would
+// report 0 for it (blob read on an integer entry) and reject every stored port.
 bool readSettingUShort(Preferences &preferences, const char *key,
                        uint16_t &out) {
-  if (preferences.getBytesLength(key) != sizeof(uint16_t)) return false;
+  if (preferences.getType(key) != PT_U16) return false;
   out = preferences.getUShort(key, out);
   return true;
 }
@@ -574,7 +584,9 @@ void handlePortalPost() {
 
   // The complete candidate validates before NVS is opened (see F5).
   if (!micropad::validateSettings(candidate)) {
-    webServer.send(400, "text/plain", "invalid settings");
+    // Name the offending field (never its value) so a failed save is fixable in
+    // the form instead of leaving the operator guessing why the portal refuses.
+    webServer.send(400, "text/plain", micropad::settingsError(candidate));
     return;
   }
   if (!saveSettings(candidate)) {
@@ -839,6 +851,12 @@ bool publishDiagnosticsRetained() {
   const uint32_t minHeap = ESP.getMinFreeHeap();
   if (diagnostics.heapMinBytes == 0 || minHeap < diagnostics.heapMinBytes) {
     diagnostics.heapMinBytes = minHeap;
+  }
+  // Called from the loop task, so this is that task's own high-water mark. Kept as a
+  // minimum over the uptime: the interesting number is the deepest the stack ever got.
+  const uint32_t stackMin = uxTaskGetStackHighWaterMark(nullptr) * sizeof(StackType_t);
+  if (diagnostics.stackMinBytes == 0 || stackMin < diagnostics.stackMinBytes) {
+    diagnostics.stackMinBytes = stackMin;
   }
   char buffer[micropad::DIAGNOSTICS_JSON_CAP];
   const size_t written = micropad::formatDiagnostics(diagnostics, buffer);

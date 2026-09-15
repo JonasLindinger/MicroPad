@@ -2347,13 +2347,15 @@ void testFormatDiagnostics() {
   diag.eventDrops = 6;
   diag.heapFreeBytes = 123456;
   diag.heapMinBytes = 100000;
+  diag.stackMinBytes = 9876;
   char buffer[DIAGNOSTICS_JSON_CAP];
   const size_t written = formatDiagnostics(diag, buffer);
   assert(written == std::strlen(buffer));
   assert(std::strcmp(buffer,
                      "{\"uptime_s\":3661,\"mqtt_connects\":3,\"catalog_parses\":2,"
                      "\"catalog_rejects\":1,\"page_rejects\":4,\"keymap_rejects\":5,"
-                     "\"event_drops\":6,\"heap_free\":123456,\"heap_min\":100000}") == 0);
+                     "\"event_drops\":6,\"heap_free\":123456,\"heap_min\":100000,"
+                     "\"stack_min\":9876}") == 0);
 
   // A freshly booted pad reports zeros rather than omitting keys, so a consumer
   // never has to distinguish "no value" from "no problem".
@@ -2362,6 +2364,7 @@ void testFormatDiagnostics() {
   assert(emptyWritten > 0);
   assert(std::strstr(buffer, "\"uptime_s\":0") != nullptr);
   assert(std::strstr(buffer, "\"heap_min\":0") != nullptr);
+  assert(std::strstr(buffer, "\"stack_min\":0") != nullptr);
   assert(std::strstr(buffer, "\"event_drops\":0") != nullptr);
 
   // Worst case (every counter at its maximum) must fit the budget: the formatter
@@ -2377,9 +2380,52 @@ void testFormatDiagnostics() {
   maxed.eventDrops = 4294967295UL;
   maxed.heapFreeBytes = 4294967295UL;
   maxed.heapMinBytes = 4294967295UL;
+  maxed.stackMinBytes = 4294967295UL;
   const size_t maxWritten = formatDiagnostics(maxed, buffer);
   assert(maxWritten > 0);
+  // Measured worst case, not an estimate: it is what decides the MQTT payload budget.
+  assert(maxWritten == 254);
   assert(maxWritten < DIAGNOSTICS_JSON_CAP);
+  // Headroom for at least one more field, so the cap is not just "barely enough".
+  assert(DIAGNOSTICS_JSON_CAP - maxWritten >= 32);
+
+  // The reason string and the boolean must agree for every combination, or a save
+  // could be refused with an explanation that does not match the rule.
+  {
+    const char *ssids[] = {"", "home", "home"};
+    const char *passes[] = {"", "short", "long-enough"};
+    const char *users[] = {"", "user", "user"};
+    for (int i = 0; i < 3; ++i) {
+      for (int j = 0; j < 3; ++j) {
+        for (int k = 0; k < 3; ++k) {
+          micropad::Settings probe = micropad::defaultSettings();
+          safeCopy(probe.wifiSsid, ssids[i]);
+          safeCopy(probe.wifiPassword, passes[j]);
+          safeCopy(probe.mqttUser, users[k]);
+          const bool valid = micropad::validateSettings(probe);
+          const bool reasonEmpty = micropad::settingsError(probe)[0] == '\0';
+          assert(valid == reasonEmpty);
+        }
+      }
+    }
+    micropad::Settings noPort = micropad::defaultSettings();
+    safeCopy(noPort.wifiSsid, "home");
+    safeCopy(noPort.wifiPassword, "long-enough");
+    noPort.mqttPort = 0;
+    assert(!micropad::validateSettings(noPort));
+    assert(std::strcmp(micropad::settingsError(noPort), "mqtt port must be 1..65535") == 0);
+    micropad::Settings noHost = micropad::defaultSettings();
+    noHost.mqttHost[0] = '\0';
+    assert(std::strcmp(micropad::settingsError(noHost), "mqtt host must not be empty") == 0);
+    micropad::Settings noUser = micropad::defaultSettings();
+    noUser.mqttUser[0] = '\0';
+    assert(std::strcmp(micropad::settingsError(noUser), "mqtt user must not be empty") == 0);
+    micropad::Settings shortPass = micropad::defaultSettings();
+    safeCopy(shortPass.wifiSsid, "home");
+    safeCopy(shortPass.wifiPassword, "short");
+    assert(std::strcmp(micropad::settingsError(shortPass),
+                       "wifi password must be 8..64 characters") == 0);
+  }
 
   static_assert(DIAGNOSTICS_PUBLISH_MS == 60000, "diagnostics republish interval");
   static_assert(DIAGNOSTICS_JSON_CAP >= 200, "diagnostics payload budget");

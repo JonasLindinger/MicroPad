@@ -257,14 +257,21 @@ Settings defaultSettings() {
   return value;
 }
 
-bool validateSettings(const Settings &settings) {
-  if (settings.mqttPort < 1) return false;  // uint16_t max is 65535
-  if (!nonEmpty(settings.mqttHost)) return false;
-  if (!nonEmpty(settings.mqttUser)) return false;
+const char *settingsError(const Settings &settings) {
+  if (settings.mqttPort < 1) return "mqtt port must be 1..65535";  // uint16_t max
+  if (!nonEmpty(settings.mqttHost)) return "mqtt host must not be empty";
+  if (!nonEmpty(settings.mqttUser)) return "mqtt user must not be empty";
   // Empty SSID = first-boot portal; any captured password is ignored. A
   // nonempty SSID requires a Wi-Fi password of 8..64 characters.
-  if (settings.wifiSsid[0] == '\0') return true;
-  return lengthInRange(settings.wifiPassword, 8, WIFI_PASS_CAP - 1);
+  if (settings.wifiSsid[0] == '\0') return "";
+  if (!lengthInRange(settings.wifiPassword, 8, WIFI_PASS_CAP - 1)) {
+    return "wifi password must be 8..64 characters";
+  }
+  return "";
+}
+
+bool validateSettings(const Settings &settings) {
+  return settingsError(settings)[0] == '\0';
 }
 
 // Wrap-safe unsigned elapsed time. nowMs may wrap past UINT32_MAX; subtracting
@@ -1014,7 +1021,8 @@ size_t formatDiagnostics(const Diagnostics &diag, char (&dst)[DIAGNOSTICS_JSON_C
       dst, sizeof(dst),
       "{\"uptime_s\":%lu,\"mqtt_connects\":%lu,\"catalog_parses\":%lu,"
       "\"catalog_rejects\":%lu,\"page_rejects\":%lu,\"keymap_rejects\":%lu,"
-      "\"event_drops\":%lu,\"heap_free\":%lu,\"heap_min\":%lu}",
+      "\"event_drops\":%lu,\"heap_free\":%lu,\"heap_min\":%lu,"
+      "\"stack_min\":%lu}",
       static_cast<unsigned long>(diag.uptimeS),
       static_cast<unsigned long>(diag.mqttConnects),
       static_cast<unsigned long>(diag.catalogParses),
@@ -1023,7 +1031,8 @@ size_t formatDiagnostics(const Diagnostics &diag, char (&dst)[DIAGNOSTICS_JSON_C
       static_cast<unsigned long>(diag.keymapRejects),
       static_cast<unsigned long>(diag.eventDrops),
       static_cast<unsigned long>(diag.heapFreeBytes),
-      static_cast<unsigned long>(diag.heapMinBytes));
+      static_cast<unsigned long>(diag.heapMinBytes),
+      static_cast<unsigned long>(diag.stackMinBytes));
   if (written <= 0 || static_cast<size_t>(written) >= sizeof(dst)) return 0;
   return static_cast<size_t>(written);
 }

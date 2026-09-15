@@ -100,7 +100,7 @@ constexpr size_t CLIENT_ID_CAP = 49;
 // so the backend/UI can see which build is on the pad and refuse a config whose
 // fields this build would clip. Bump on behaviour changes that affect the wire
 // contract's limits.
-inline constexpr const char *FIRMWARE_VERSION = "1.1.0";
+inline constexpr const char *FIRMWARE_VERSION = "1.2.0";
 
 // Counters the pad keeps about itself: what the panel never shows, but a
 // dashboard can. Pure data plus one formatter, so the sketch only bumps counters
@@ -115,12 +115,18 @@ struct Diagnostics {
   uint32_t eventDrops = 0;
   uint32_t heapFreeBytes = 0;
   uint32_t heapMinBytes = 0;
+  // Loop task stack high-water mark, in bytes still free at the deepest call. This is
+  // the measurement the 16 KiB loop stack is sized from: the linked frame sizes say the
+  // worst callback uses 6,704 B, and this number confirms it on the real device - which
+  // is why it belongs in the payload and not only in a debug build.
+  uint32_t stackMinBytes = 0;
 };
 
-// Rendered payload budget: fixed key order, integer values only, worst case
-// (nine 10-digit values) stays under this. The formatter returns 0 rather than a
-// half-written object, so a caller can never publish truncated JSON.
-constexpr size_t DIAGNOSTICS_JSON_CAP = 256;
+// Rendered payload budget: fixed key order, integer values only. The worst case (ten
+// 10-digit values) measures 254 bytes and is pinned byte-for-byte by the host test; the
+// cap leaves room for one more field. The formatter returns 0 rather than a half-written
+// object, so a caller can never publish truncated JSON.
+constexpr size_t DIAGNOSTICS_JSON_CAP = 320;
 
 // Republish interval for the retained diagnostics while connected. Diagnostics
 // ride the retained topic (a late subscriber gets the last snapshot), so this is
@@ -677,6 +683,11 @@ Settings defaultSettings();
 // (first-boot portal) or a nonempty SSID with a password of 8-64 characters.
 // Client id may be empty.
 bool validateSettings(const Settings &settings);
+
+// Why a settings record is rejected, as a short human-readable reason ("" when it
+// is valid). validateSettings() is defined in terms of this, so the rule set and
+// the message can never drift apart. Never contains a credential.
+const char *settingsError(const Settings &settings);
 
 // Fixed-capacity outgoing event queue with no heap allocation. Full-queue
 // policy: a replaceable event coalesces with a matching replaceable slot, else
