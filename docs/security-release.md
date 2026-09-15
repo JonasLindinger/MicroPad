@@ -31,6 +31,15 @@ artifacts beyond the operator's own environment.
 - `.gitignore` keeps `config.json`, `.venv/`, build output, and cache dirs out of
   version control; local state is never tracked.
 
+## Configuration history snapshots
+
+`micropad.history` writes a revision beside the configuration file on every save
+(`config.json.history/`). Those files contain the same data as the configuration —
+including the Home Assistant token and the SSH key — so they are treated as local
+state: mode 600, `*.history/` is git-ignored, and they are excluded from the release
+manifest and the public-tree audit. Never copy a history directory into the public
+repository; if a credential is rotated, delete its snapshots as well.
+
 ## Approval gates
 
 A public release is gated, not fire-and-forget:

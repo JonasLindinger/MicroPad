@@ -12,6 +12,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
+from micropad import history
 from micropad.models import AppConfig, parse_config
 
 
@@ -70,9 +71,19 @@ class ConfigStore:
             temporary.unlink(missing_ok=True)
 
     def save(self, config: AppConfig) -> None:
-        """Atomically replace the stored configuration while exclusively locked."""
+        """Atomically replace the stored configuration while exclusively locked.
+
+        Each save also leaves a snapshot beside the file (see ``micropad.history``) so
+        the operator can diff and restore earlier revisions. Snapshotting is
+        best-effort: a failure there must never turn a successful save into an error.
+        """
+        payload = config.model_dump(mode="json", by_alias=True)
         with self._lock(exclusive=True):
             self._write_locked(config)
+        try:
+            history.record(self.path, payload)
+        except OSError:
+            pass
 
     def update(self, transform: Callable[[AppConfig], AppConfig]) -> AppConfig:
         """Apply and persist a read-modify-write transaction under one exclusive lock."""

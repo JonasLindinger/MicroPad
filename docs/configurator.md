@@ -23,6 +23,28 @@ generates or uploads the automation. It talks to the repo over these endpoints:
 | `POST /api/upload/api` | deploy via Home Assistant REST API |
 | `POST /api/upload/ssh` | deploy via SFTP/SSH (see `docs/home-assistant.md`) |
 
+## Configuration history
+
+Every save leaves a revision next to the configuration file
+(`config.json.history/<UTC stamp>-<content hash>.json`), so a bad edit is a restore
+instead of a re-typing session:
+
+- `GET /api/history` lists the revisions (metadata only, newest first), `GET
+  /api/history/<id>` returns one revision with the structural diff against the
+  current configuration, and `POST /api/history/<id>/restore` makes it current again
+  through the normal validated save path.
+- Revisions are **content-addressed**: an unchanged document is not recorded, so the
+  UI's autosave does not bury the interesting revisions, and restoring a state that
+  is already in the history adds no duplicate. The newest 20 are kept.
+- The diff is structural ("page \"office\" added (3 items)", "global keymap r0c0:
+  home -> back") rather than a text diff, and it compares secrets without printing
+  them: a changed Home Assistant token reads `ha_token: changed`.
+- Snapshot ids are validated against an exact pattern before any file is opened, so
+  a revision id from the browser can never escape the history directory.
+- Snapshots contain the same credentials as the configuration itself: they are
+  written with mode 600, live beside the config file and are git-ignored. They are
+  never part of the release manifest.
+
 ## Keymap editor
 
 The key editor is laid out like the hardware: three rows of four keys next to the

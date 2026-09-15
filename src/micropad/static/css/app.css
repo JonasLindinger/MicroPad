@@ -594,3 +594,40 @@ ul.entity-listbox li:hover {
   font-size: 0.8rem;
   margin: 0.25rem 0 0.75rem;
 }
+
+/* --- Configuration history (B7) ------------------------------------------- */
+.history-hint,
+.history-notice {
+  color: #555;
+  font-size: 0.85rem;
+  margin: 0.25rem 0;
+}
+
+.history-list {
+  list-style: none;
+  margin: 0.5rem 0;
+  padding: 0;
+}
+
+.history-row {
+  align-items: center;
+  border-bottom: 1px solid #eee;
+  display: grid;
+  gap: 0.5rem;
+  grid-template-columns: 1fr auto auto auto;
+  padding: 0.3rem 0;
+}
+
+.history-stamp {
+  font-variant-numeric: tabular-nums;
+}
+
+.history-counts {
+  color: #555;
+  font-size: 0.8rem;
+}
+
+.history-diff {
+  font-size: 0.82rem;
+  margin: 0.25rem 0 0;
+}

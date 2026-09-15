@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import Callable, Sequence
 from pathlib import Path
@@ -13,7 +14,7 @@ from flask import Flask, Response, jsonify, render_template, request
 from pydantic import ValidationError
 from werkzeug.exceptions import BadRequest, MethodNotAllowed, NotFound
 
-from micropad import simulator
+from micropad import history, simulator
 from micropad.config_store import ConfigStore
 from micropad.constants import (
     AUTOMATION_ID,
@@ -309,6 +310,72 @@ def create_app(
         config = store.load()
         page_id = request.args.get("page_id", "home")
         return jsonify(generate_page_payload(config, str(page_id)))
+
+    @app.get("/api/history")
+    def history_list() -> Response:
+        """Recorded configuration revisions, newest first (B7).
+
+        Snapshots are written by every save (see ``micropad.history``); this exposes
+        only their metadata, never their content.
+        """
+        return jsonify(
+            {
+                "snapshots": [
+                    snapshot.as_dict() for snapshot in history.list_snapshots(store.path)
+                ],
+                "limit": history.SNAPSHOT_LIMIT,
+            }
+        )
+
+    @app.get("/api/history/<snapshot_id>")
+    def history_show(snapshot_id: str) -> Response | tuple[Response, int]:
+        """One revision: its configuration (redacted) plus what restoring it changes."""
+        try:
+            payload = history.load_snapshot(store.path, snapshot_id)
+        except ValueError:
+            return _error("unknown_snapshot", "No such configuration revision", 404)
+        except (FileNotFoundError, json.JSONDecodeError):
+            return _error("unknown_snapshot", "No such configuration revision", 404)
+        try:
+            restored = parse_config(payload)
+        except ValidationError as error:
+            # An old revision can predate a schema change: say so instead of 500.
+            return _error("snapshot_invalid", f"That revision no longer validates: {error}", 422)
+        current = store.load().model_dump(mode="json", by_alias=True)
+        return jsonify(
+            {
+                "snapshot": snapshot_id,
+                "config": public_config(restored),
+                "diff": history.diff_configs(current, payload),
+            }
+        )
+
+    @app.post("/api/history/<snapshot_id>/restore")
+    def history_restore(snapshot_id: str) -> Response | tuple[Response, int]:
+        """Restore a revision as the current configuration.
+
+        The restore goes through the normal save path, so it is validated and redacted
+        like any other save. Snapshots are content-addressed, so restoring a state that
+        is already in the history adds no duplicate revision — the revision is still
+        there, which is what makes an undo of an undo unnecessary.
+        """
+        try:
+            payload = history.load_snapshot(store.path, snapshot_id)
+        except ValueError:
+            return _error("unknown_snapshot", "No such configuration revision", 404)
+        except (FileNotFoundError, json.JSONDecodeError):
+            return _error("unknown_snapshot", "No such configuration revision", 404)
+        try:
+            restored = parse_config(payload)
+        except ValidationError as error:
+            return _error("snapshot_invalid", f"That revision no longer validates: {error}", 422)
+        current = store.load().model_dump(mode="json", by_alias=True)
+        applied = history.diff_configs(current, payload)
+        store.save(restored)
+        return jsonify(
+            {"ok": True, "snapshot": snapshot_id, "applied": applied,
+             "config": public_config(restored)}
+        )
 
     @app.get("/api/entity-groups")
     def entity_groups() -> Response:

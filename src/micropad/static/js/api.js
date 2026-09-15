@@ -66,5 +66,10 @@ export const upload = mode => request(`/api/upload/${mode}`, {method:'POST', bod
 export const analyzeConfig = config => request('/api/lint', {method:'POST', body:JSON.stringify(config)});
 // Page generation: the backend owns which domains are pageable and every ceiling.
 export const loadEntityGroups = () => request('/api/entity-groups');
+// Configuration history: list revisions, read one (with its diff) and restore it.
+export const loadHistory = () => request('/api/history');
+export const loadRevision = snapshotId => request(`/api/history/${encodeURIComponent(snapshotId)}`);
+export const restoreRevision = snapshotId =>
+  request(`/api/history/${encodeURIComponent(snapshotId)}/restore`, {method:'POST', body:'{}'});
 export const buildPages = payload => request('/api/build-pages', {method:'POST', body:JSON.stringify(payload)});
 export const simulate = payload => request('/api/simulate', {method:'POST', body:JSON.stringify(payload)});

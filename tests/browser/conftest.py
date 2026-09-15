@@ -120,6 +120,42 @@ def app_url(captured_requests: list[dict], repo_root):
     def generate() -> Response:
         return jsonify({"yaml": "alias: MicroPad Controller\n", "filename": "micropad_controller.yaml"})
 
+    @app.get("/api/history")
+    def history_list() -> Response:
+        return jsonify(
+            {
+                "snapshots": [
+                    {"id": "20260915T090000Z-aaaaaaaa", "created_at": "2026-09-15T09:00:00+00:00",
+                     "pages": 4, "items": 7},
+                    {"id": "20260915T080000Z-bbbbbbbb", "created_at": "2026-09-15T08:00:00+00:00",
+                     "pages": 4, "items": 6},
+                ],
+                "limit": 20,
+            }
+        )
+
+    @app.get("/api/history/<snapshot_id>")
+    def history_show(snapshot_id: str) -> Response:
+        return jsonify(
+            {
+                "snapshot": snapshot_id,
+                "config": config_payload,
+                "diff": ['page "home" title: \'Home\' -> \'Home v2\'', "global keymap r0c0: home -> back"],
+            }
+        )
+
+    @app.post("/api/history/<snapshot_id>/restore")
+    def history_restore(snapshot_id: str) -> Response:
+        record()
+        restored = json.loads(json.dumps(config_payload))
+        restored["pages"][0]["title"] = "Restored home"
+        config_payload.clear()
+        config_payload.update(restored)
+        return jsonify(
+            {"ok": True, "snapshot": snapshot_id,
+             "applied": ['page "home" title: \'Home\' -> \'Restored home\''], "config": restored}
+        )
+
     @app.get("/api/entity-groups")
     def entity_groups() -> Response:
         # Deliberately not recorded: mock instrumentation feeds captured_requests,

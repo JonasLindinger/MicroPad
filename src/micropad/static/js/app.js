@@ -18,6 +18,7 @@ import { mountOperations } from './operations.js';
 import { mountPanelPreview } from './panel-preview.js';
 import { mountAnalysisPanel } from './analysis-panel.js';
 import { mountPageGenerator } from './page-generator.js';
+import { mountHistoryPanel } from './history-panel.js';
 
 function renderSaveStatus(state) {
   const element = document.getElementById('save-status');
@@ -42,6 +43,7 @@ let operations = null;
 let panelPreview = null;
 let analysisPanel = null;
 let pageGenerator = null;
+let historyPanel = null;
 
 function render(state) {
   renderSaveStatus(state);
@@ -54,6 +56,7 @@ function render(state) {
   if (panelPreview) panelPreview.render(state);
   if (analysisPanel) analysisPanel.render(state);
   if (pageGenerator) pageGenerator.render(state);
+  if (historyPanel) historyPanel.render(state);
 }
 
 const authDialog = () => document.getElementById('auth-dialog');
@@ -98,6 +101,7 @@ function startApp() {
       panelPreview = mountPanelPreview(document.getElementById('panel-preview'), store);
       analysisPanel = mountAnalysisPanel(document.getElementById('analysis-panel'), store);
       pageGenerator = mountPageGenerator(document.getElementById('page-generator'), store);
+      historyPanel = mountHistoryPanel(document.getElementById('history-panel'), store);
       store.subscribe(render);
     })
     .catch((error) => {
