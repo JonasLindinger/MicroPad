@@ -2,9 +2,10 @@
 
 > AI-assisted development — firmware, HA automation, config generator and docs were created with AI (LLM) help, reviewed and tested by the author. Provided as-is, without warranty; verify on your own hardware, don't use for safety-critical applications.
 
-Branch `feat/cleanroom-implementation` · pushed to `origin` **and** `NEWEST-TEst`.
-**Release: `v1.2.0`** (firmware `1.2.0`, contract revision `2`) — see `CHANGELOG.md` for what is in
-it, what was measured and what is deliberately left out. Every claim below was verified with real
+**Merged into `main`** through PR #9 (merge commit `de680e2`, both histories preserved: `main`'s own
+line and this branch's, which share no ancestor). **Release: `v1.2.0`** — firmware `1.2.0`,
+contract revision `2`; see `CHANGELOG.md` for what is in it, what was measured and what is
+deliberately left out. Every claim below was verified with real
 runs; nothing is "should work".
 
 **Current baseline** (real `arduino-cli` build, pinned `hwcdc/PSRAM` FQBN):
@@ -47,6 +48,7 @@ flash **1 006 963 B (76 %)** · static RAM **173 364 B (52 %)** · 302 757 B fla
 | **C1** | **Long press**: a hold dispatches the item's *alternate* action (light/switch → off); timing in the core (`LONG_PRESS_MS` 600, once per hold), wake press exempt, no protocol change, +184 B flash / +48 B RAM | `a6467cb` | host test (tap/hold/re-arm/None) + static pin |
 | **C2** | **Diagnostics**: retained `micropad/diag` (uptime, MQTT connects, parse accept/reject counters, dropped events, heap high-water), formatter in the core, 256 B stack buffer, +768 B flash / +40 B RAM | `38cffc0` | host test byte-for-byte incl. worst case |
 | **Fix** | **The pad re-entered the setup portal on every boot**: the NVS read helpers used the blob accessor `getBytesLength()`, which reports 0 for a value stored as a string, so `loadSettings()` rejected a complete record every time. Fixed with the string-shaped APIs and pinned by a static test (the old test *required* the broken accessor) | `e751e45` | 199 static + host core; needs one flash to confirm on hardware |
+| **Fix** | **The `ci` workflow was red on this branch, and nobody was watching it**: a test read `Dockerfile.local`, a file that only ever existed on one machine, so the workflow failed at the `coverage` stage and the eleven stages behind it never ran. Fixed by shipping the (secret-free) Dockerfile and testing the tracked file; the whole stage list now runs | *CI fix* | the deployment test was re-run in a clean checkout, i.e. the exact CI condition |
 | **Fix** | **The firmware CI stage silently skipped four contract classes** — `unittest.main()` sat above them, so the stage exercised 142 of 198 cases and reported green | `28ce2ea` | the stage and pytest now report the same count |
 | **C4** | **Four new item types**: `cover`, `fan`, `input_boolean`, `lock` — each one contract row + one firmware descriptor row + the HA service mapping; the editor, `/api/meta` and the validation follow automatically. Tapping toggles (a lock *locks*), holding turns off (a lock *unlocks*); a cover has no hold action because HA's cover integration has no `turn_off` | `d2ec93b` | 7 new generator service rows, host descriptor assertions, all item-type pins updated. +64 B flash, 0 B RAM |
 
