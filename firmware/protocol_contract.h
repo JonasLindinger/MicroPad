@@ -12,6 +12,7 @@ namespace mp {
 inline constexpr unsigned CONTRACT_VERSION = 1;
 inline constexpr char TOPIC_CURRENT_PAGE[] = "micropad/page/current";
 inline constexpr char TOPIC_DEVICE[] = "micropad/device";
+inline constexpr char TOPIC_DIAG[] = "micropad/diag";
 inline constexpr char TOPIC_EVENT[] = "micropad/event";
 inline constexpr char TOPIC_KEYMAP[] = "micropad/keymap";
 inline constexpr char TOPIC_PAGES[] = "micropad/pages/all";

@@ -171,6 +171,25 @@ checks) see `docs/hardware-acceptance.md`.
   what lets `/api/meta` report the pad's real field caps and warn before a value
   would be clipped on the panel.
 
+## Diagnostics
+
+Every connection publishes the retained `micropad/diag` payload, refreshed once a
+minute while connected:
+
+```json
+{"uptime_s":3661,"mqtt_connects":3,"catalog_parses":2,"catalog_rejects":1,
+ "page_rejects":4,"keymap_rejects":5,"event_drops":6,"heap_free":123456,
+ "heap_min":100000}
+```
+
+The counters answer the questions a serial console used to answer: is the pad
+reconnecting in a loop, did a retained payload get rejected, did events get dropped
+because the queue was full, and how close did the heap get to exhaustion. The
+struct and the formatter live in `micropad_core.h`/`.cpp` (`formatDiagnostics`,
+host-tested byte for byte), so the sketch only bumps counters and publishes; the
+payload is rendered into a 256-byte stack buffer with no JSON document, and the
+formatter refuses to write rather than emitting a truncated object.
+
 ## Host simulator (panel preview)
 
 `tools/micropad_sim.cpp` compiles `micropad_core.cpp` into a host binary that

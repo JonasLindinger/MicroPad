@@ -98,6 +98,33 @@ constexpr size_t CLIENT_ID_CAP = 49;
 // contract's limits.
 inline constexpr const char *FIRMWARE_VERSION = "1.1.0";
 
+// Counters the pad keeps about itself: what the panel never shows, but a
+// dashboard can. Pure data plus one formatter, so the sketch only bumps counters
+// and publishes the retained micropad/diag payload.
+struct Diagnostics {
+  uint32_t uptimeS = 0;
+  uint32_t mqttConnects = 0;
+  uint32_t catalogParses = 0;
+  uint32_t catalogRejects = 0;
+  uint32_t pageRejects = 0;
+  uint32_t keymapRejects = 0;
+  uint32_t eventDrops = 0;
+  uint32_t heapFreeBytes = 0;
+  uint32_t heapMinBytes = 0;
+};
+
+// Rendered payload budget: fixed key order, integer values only, worst case
+// (nine 10-digit values) stays under this. The formatter returns 0 rather than a
+// half-written object, so a caller can never publish truncated JSON.
+constexpr size_t DIAGNOSTICS_JSON_CAP = 256;
+
+// Republish interval for the retained diagnostics while connected. Diagnostics
+// ride the retained topic (a late subscriber gets the last snapshot), so this is
+// about freshness, not delivery.
+constexpr uint32_t DIAGNOSTICS_PUBLISH_MS = 60000;
+
+size_t formatDiagnostics(const Diagnostics &diag, char (&dst)[DIAGNOSTICS_JSON_CAP]);
+
 // Loop-task stack handed to the Arduino core (getArduinoLoopTaskStackSize in the
 // sketch). The MQTT callback parses PubSubClient's buffer in place, so the frame
 // stays far below this; the value is a core constant so the device-info payload,

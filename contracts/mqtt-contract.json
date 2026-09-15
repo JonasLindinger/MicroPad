@@ -7,7 +7,8 @@
     "current_page": {"name": "micropad/page/current", "retain": true},
     "keymap": {"name": "micropad/keymap", "retain": true},
     "power": {"name": "micropad/power", "retain": true},
-    "device": {"name": "micropad/device", "retain": true}
+    "device": {"name": "micropad/device", "retain": true},
+    "diag": {"name": "micropad/diag", "retain": true}
   },
   "actions": ["none", "enter", "back", "home", "settings", "scroll", "scroll_up", "scroll_down", "navigate", "keymap", "get_all_pages", "toggle", "on", "off", "press", "volume_up", "volume_down", "media_next", "media_prev", "edit", "confirm"],
   "action_meta": [

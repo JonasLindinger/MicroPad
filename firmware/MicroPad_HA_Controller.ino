@@ -400,6 +400,12 @@ uint32_t mqttNextAttemptMs =
 // When the current MQTT connection came up: the catalog re-request timer
 // (catalogRequestTick) measures from here.
 uint32_t mqttConnectedSinceMs = 0;
+// Counters the pad publishes on the retained micropad/diag topic. The struct and
+// its formatter live in the core (host-tested); the sketch only bumps counters and
+// publishes, so what the dashboard shows and what the pad did cannot drift.
+micropad::Diagnostics diagnostics;
+uint32_t lastDiagnosticsPublishMs = 0;
+
 bool firstMqttConnectionThisBoot = false;
 
 uint8_t currentNetworkState() {
@@ -742,7 +748,11 @@ bool queueSystemEvent(micropad::Action action, const char *pageId) {
   micropad::Event event{};
   event.action = action;
   safeCopy(event.pageId, pageId);
-  return pad.queue.push(event);
+  if (!pad.queue.push(event)) {
+    ++diagnostics.eventDrops;
+    return false;
+  }
+  return true;
 }
 
 // Queue a navigate request for the given page: the backend republishes the
@@ -752,7 +762,11 @@ bool queueNavigateRequest(const char *pageId) {
   micropad::Event event{};
   event.action = micropad::Action::Navigate;
   safeCopy(event.targetPage, pageId);
-  return pad.queue.push(event);
+  if (!pad.queue.push(event)) {
+    ++diagnostics.eventDrops;
+    return false;
+  }
+  return true;
 }
 
 // Publish the retained power state. Returns false when the retained
@@ -804,6 +818,27 @@ bool publishDeviceInfoRetained() {
   return mqttClient.publish(mp::TOPIC_DEVICE, buffer, true);
 }
 
+// Publish the retained diagnostics payload: uptime, reconnect count, parse
+// accept/reject counters, dropped events and the heap high-water mark. This is
+// the visibility that the panel cannot provide — without it a rejected payload or
+// a churning reconnect loop is invisible until someone points a serial console at
+// the device. Informational: a failed publish costs nothing but a stale snapshot.
+bool publishDiagnosticsRetained() {
+  if (!mqttClient.connected()) return false;
+  diagnostics.uptimeS = millis() / 1000U;
+  diagnostics.heapFreeBytes = ESP.getFreeHeap();
+  const uint32_t minHeap = ESP.getMinFreeHeap();
+  if (diagnostics.heapMinBytes == 0 || minHeap < diagnostics.heapMinBytes) {
+    diagnostics.heapMinBytes = minHeap;
+  }
+  char buffer[micropad::DIAGNOSTICS_JSON_CAP];
+  const size_t written = micropad::formatDiagnostics(diagnostics, buffer);
+  if (written == 0) {
+    return false;  // never publish a truncated object
+  }
+  return mqttClient.publish(mp::TOPIC_DIAG, buffer, true);
+}
+
 // Exactly one get_all_pages request per boot; every reconnect (and every
 // quiet-period resync) asks for the current authoritative page instead. The
 // retained subscriptions received on connect normally satisfy both.
@@ -818,6 +853,7 @@ void publishInitialRequests() {
   }
   publishPowerStateRetained(stableUsbHost);
   publishDeviceInfoRetained();
+  publishDiagnosticsRetained();
 }
 
 // ============================================================================
@@ -1065,6 +1101,7 @@ void onMqttMessage(char *topic, uint8_t *payload, unsigned int length) {
             : calloc(1, sizeof(micropad::Catalog)));
     if (staging == nullptr) return;
     if (parseCatalog(root, *staging)) {
+      ++diagnostics.catalogParses;
       pad.catalog = *staging;
       catalogReady = true;
       micropad::Page *displayedPage = pad.currentPage();
@@ -1072,6 +1109,8 @@ void onMqttMessage(char *topic, uint8_t *payload, unsigned int length) {
         micropad::normalizeSelection(displayedPage, pad.state);
         requestDraw(micropad::DrawReason::Boot);
       }
+    } else {
+      ++diagnostics.catalogRejects;
     }
     free(staging);
     return;
@@ -1089,6 +1128,8 @@ void onMqttMessage(char *topic, uint8_t *payload, unsigned int length) {
           contentChanged) {
         requestDraw(micropad::DrawReason::StateChange);
       }
+    } else {
+      ++diagnostics.pageRejects;
     }
     return;
   }
@@ -1096,6 +1137,8 @@ void onMqttMessage(char *topic, uint8_t *payload, unsigned int length) {
     micropad::Binding staging[micropad::KEY_COUNT]{};
     if (parseEffectiveKeymap(root, staging)) {
       replaceKeymap(pad.activeKeymap, staging);
+    } else {
+      ++diagnostics.keymapRejects;
     }
     return;
   }
@@ -1164,6 +1207,7 @@ void mqttTick(uint32_t nowMs) {
                           deviceSettings.mqttPassword)) {
     return;
   }
+  ++diagnostics.mqttConnects;
   mqttConnectedSinceMs = nowMs;
   // Every subscription is checked: a silently failed subscribe would leave the
   // pad connected but without pages, current page or keymap, with nothing to
@@ -1176,6 +1220,20 @@ void mqttTick(uint32_t nowMs) {
     return;
   }
   publishInitialRequests();
+  lastDiagnosticsPublishMs = nowMs;
+}
+
+// While connected, refresh the retained diagnostics once per interval so a
+// dashboard sees a stalled or churning pad instead of a snapshot frozen at
+// connect time.
+void diagnosticsTick(uint32_t nowMs) {
+  if (!mqttClient.connected()) return;
+  if (static_cast<uint32_t>(nowMs - lastDiagnosticsPublishMs) <
+      micropad::DIAGNOSTICS_PUBLISH_MS) {
+    return;
+  }
+  lastDiagnosticsPublishMs = nowMs;
+  publishDiagnosticsRetained();
 }
 
 // ============================================================================
@@ -1948,6 +2006,7 @@ void loop() {
   portalTick(nowMs);
   wifiTick(nowMs);
   mqttTick(nowMs);
+  diagnosticsTick(nowMs);
   if (mqttClient.connected()) mqttClient.loop();
   flushEventQueue();
   resyncTick(nowMs);

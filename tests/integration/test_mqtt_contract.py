@@ -62,6 +62,7 @@ EXPECTED_TOPICS = {
     "pages": {"name": "micropad/pages/all", "retain": True},
     "current_page": {"name": "micropad/page/current", "retain": True},
     "device": {"name": "micropad/device", "retain": True},
+    "diag": {"name": "micropad/diag", "retain": True},
     "keymap": {"name": "micropad/keymap", "retain": True},
     "power": {"name": "micropad/power", "retain": True},
 }

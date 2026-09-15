@@ -959,6 +959,25 @@ void formatRowValue(char (&dst)[RENDER_TEXT_CAP], const RenderRow &row) {
   clipText(dst, tagged, valueChars);
 }
 
+size_t formatDiagnostics(const Diagnostics &diag, char (&dst)[DIAGNOSTICS_JSON_CAP]) {
+  const int written = std::snprintf(
+      dst, sizeof(dst),
+      "{\"uptime_s\":%lu,\"mqtt_connects\":%lu,\"catalog_parses\":%lu,"
+      "\"catalog_rejects\":%lu,\"page_rejects\":%lu,\"keymap_rejects\":%lu,"
+      "\"event_drops\":%lu,\"heap_free\":%lu,\"heap_min\":%lu}",
+      static_cast<unsigned long>(diag.uptimeS),
+      static_cast<unsigned long>(diag.mqttConnects),
+      static_cast<unsigned long>(diag.catalogParses),
+      static_cast<unsigned long>(diag.catalogRejects),
+      static_cast<unsigned long>(diag.pageRejects),
+      static_cast<unsigned long>(diag.keymapRejects),
+      static_cast<unsigned long>(diag.eventDrops),
+      static_cast<unsigned long>(diag.heapFreeBytes),
+      static_cast<unsigned long>(diag.heapMinBytes));
+  if (written <= 0 || static_cast<size_t>(written) >= sizeof(dst)) return 0;
+  return static_cast<size_t>(written);
+}
+
 void fillPageSnapshot(const Page &page, const AppState &state,
                       RenderSnapshot &out) {
   safeCopy(out.title, page.title);

@@ -2317,6 +2317,58 @@ void testItemTypeDescriptorTable() {
   assert(itemTypeDescriptor(static_cast<ItemType>(200)).type == ItemType::Category);
 }
 
+void testFormatDiagnostics() {
+  // The payload is pinned byte for byte: a dashboard consuming micropad/diag
+  // depends on these keys, and a silent rename would break it with no compile
+  // error anywhere.
+  Diagnostics diag{};
+  diag.uptimeS = 3661;
+  diag.mqttConnects = 3;
+  diag.catalogParses = 2;
+  diag.catalogRejects = 1;
+  diag.pageRejects = 4;
+  diag.keymapRejects = 5;
+  diag.eventDrops = 6;
+  diag.heapFreeBytes = 123456;
+  diag.heapMinBytes = 100000;
+  char buffer[DIAGNOSTICS_JSON_CAP];
+  const size_t written = formatDiagnostics(diag, buffer);
+  assert(written == std::strlen(buffer));
+  assert(std::strcmp(buffer,
+                     "{\"uptime_s\":3661,\"mqtt_connects\":3,\"catalog_parses\":2,"
+                     "\"catalog_rejects\":1,\"page_rejects\":4,\"keymap_rejects\":5,"
+                     "\"event_drops\":6,\"heap_free\":123456,\"heap_min\":100000}") == 0);
+
+  // A freshly booted pad reports zeros rather than omitting keys, so a consumer
+  // never has to distinguish "no value" from "no problem".
+  Diagnostics empty{};
+  const size_t emptyWritten = formatDiagnostics(empty, buffer);
+  assert(emptyWritten > 0);
+  assert(std::strstr(buffer, "\"uptime_s\":0") != nullptr);
+  assert(std::strstr(buffer, "\"heap_min\":0") != nullptr);
+  assert(std::strstr(buffer, "\"event_drops\":0") != nullptr);
+
+  // Worst case (every counter at its maximum) must fit the budget: the formatter
+  // refuses to write rather than truncating, and a refused payload would mean a
+  // diagnostics topic that silently never appears.
+  Diagnostics maxed{};
+  maxed.uptimeS = 4294967295UL;
+  maxed.mqttConnects = 4294967295UL;
+  maxed.catalogParses = 4294967295UL;
+  maxed.catalogRejects = 4294967295UL;
+  maxed.pageRejects = 4294967295UL;
+  maxed.keymapRejects = 4294967295UL;
+  maxed.eventDrops = 4294967295UL;
+  maxed.heapFreeBytes = 4294967295UL;
+  maxed.heapMinBytes = 4294967295UL;
+  const size_t maxWritten = formatDiagnostics(maxed, buffer);
+  assert(maxWritten > 0);
+  assert(maxWritten < DIAGNOSTICS_JSON_CAP);
+
+  static_assert(DIAGNOSTICS_PUBLISH_MS == 60000, "diagnostics republish interval");
+  static_assert(DIAGNOSTICS_JSON_CAP >= 200, "diagnostics payload budget");
+}
+
 int main() {
   static_assert(KEY_COUNT == 14);
   static_assert(QUEUE_CAPACITY == 16);
@@ -2406,6 +2458,7 @@ int main() {
   testAuthoritativeCorrectionScenario();
   testUsbToSleepPredicateScenario();
   testItemTypeDescriptorTable();
+  testFormatDiagnostics();
   testAllActionsReachDefinedOutcome();
   static_assert(micropad::ACTION_COUNT == 21, "21 supported actions");
   static_assert(micropad::ITEM_TYPE_COUNT == 11, "11 supported item types");

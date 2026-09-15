@@ -435,16 +435,36 @@ class FirmwareNetworkContractTest(FirmwareStaticContractTest):
         return self.source("firmware/MicroPad_HA_Controller.ino")
 
     def test_topic_literals_bound_to_contract_header(self):
-        # The six wire topics are defined exactly once, in
+        # The seven wire topics are defined exactly once, in
         # firmware/protocol_contract.h (the canonical contract binding that
         # firmware, backend, /api/meta, and the browser all share); the sketch
         # includes that header and must not duplicate the literals.
         header = self.source("firmware/protocol_contract.h")
         for topic in ("micropad/event", "micropad/pages/all",
                       "micropad/page/current", "micropad/keymap",
-                      "micropad/power", "micropad/device"):
+                      "micropad/power", "micropad/device", "micropad/diag"):
             self.assertIn(f'"{topic}"', header)
             self.assertNotIn(f'"{topic}"', self.ino())
+
+    def test_diagnostics_publish_is_retained_periodic_and_counted(self):
+        # Diagnostics answer "what is the pad doing?" without a serial console, so
+        # the wiring is pinned: retained topic, published on every connect, then
+        # refreshed on an interval, and every counter bumped where it happens.
+        text = self.ino()
+        core = self.source("firmware/micropad_core.h")
+        self.assertIn("mqttClient.publish(mp::TOPIC_DIAG, buffer, true)", text)
+        self.assertIn("publishDiagnosticsRetained();", text)
+        self.assertIn("diagnosticsTick(nowMs);", text)
+        self.assertIn("nowMs - lastDiagnosticsPublishMs", text)
+        self.assertIn("constexpr uint32_t DIAGNOSTICS_PUBLISH_MS = 60000;", core)
+        self.assertIn("size_t formatDiagnostics(const Diagnostics &diag", core)
+        for counter in ("mqttConnects", "catalogParses", "catalogRejects",
+                        "pageRejects", "keymapRejects", "eventDrops"):
+            self.assertIn(f"++diagnostics.{counter};", text)
+        # The payload is rendered by the core, never by an ArduinoJson document in
+        # the sketch: the format is host-tested and costs no heap.
+        self.assertIn("micropad::formatDiagnostics(diagnostics, buffer)", text)
+        self.assertIn("ESP.getMinFreeHeap()", text)
 
     def test_mqtt_buffer_size_exact(self):
         self.assertIn(

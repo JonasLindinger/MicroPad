@@ -11,7 +11,7 @@ only through the configurator or the on-device setup portal, never in source.
 
 MicroPad and Home Assistant share one versioned contract
 (`contracts/mqtt-contract.json`, bindings in `firmware/protocol_contract.h` and
-`src/micropad/constants.py`, contract version **1**). Six exact topics:
+`src/micropad/constants.py`, contract version **1**). Seven exact topics:
 
 | Topic | Direction | Retain | Purpose |
 |---|---|---|---|
@@ -21,6 +21,7 @@ MicroPad and Home Assistant share one versioned contract
 | `micropad/keymap` | HA → device | yes | effective per-page key map |
 | `micropad/power` | device → HA | yes | USB/power state (`usb_host` true/false) |
 | `micropad/device` | device → HA | yes | firmware build + the caps the pad enforces (`fw`, `contract`, `caps`) |
+| `micropad/diag` | device → HA | yes | uptime, MQTT connects, parse accept/reject counters, dropped events, heap high-water mark |
 
 The generator (`src/micropad/generator.py`) turns a validated configuration into
 one automation with id `micropad_controller` plus the three retained initial
