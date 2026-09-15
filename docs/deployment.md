@@ -7,6 +7,26 @@ a Linux host, updating it, reading logs, and uninstalling it. The broker host
 placeholder used throughout is `192.168.0.100`; real credentials are entered only
 through the configurator or the on-device setup portal, never in source.
 
+## Container
+
+`Dockerfile` builds the configurator as an image. The API is fail-closed, so the container
+binds loopback and refuses to come up publicly unauthenticated: to reach it from a browser
+you must set both the admin secret and the bind address, and publish the port.
+
+```bash
+docker build -t micropad-configurator .
+docker run --rm -p 8080:8080 \
+  -e MICROPAD_ADMIN_SECRET=<secret> \
+  -e MICROPAD_BIND=0.0.0.0:8080 \
+  -v "$PWD/data:/app/data" micropad-configurator
+```
+
+The image carries `contracts/`, because the configurator derives its item types, actions,
+key ids, topic names and payload ceilings from `contracts/mqtt-contract.json` at import
+time - an image without it starts and then fails on the first request. `data/` holds the
+configuration and its history snapshots; mount it or the settings live and die with the
+container. Never bake a real secret into the image.
+
 ## Install
 
 `scripts/setup.sh` deploys the app to `/opt/micropad/app`, runs it as the

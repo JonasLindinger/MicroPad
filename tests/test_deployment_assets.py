@@ -28,10 +28,19 @@ def test_gunicorn_and_systemd_contract() -> None:
     assert "EnvironmentFile=-/etc/micropad/admin.env" in service
 
 
-def test_local_docker_image_includes_runtime_contracts() -> None:
-    dockerfile = Path("Dockerfile.local").read_text(encoding="utf-8")
+def test_docker_image_includes_runtime_contracts() -> None:
+    """The image must ship contracts/, which the app reads at import time.
+
+    This used to read `Dockerfile.local`, a file that only ever existed on one machine:
+    the test passed locally and failed in CI with FileNotFoundError, so the `ci` workflow
+    was red while every local gate was green. It now checks the tracked Dockerfile, which
+    makes the check reproducible - the same reason the image needs contracts/ in the
+    first place.
+    """
+    dockerfile = Path("Dockerfile").read_text(encoding="utf-8")
 
     assert "COPY contracts/ ./contracts/" in dockerfile
+    assert "COPY src/ ./src/" in dockerfile
 
 
 def test_gunicorn_config_loads_as_python_safely() -> None:
