@@ -29,4 +29,5 @@ node_modules/
 .coverage
 htmlcov/
 dist/
-*.egg-info/.arduino
+*.egg-info/
+.arduino
