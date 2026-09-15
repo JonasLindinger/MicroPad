@@ -44,7 +44,9 @@ docs/firmware-hardware-validation.md
 docs/firmware.md
 docs/hardware-acceptance.md
 docs/home-assistant.md
+docs/roadmap.md
 docs/security-release.md
+docs/status.md
 firmware/MicroPad_HA_Controller.ino
 firmware/micropad_core.cpp
 firmware/micropad_core.h
