@@ -23,6 +23,17 @@ generates or uploads the automation. It talks to the repo over these endpoints:
 | `POST /api/upload/api` | deploy via Home Assistant REST API |
 | `POST /api/upload/ssh` | deploy via SFTP/SSH (see `docs/home-assistant.md`) |
 
+## Keymap editor
+
+The key editor is laid out like the hardware: three rows of four keys next to the
+encoder, in the same arrangement the operator's fingers find on the pad. Each key
+face shows its id and the action that key currently performs, and `data-binding-origin`
+marks where that action comes from — `global`, `inherited` (from global or an
+ancestor page) or `override` (this page's own) — so a page's whole keymap is readable
+without clicking through fourteen keys. Selecting a face loads it into the binding
+panel below, which is the only place a binding is edited, and the scene remains the
+single source of the effective action (`keymap-model.js`).
+
 ## Page generation
 
 "One page per domain" is one click. `GET /api/entity-groups` reports the domains in

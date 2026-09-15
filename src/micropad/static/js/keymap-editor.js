@@ -20,14 +20,6 @@ import {
 
 const GROUPS = ['Navigation', 'Scrolling', 'Device', 'Media', 'System'];
 
-function renderEncoderTurn(keyId, label) {
-  const button = document.createElement('button');
-  button.type = 'button';
-  button.dataset.keyId = keyId;
-  button.textContent = label;
-  return button;
-}
-
 // Pages in pre-order (parents before children, siblings in config order) so the scope
 // chooser reads as a tree. The graph contract is enforced server-side; this traversal
 // gracefully appends any stray page rather than dropping it.
@@ -47,6 +39,48 @@ function treeOrder(config) {
   const seen = new Set(ordered.map(page => page.page_id));
   for (const page of config.pages || []) if (!seen.has(page.page_id)) ordered.push(page);
   return ordered;
+}
+
+// What a key face shows: the key id and the *effective* action, plus where that
+// action comes from. One place, so the board, its legend and the binding panel
+// cannot describe the same binding differently.
+function keyFace(keyId, state, actionLabels, store, selectedKeyId, suffix) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.dataset.keyId = keyId;
+  button.setAttribute('aria-pressed', String(selectedKeyId === keyId));
+
+  const label = keyId.startsWith('enc_') ? `ENC ${suffix}` : keyId.toUpperCase();
+  const idSpan = document.createElement('span');
+  idSpan.className = 'key-id';
+  idSpan.textContent = label;
+
+  const actionSpan = document.createElement('span');
+  actionSpan.className = 'key-action';
+
+  let origin = 'global';
+  let binding = null;
+  if (state.keyScope === 'global') {
+    binding = normalizeBinding(state.config.global_keymap && state.config.global_keymap[keyId]);
+  } else {
+    const resolved = resolveBinding(state.config, state.keyScope, keyId);
+    binding = resolved.binding;
+    origin = resolved.inherited ? 'inherited' : 'override';
+  }
+  const actionLabel = binding && binding.action !== 'none'
+    ? (actionLabels.get(binding.action) || binding.action)
+    : 'No action';
+  actionSpan.textContent = actionLabel;
+  button.dataset.bindingOrigin = origin;
+  button.dataset.action = binding ? binding.action : 'none';
+  button.title = binding && binding.entity
+    ? `${actionLabel} — ${binding.entity}`
+    : actionLabel;
+
+  button.appendChild(idSpan);
+  button.appendChild(actionSpan);
+  button.addEventListener('click', () => store.dispatch({type:'select-key', keyId}));
+  return button;
 }
 
 export function mountKeymapEditor(element, store) {
@@ -179,27 +213,44 @@ export function mountKeymapEditor(element, store) {
       return;
     }
 
-    // --- 3x4 matrix + two encoder turns ---
+    // --- the physical board: 3x4 matrix + the two encoder turns ---
+    // Laid out like the hardware (landscape, three rows of four) and labelled with
+    // the *effective* binding for the current scope, so a page's keymap can be read
+    // at a glance instead of clicking all fourteen keys. Each face carries
+    // data-binding-origin (global / inherited / override) — the same notion the
+    // binding panel below shows for the selected key.
+    const actionLabels = new Map((state.meta.actions || []).map(action => [action.id, action.label]));
+    const board = document.createElement('div');
+    board.className = 'keyboard';
+    board.setAttribute('role', 'group');
+    board.setAttribute('aria-label', 'MicroPad board');
+
     const matrix = document.createElement('div');
     matrix.className = 'keypad';
     for (const keyId of keyIds.slice(0, 12)) {
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.dataset.keyId = keyId;
-      button.setAttribute('aria-pressed', String(selectedKeyId === keyId));
-      button.textContent = keyId === 'r0c3' ? 'Encoder push' : keyId.toUpperCase();
-      button.addEventListener('click', () => store.dispatch({type:'select-key', keyId}));
-      matrix.appendChild(button);
+      const key = keyFace(keyId, state, actionLabels, store, selectedKeyId);
+      matrix.appendChild(key);
     }
-    const encUp = renderEncoderTurn('enc_up', 'Encoder left');
-    encUp.setAttribute('aria-pressed', String(selectedKeyId === 'enc_up'));
-    encUp.addEventListener('click', () => store.dispatch({type:'select-key', keyId:'enc_up'}));
-    const encDown = renderEncoderTurn('enc_down', 'Encoder right');
-    encDown.setAttribute('aria-pressed', String(selectedKeyId === 'enc_down'));
-    encDown.addEventListener('click', () => store.dispatch({type:'select-key', keyId:'enc_down'}));
-    matrix.appendChild(encUp);
-    matrix.appendChild(encDown);
-    element.appendChild(matrix);
+    board.appendChild(matrix);
+
+    const encoder = document.createElement('div');
+    encoder.className = 'encoder';
+    const encoderRing = document.createElement('div');
+    encoderRing.className = 'encoder-ring';
+    // The two encoder detents sit either side of the ring, so the label reads like
+    // the wheel it is driven by.
+    encoderRing.appendChild(keyFace('enc_up', state, actionLabels, store, selectedKeyId, 'Left'));
+    encoderRing.appendChild(keyFace('enc_down', state, actionLabels, store, selectedKeyId, 'Right'));
+    encoder.appendChild(encoderRing);
+    board.appendChild(encoder);
+
+    const legend = document.createElement('p');
+    legend.className = 'keyboard-legend';
+    legend.textContent = state.keyScope === 'global'
+      ? 'Global scope: every key shows the shared default. Page scope shows overrides.'
+      : 'Solid = override on this page · dimmed = inherited · the binding panel edits the selected key.';
+    element.appendChild(board);
+    element.appendChild(legend);
 
     // --- effective binding for the active scope ---
     const selectedBinding = resolved.binding;

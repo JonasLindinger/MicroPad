@@ -525,3 +525,72 @@ ul.entity-listbox li:hover {
   margin: 0.5rem 0 0;
   padding: 0;
 }
+
+/* --- Physical board (B4) --------------------------------------------------- */
+/* The board mirrors the hardware: three rows of four keys to the left of the
+   encoder, so the layout on screen matches the one under the operator's fingers.
+   A key face carries the key id and the effective action for the current scope. */
+.keyboard {
+  align-items: center;
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 0.5rem;
+}
+
+/* The grid, touch-target height and pressed state come from the keymap-editor
+   block above; this only stacks the two lines of a key face. */
+.keypad button {
+  align-items: center;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  justify-content: center;
+  overflow: hidden;
+}
+
+/* Inheritance is the point of the board: an override is solid, an inherited value
+   is dimmed, and a global-scope view is neutral. */
+.keypad button[data-binding-origin="inherited"] {
+  border-style: dashed;
+  color: #6a6a6a;
+}
+
+.keypad button[data-binding-origin="override"] {
+  border-color: #2e7d32;
+}
+
+.key-id {
+  font-family: 'FreeMono', monospace;
+  font-size: 0.7rem;
+  letter-spacing: 0.02em;
+}
+
+.key-action {
+  font-size: 0.72rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.encoder {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.encoder-ring {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.encoder-ring button {
+  min-width: 88px;
+}
+
+.keyboard-legend {
+  color: #555;
+  font-size: 0.8rem;
+  margin: 0.25rem 0 0.75rem;
+}

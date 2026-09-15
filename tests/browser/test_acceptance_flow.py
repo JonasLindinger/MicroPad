@@ -12,6 +12,11 @@ from __future__ import annotations
 import pytest
 from playwright.sync_api import expect
 
+# The action chips live in the binding panel. Since B4 the board's key faces also
+# show each key's effective action, so a bare name match is ambiguous — address the
+# panel explicitly.
+PANEL = '.binding-panel'
+
 
 @pytest.mark.browser
 def test_complete_editing_flow_survives_reload(page, app_url):
@@ -24,7 +29,7 @@ def test_complete_editing_flow_survives_reload(page, app_url):
     # Open the new page's keymap scope and bind r2c0 to a Toggle on a real entity.
     page.get_by_label("Keymap scope").select_option(label="Downstairs lights")
     page.locator('[data-key-id="r2c0"]').click()
-    page.get_by_role("button", name="Toggle").click()
+    page.locator(PANEL).get_by_role("button", name="Toggle").click()
     page.get_by_label("Entity ID for binding").fill("Desk Lamp")
     page.get_by_role("option", name="Desk Lamp — light.desk_lamp").click()
     expect(page.locator("#save-status")).to_have_text("Saved")

@@ -8,6 +8,11 @@ from __future__ import annotations
 import pytest
 from playwright.sync_api import expect
 
+# The action chips live in the binding panel. Since B4 the board's key faces also
+# show each key's effective action, so a bare name match is ambiguous — address the
+# panel explicitly.
+PANEL = '.binding-panel'
+
 KEY_IDS = [f"r{row}c{col}" for row in range(3) for col in range(4)] + ["enc_up", "enc_down"]
 
 
@@ -20,7 +25,7 @@ def test_all_fourteen_inputs_are_unique_selectable_and_rebindable(page, app_url,
     for key_id in KEY_IDS:
         page.locator(f'[data-key-id="{key_id}"]').click()
         expect(page.locator(f'[data-key-id="{key_id}"]')).to_have_attribute("aria-pressed", "true")
-        page.get_by_role("button", name="No action").click()
+        page.locator(PANEL).get_by_role("button", name="No action").click()
     expect(page.locator("#save-status")).to_have_text("Saved")
     saved = captured_requests[-1]["json"]["global_keymap"]
     assert len(saved) == 14
@@ -32,12 +37,12 @@ def test_action_groups_show_only_contextual_target(page, app_url, captured_reque
     page.goto(app_url)
     for group in ("Navigation", "Scrolling", "Device", "Media", "System"):
         expect(page.get_by_role("group", name=group)).to_be_visible()
-    page.get_by_role("button", name="Toggle").click()
+    page.locator(PANEL).get_by_role("button", name="Toggle").click()
     entity = page.get_by_label("Entity ID for binding")
     expect(entity).to_be_visible()
     entity.fill("Desk Lamp")
     page.get_by_role("option", name="Desk Lamp — light.desk_lamp").click()
-    page.get_by_role("button", name="Navigate").click()
+    page.locator(PANEL).get_by_role("button", name="Navigate").click()
     expect(entity).to_be_hidden()
     page.get_by_label("Target page for binding").select_option("living-room")
     expect(page.locator("#save-status")).to_have_text("Saved")
@@ -48,14 +53,14 @@ def test_action_groups_show_only_contextual_target(page, app_url, captured_reque
 @pytest.mark.browser
 def test_binding_hint_shows_until_required_argument_selected(page, app_url):
     page.goto(app_url)
-    page.get_by_role("button", name="Toggle").click()
+    page.locator(PANEL).get_by_role("button", name="Toggle").click()
     entity = page.get_by_label("Entity ID for binding")
     expect(entity).to_be_visible()
     expect(page.get_by_text("Choose an entity.")).to_be_visible()
     entity.fill("Desk Lamp")
     page.get_by_role("option", name="Desk Lamp — light.desk_lamp").click()
     expect(page.get_by_text("Choose an entity.")).to_be_hidden()
-    page.get_by_role("button", name="Navigate").click()
+    page.locator(PANEL).get_by_role("button", name="Navigate").click()
     expect(page.get_by_text("Choose a target page.")).to_be_visible()
 
 
@@ -65,7 +70,7 @@ def test_entity_listbox_is_not_inside_the_label(page, app_url):
     # must be a SIBLING of the wrapping <label>, never a child of the label — that
     # avoids folding listbox text into the label name and breaking label activation.
     page.goto(app_url)
-    page.get_by_role("button", name="Toggle").click()
+    page.locator(PANEL).get_by_role("button", name="Toggle").click()
     entity = page.get_by_label("Entity ID for binding")
     entity.fill("Desk Lamp")
     expect(page.get_by_role("listbox", name="Matching Home Assistant entities")).to_be_visible()
@@ -84,7 +89,7 @@ def test_page_scope_shows_ancestor_source_and_clears_override(page, app_url, cap
     page.get_by_label("Keymap scope").select_option("upstairs")
     page.locator('[data-key-id="r1c0"]').click()
     expect(page.get_by_text("Inherited from Living room")).to_be_visible()
-    page.get_by_role("button", name="Toggle").click()
+    page.locator(PANEL).get_by_role("button", name="Toggle").click()
     page.get_by_label("Entity ID for binding").fill("light.upstairs")
     page.get_by_label("Entity ID for binding").press("Tab")
     expect(page.get_by_text("Override on Upstairs")).to_be_visible()
@@ -167,3 +172,34 @@ def test_scope_lists_global_and_every_page(page, app_url):
     page.goto(app_url)
     values = page.get_by_label("Keymap scope").locator("option").evaluate_all("nodes => nodes.map(node => node.value)")
     assert values == ["global", "home", "living-room", "upstairs", "kitchen"]
+
+@pytest.mark.browser
+def test_board_shows_each_keys_effective_action_and_origin(page, app_url):
+    # B4: the board is the mental model. Every face carries the key id *and* the
+    # action that key currently performs, so a page's keymap can be read at a glance
+    # instead of clicking all fourteen keys; data-binding-origin says whether that
+    # action is this page's override or inherited from global/ancestors.
+    page.goto(app_url)
+    faces = page.locator(".keypad button, .encoder button")
+    assert faces.count() == 14
+    expect(page.locator("[data-key-id='r0c0'] .key-action")).to_have_text("Home")
+    expect(page.locator("[data-key-id='enc_up'] .key-action")).to_have_text("Scroll up")
+    expect(page.locator("[data-key-id='enc_up'] .key-id")).to_have_text("ENC Left")
+    # Global scope: everything is the shared default.
+    expect(page.locator("[data-key-id='r0c0']")).to_have_attribute("data-binding-origin", "global")
+
+    # Page scope: all keys inherit until one is overridden, and only that one turns
+    # into an override.
+    page.get_by_label("Keymap scope").select_option("home")
+    expect(page.locator("[data-key-id='r0c0']")).to_have_attribute(
+        "data-binding-origin", "inherited"
+    )
+    page.locator("[data-key-id='r1c0']").click()
+    page.locator(PANEL).get_by_role("button", name="Toggle").click()
+    expect(page.locator("[data-key-id='r1c0']")).to_have_attribute(
+        "data-binding-origin", "override"
+    )
+    expect(page.locator("[data-key-id='r1c0'] .key-action")).to_have_text("Toggle")
+    expect(page.locator("[data-key-id='r0c0']")).to_have_attribute(
+        "data-binding-origin", "inherited"
+    )
