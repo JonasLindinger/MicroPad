@@ -67,6 +67,7 @@ scripts/compile-firmware.sh
 scripts/generate_contract.py
 scripts/install-arduino-toolchain.sh
 scripts/integrate_public_repo.py
+scripts/lint_config.py
 scripts/render_live_ha_preview.py
 scripts/setup.sh
 scripts/test-firmware-host.sh

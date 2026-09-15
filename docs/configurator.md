@@ -40,6 +40,15 @@ with `./scripts/build-simulator.sh`; when it is missing the endpoint answers 503
   the firmware's 32-character budgets, and `identifier_too_long` errors for
   `page_id`/`entity`/`target_page`, which make the pad discard the whole payload.
 
+The same analysis is available without the web UI, for CI or a pre-deployment
+check:
+
+```bash
+python3 scripts/lint_config.py config.json          # 0 publishable, 1 errors, 2 unreadable
+python3 scripts/lint_config.py config.json --strict # warnings fail too
+python3 scripts/lint_config.py config.json --json   # machine-readable
+```
+
 The limits and caps come from `contracts/mqtt-contract.json` — the same values the
 pad advertises on its retained `micropad/device` payload — and the byte sizes come
 from the real generator, so the meters cannot drift from what a deployment

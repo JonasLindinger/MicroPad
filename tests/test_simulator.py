@@ -1,5 +1,5 @@
 # AI-assisted development — firmware, HA automation, config generator and docs were created with AI (LLM) help, reviewed and tested by the author. Provided as-is, without warranty; verify on your own hardware, don't use for safety-critical applications.
-"""The host simulator, the panel-preview API and the config analysis.
+"""The host simulator, the panel-preview API, the config analysis and its CLI.
 
 ``tools/micropad_sim.cpp`` is what makes the configurator's preview honest: it runs
 the shipped core, so these tests pin the tool, the wrapper and the two routes —
@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -222,3 +223,84 @@ def test_lint_route_reports_budgets_caps_and_findings(client) -> None:
     assert body["ok"] is True  # clipping is a warning, not a publish blocker
     assert [finding["code"] for finding in body["findings"]] == ["field_clipped"]
     assert body["findings"][0]["where"] == "pages[0].items[0].name"
+
+
+def _write_config(tmp_path: Path, mutate=None) -> Path:
+    from tests.factories import valid_config
+
+    config = json.loads(valid_config().model_dump_json())
+    if mutate is not None:
+        mutate(config)
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps(config), encoding="utf-8")
+    return path
+
+
+def test_lint_cli_reports_a_publishable_config(tmp_path: Path) -> None:
+    script = REPO_ROOT / "scripts" / "lint_config.py"
+    result = subprocess.run(
+        [sys.executable, str(script), str(_write_config(tmp_path))],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "publishable" in result.stdout
+    assert "findings: none" in result.stdout
+    assert "page home:" in result.stdout
+
+
+def test_lint_cli_fails_on_a_config_the_pad_would_refuse(tmp_path: Path) -> None:
+    def mutate(config: dict) -> None:
+        config["pages"][0]["title"] = "T" * 40
+        config["pages"][0]["items"][0]["entity"] = "light." + "y" * 100
+
+    path = _write_config(tmp_path, mutate)
+    script = REPO_ROOT / "scripts" / "lint_config.py"
+    result = subprocess.run(
+        [sys.executable, str(script), str(path)], capture_output=True, text=True, check=False
+    )
+    assert result.returncode == 1, result.stdout
+    assert "NOT PUBLISHABLE" in result.stdout
+    assert "identifier_too_long" in result.stdout
+    assert "field_clipped" in result.stdout
+
+    # --strict also fails on the clipping warning alone.
+    def warn_only(config: dict) -> None:
+        config["pages"][0]["title"] = "T" * 40
+
+    strict_path = _write_config(tmp_path, warn_only)
+    lenient = subprocess.run(
+        [sys.executable, str(script), str(strict_path)], capture_output=True, text=True, check=False
+    )
+    strict = subprocess.run(
+        [sys.executable, str(script), str(strict_path), "--strict"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert lenient.returncode == 0
+    assert strict.returncode == 1
+
+
+def test_lint_cli_json_mode_and_unreadable_file(tmp_path: Path) -> None:
+    script = REPO_ROOT / "scripts" / "lint_config.py"
+    result = subprocess.run(
+        [sys.executable, str(script), str(_write_config(tmp_path)), "--json"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0
+    body = json.loads(result.stdout)
+    assert body["ok"] is True
+    assert "home" in body["page_bytes"]
+
+    missing = subprocess.run(
+        [sys.executable, str(script), str(tmp_path / "absent.json")],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert missing.returncode == 2
+    assert "cannot read" in missing.stderr

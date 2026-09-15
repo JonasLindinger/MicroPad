@@ -126,4 +126,18 @@ if fails:
 print("\nAll " + "firmware contract checks passed.")
 PY
 
+# Step 3: the rest of the host-testable firmware surface. The core host binary and
+# the sketch's static contract tests used to run only on a developer machine: the
+# "firmware-host" CI stage ran this script and nothing else, so a core regression
+# could reach review unnoticed. Both are seconds of work, so they belong here.
+echo "=== Step 3: core host binary (tests/firmware/test_core.cpp) ==="
+g++ -std=c++17 -Wall -Wextra -Werror -pedantic -Ifirmware \
+  tests/firmware/test_core.cpp firmware/micropad_core.cpp \
+  -o build/host/test_core
+./build/host/test_core
+echo "core host binary: exit 0"
+
+echo "=== Step 4: sketch static contract (tests/firmware/test_firmware_static.py) ==="
+python3 tests/firmware/test_firmware_static.py
+
 echo "=== test_firmware_contract.sh: ALL CHECKS PASSED ==="
