@@ -120,6 +120,41 @@ def app_url(captured_requests: list[dict], repo_root):
     def generate() -> Response:
         return jsonify({"yaml": "alias: MicroPad Controller\n", "filename": "micropad_controller.yaml"})
 
+    @app.get("/api/entity-groups")
+    def entity_groups() -> Response:
+        # Deliberately not recorded: mock instrumentation feeds captured_requests,
+        # and the existing write-count assertions ("no write happened") would count
+        # this read. The button's presence in the UI is the proof it was fetched.
+        # Built with the real grouping helper so the mock cannot invent a shape the
+        # backend never produces.
+        from micropad.page_builder import group_counts
+
+        cache = config_payload.get("entity_cache") or []
+        return jsonify(
+            {
+                "groups": group_counts(cache),
+                "pages": len(config_payload.get("pages") or []),
+                "limits": {"max_pages": meta_payload["caps"]["max_pages"],
+                           "max_items_per_page": meta_payload["caps"]["max_items_per_page"]},
+            }
+        )
+
+    @app.post("/api/build-pages")
+    def build_pages_route() -> Response:
+        from micropad.page_builder import build_pages
+
+        record()
+        body = request.get_json(silent=True) or {}
+        domains = body.get("domains") if isinstance(body.get("domains"), list) else None
+        cache = config_payload.get("entity_cache") or []
+        generated = build_pages(
+            cache,
+            domains=domains,
+            existing_page_ids=[page.get("page_id") for page in config_payload.get("pages") or []],
+            existing_page_count=len(config_payload.get("pages") or []),
+        )
+        return jsonify(generated.as_dict())
+
     @app.post("/api/lint")
     def lint() -> Response:
         record()

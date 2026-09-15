@@ -15,7 +15,15 @@ from werkzeug.exceptions import BadRequest, MethodNotAllowed, NotFound
 
 from micropad import simulator
 from micropad.config_store import ConfigStore
-from micropad.constants import AUTOMATION_ID, CAPS, FIELD_CAPS, ITEM_TYPES, LIMITS
+from micropad.constants import (
+    AUTOMATION_ID,
+    CAPS,
+    FIELD_CAPS,
+    ITEM_TYPES,
+    LIMITS,
+    MAX_ITEMS_PER_PAGE,
+    MAX_PAGES,
+)
 from micropad.generator import (
     GenerationError,
     generate_bundle,
@@ -37,6 +45,7 @@ from micropad.models import (
     parse_config,
     public_config,
 )
+from micropad.page_builder import build_pages, group_counts
 from micropad.security import (
     CSRF_HEADER,
     CSRF_VALUE,
@@ -300,6 +309,50 @@ def create_app(
         config = store.load()
         page_id = request.args.get("page_id", "home")
         return jsonify(generate_page_payload(config, str(page_id)))
+
+    @app.get("/api/entity-groups")
+    def entity_groups() -> Response:
+        """Pageable domains in the entity cache, for the page generator's buttons.
+
+        Reads the cache the configurator already holds (refreshed through
+        ``/api/ha/entities``), so rendering the picker costs no Home Assistant call
+        and cannot fail while the operator is editing.
+        """
+        config = store.load()
+        cache = [entity.model_dump(mode="json") for entity in config.entity_cache]
+        return jsonify(
+            {
+                "groups": group_counts(cache),
+                "pages": len(config.pages),
+                "limits": {"max_pages": MAX_PAGES, "max_items_per_page": MAX_ITEMS_PER_PAGE},
+            }
+        )
+
+    @app.post("/api/build-pages")
+    def build_pages_route() -> Response:
+        """Turn cached entities into page drafts (nothing is saved by this route).
+
+        The operator sees the drafts in the UI, which merges them into the open
+        configuration; saving stays an explicit action on ``/api/config``.
+        """
+        raw = request.get_json(force=True)
+        if not isinstance(raw, dict):
+            raise BadRequest("request body must be a JSON object")
+        domains_raw = raw.get("domains")
+        domains: list[str] | None = None
+        if isinstance(domains_raw, list):
+            domains = [str(domain) for domain in domains_raw]
+        elif domains_raw is not None:
+            raise BadRequest("domains must be a list of strings")
+        config = store.load()
+        cache = [entity.model_dump(mode="json") for entity in config.entity_cache]
+        generated = build_pages(
+            cache,
+            domains=domains,
+            existing_page_ids=[page.page_id for page in config.pages],
+            existing_page_count=len(config.pages),
+        )
+        return jsonify(generated.as_dict())
 
     @app.post("/api/lint")
     def lint_config() -> Response:

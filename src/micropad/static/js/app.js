@@ -17,6 +17,7 @@ import { mountTemplatePicker } from './template-picker.js';
 import { mountOperations } from './operations.js';
 import { mountPanelPreview } from './panel-preview.js';
 import { mountAnalysisPanel } from './analysis-panel.js';
+import { mountPageGenerator } from './page-generator.js';
 
 function renderSaveStatus(state) {
   const element = document.getElementById('save-status');
@@ -40,6 +41,7 @@ let templatePicker = null;
 let operations = null;
 let panelPreview = null;
 let analysisPanel = null;
+let pageGenerator = null;
 
 function render(state) {
   renderSaveStatus(state);
@@ -51,6 +53,7 @@ function render(state) {
   if (operations) operations.render(state);
   if (panelPreview) panelPreview.render(state);
   if (analysisPanel) analysisPanel.render(state);
+  if (pageGenerator) pageGenerator.render(state);
 }
 
 const authDialog = () => document.getElementById('auth-dialog');
@@ -94,6 +97,7 @@ function startApp() {
       operations = mountOperations(document.getElementById('operations'), { store, api: { generate, upload } });
       panelPreview = mountPanelPreview(document.getElementById('panel-preview'), store);
       analysisPanel = mountAnalysisPanel(document.getElementById('analysis-panel'), store);
+      pageGenerator = mountPageGenerator(document.getElementById('page-generator'), store);
       store.subscribe(render);
     })
     .catch((error) => {

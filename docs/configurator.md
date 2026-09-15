@@ -18,8 +18,28 @@ generates or uploads the automation. It talks to the repo over these endpoints:
 | `POST /api/simulate` | the panel's prim model for one page (or the setup portal), rendered by the firmware core |
 | `POST /api/ha/test` | test Home Assistant auth |
 | `GET /api/ha/entities` | discover and cache Home Assistant entities |
+| `GET /api/entity-groups` | cached domains with entity counts and the item type each maps to |
+| `POST /api/build-pages` | page drafts built from cached entities (nothing is saved) |
 | `POST /api/upload/api` | deploy via Home Assistant REST API |
 | `POST /api/upload/ssh` | deploy via SFTP/SSH (see `docs/home-assistant.md`) |
+
+## Page generation
+
+"One page per domain" is one click. `GET /api/entity-groups` reports the domains in
+the cached entity list with their counts and the item type each maps to (that mapping
+comes from the contract's `item_type_meta`, so it cannot drift from the firmware).
+`POST /api/build-pages` turns the cache into page drafts: one page per domain, split
+when a domain holds more entities than a page takes (20), named "Lights" / "Lights 2",
+with item types that match the entity domains, `number` items carrying the entity's
+real min/max/step, and names/states/units clipped to the firmware's field caps — every
+shortening is reported in `notes` rather than applied silently. Pages stop at the
+pad's 24-page ceiling, and drafts are appended to the open configuration (which
+autosaves like any other edit); publishing to the pad stays the normal deploy action.
+Domains with no item type are listed in `skipped`, never dropped quietly.
+
+Rooms are not offered yet: the REST endpoints the configurator uses (`/api/states`)
+carry no area information. Area grouping would need the area registry (WebSocket API),
+which is a separate decision.
 
 ## Panel preview and budgets
 

@@ -480,3 +480,48 @@ ul.entity-listbox li:hover {
 .finding-error { border-left-color: #c0392b; }
 .finding-warning { border-left-color: #e0a800; }
 .finding-ok { border-left-color: #2e7d32; color: #2e7d32; }
+
+/* --- Page generator -------------------------------------------------------- */
+.generator-hint,
+.generator-notice {
+  color: #555;
+  font-size: 0.85rem;
+  margin: 0.25rem 0;
+}
+
+.generator-refresh {
+  margin-bottom: 0.5rem;
+}
+
+.generator-groups {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.generator-group {
+  background: #f4f4f4;
+  border: 1px solid #d0d0d0;
+  border-radius: 4px;
+  cursor: pointer;
+  padding: 0.35rem 0.6rem;
+}
+
+.generator-group:hover:not(:disabled) {
+  background: #e8eef8;
+}
+
+.generator-group:disabled {
+  color: #999;
+  cursor: not-allowed;
+}
+
+.generator-all {
+  font-weight: 600;
+}
+
+.generator-notes {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+}

@@ -64,4 +64,7 @@ export const upload = mode => request(`/api/upload/${mode}`, {method:'POST', bod
 // Preview and lint: the panel model comes from the firmware core, the budgets and
 // findings from the contract caps plus the real generator.
 export const analyzeConfig = config => request('/api/lint', {method:'POST', body:JSON.stringify(config)});
+// Page generation: the backend owns which domains are pageable and every ceiling.
+export const loadEntityGroups = () => request('/api/entity-groups');
+export const buildPages = payload => request('/api/build-pages', {method:'POST', body:JSON.stringify(payload)});
 export const simulate = payload => request('/api/simulate', {method:'POST', body:JSON.stringify(payload)});
