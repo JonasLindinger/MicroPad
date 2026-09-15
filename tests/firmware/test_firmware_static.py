@@ -1181,6 +1181,14 @@ class FirmwareLoopContractTest(FirmwareStaticContractTest):
                        "Serial", "println", "printf"):
             self.assertNotIn(banned, body, f"loop must not contain {banned}")
 
+    def test_light_sleep_disabled_until_wake_path_fixed(self):
+        # Sleeping stays disabled: the ESP32-S3 wake path is documented as
+        # broken (phantom key presses after wake), and isPowered() only detects
+        # an open CDC data session, so a pad on a plain USB cable would count
+        # as battery-powered, sleep mid-session, and drop MQTT permanently.
+        core = self.source("firmware/micropad_core.h")
+        self.assertIn("constexpr bool LIGHT_SLEEP_ENABLED = false;", core)
+
     def test_setup_hardware_then_network_then_render_order(self):
         body = self.function_body(self.ino(), "void setup()")
         order = ("configureCdc()", "setupInputPins()", "loadDefaultKeymap(",

@@ -44,7 +44,11 @@ constexpr uint32_t CATALOG_RETRY_MS = 60000;
 // lose the pairing flow.
 constexpr uint32_t PORTAL_IDLE_MS = 1800000;
 constexpr uint32_t IDLE_SLEEP_MS = 60000;
-constexpr bool LIGHT_SLEEP_ENABLED = true;  // proven v6 wake mechanism merged
+// Sleeping stays disabled (see the loop() comment): the ESP32-S3 wake path is
+// still broken, and isPowered() only detects an open CDC data session, so a pad
+// on a plain USB cable would be treated as battery-powered and sleep mid-session
+// (MQTT keepalive dies, broker drops, pad never reconnects).
+constexpr bool LIGHT_SLEEP_ENABLED = false;
 constexpr uint32_t MIN_AWAKE_MS = 3000;
 constexpr uint32_t USB_SAMPLE_MS = 500;
 constexpr uint32_t USB_STABLE_MS = 1500;
