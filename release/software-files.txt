@@ -2,6 +2,7 @@
 .github/workflows/ci.yml
 .github/workflows/firmware.yml
 .gitignore
+CHANGELOG.md
 LICENSE
 Makefile
 PCB/MicroPad-unsaved-export-3ltgu2.kicad_prl

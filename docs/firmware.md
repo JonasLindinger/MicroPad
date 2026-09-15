@@ -160,7 +160,7 @@ checks) see `docs/hardware-acceptance.md`.
   publishes the *retained* payload `micropad/device`:
 
   ```json
-  {"fw": "1.1.0", "contract": 1, "caps": {"pages": 24, "items": 20, "name": 32,
+  {"fw": "1.2.0", "contract": 2, "caps": {"pages": 24, "items": 20, "name": 32,
    "title": 32, "page_id": 32, "entity": 96, "state": 32, "unit": 16,
    "mqtt_buffer": 16384, "stack": 16384}}
   ```
@@ -190,7 +190,35 @@ the payload schemas are unchanged.
   scan, so holding it does not also fire the gesture — otherwise holding the key
   that woke the pad would turn something off.
 
+## Stored settings and the setup portal
+
+Settings live in NVS under the namespace `micropad`, guarded by a `cfg_ver` commit marker that
+is invalidated first and written last, so an interrupted save is an invalid record rather than a
+mixture of old and new credentials. A record is accepted only when the marker is current, every
+expected key exists, every value reads back inside its field, and the whole candidate validates
+(`micropad::validateSettings`), which is defined in terms of `settingsError()` so the rule and
+the message cannot drift apart. A rejected record means the pad starts its own setup portal -
+which is also what makes the read path worth pinning:
+
+* **Strings are read with string APIs** (`isKey()` for presence, `getString()` for the value,
+  which refuses an oversized value instead of truncating) and integers with the type-aware
+  `getType()`/`getUShort()` pair. `Preferences::getBytesLength()` must never be used for either:
+  it is a *blob* accessor (it calls `nvs_get_blob`), and an IDF blob read on an entry written
+  with `nvs_set_str` fails with `ESP_ERR_NVS_TYPE_MISMATCH`. It therefore reports 0 for a value
+  that is present, which makes every stored string look absent, rejects a complete record, and
+  sends a fully configured pad back into the portal on **every boot**. A static test pins the
+  type-correct API usage precisely because this failure is silent and looks like a Wi-Fi problem.
+* A refused save answers with the reason (`settingsError()`: which field and what is expected,
+  never its value), so the portal is fixable in place instead of showing "invalid settings".
+
 ## Diagnostics
+
+The payload carries `uptime_s`, `mqtt_connects`, the accept/reject counters per payload type,
+`event_drops`, the heap free and heap high-water figures, and `stack_min` - the loop task's stack
+high-water mark in bytes free, sampled with `uxTaskGetStackHighWaterMark()` from the loop task
+itself. `stack_min` is what confirms the 16 KiB loop stack on real hardware: the linked call
+frames say the worst callback uses 6,704 B, and this number shows how much was actually left.
+The worst-case payload (ten 10-digit values) measures 254 bytes against a 320-byte cap.
 
 Every connection publishes the retained `micropad/diag` payload, refreshed once a
 minute while connected:

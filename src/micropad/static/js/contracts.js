@@ -5,7 +5,7 @@
 // mode is the drift gate).
 
 // <generated from contracts/mqtt-contract.json>
-export const CONTRACT_VERSION = 1;
+export const CONTRACT_VERSION = 2;
 
 export const KEY_IDS = Object.freeze([
   'r0c0', 'r0c1', 'r0c2', 'r0c3', 'r1c0', 'r1c1', 'r1c2', 'r1c3', 'r2c0',

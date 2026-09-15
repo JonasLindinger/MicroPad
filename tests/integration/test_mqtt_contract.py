@@ -81,7 +81,9 @@ def read_json(name: str) -> dict:
 
 def test_contract_has_exact_topics_actions_and_keys():
     contract = read_json("mqtt-contract.json")
-    assert contract["version"] == 1
+    # Pinned deliberately: a revision bump is a conscious edit that also has to teach
+    # scripts/generate_contract.py (see the guard test below).
+    assert contract["version"] == 2
     assert contract["topics"] == EXPECTED_TOPICS
     assert contract["actions"] == ACTIONS
     assert contract["key_ids"] == KEY_IDS
@@ -331,7 +333,9 @@ def test_load_contract_returns_the_canonical_contract():
     from micropad.generator import load_contract
 
     contract = load_contract()
-    assert contract["version"] == 1
+    # Pinned deliberately: a revision bump is a conscious edit that also has to teach
+    # scripts/generate_contract.py (see the guard test below).
+    assert contract["version"] == 2
     assert contract["topics"] == EXPECTED_TOPICS
     assert contract["actions"] == ACTIONS
     assert contract["key_ids"] == KEY_IDS
@@ -402,6 +406,23 @@ def test_generated_contract_sources_are_in_sync():
         check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_codegen_knows_the_shipped_contract_revision():
+    """The codegen refuses a contract revision it has not been taught.
+
+    That refusal is deliberate: a revision bump has to be a conscious edit, not a number
+    change that quietly regenerates the old shape. This keeps the taught set and the
+    shipped contract from drifting apart in the other direction - a bump that updates the
+    JSON but not the codegen would fail here instead of in a release build.
+    """
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import generate_contract
+
+    contract = read_json("mqtt-contract.json")
+    assert contract["version"] in generate_contract.SUPPORTED_CONTRACT_VERSIONS, (
+        "contracts/mqtt-contract.json was bumped without teaching scripts/generate_contract.py"
+    )
 
 
 def test_constants_derive_from_the_contract():

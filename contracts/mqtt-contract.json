@@ -1,6 +1,6 @@
 {
   "_ai_assisted_notice": "AI-assisted development — firmware, HA automation, config generator and docs were created with AI (LLM) help, reviewed and tested by the author. Provided as-is, without warranty; verify on your own hardware, don't use for safety-critical applications.",
-  "version": 1,
+  "version": 2,
   "topics": {
     "event": {"name": "micropad/event", "retain": false},
     "pages": {"name": "micropad/pages/all", "retain": true},

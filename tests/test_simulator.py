@@ -160,6 +160,9 @@ def test_recorded_browser_fixture_matches_the_current_core() -> None:
     )
     assert fresh["rows"] == fixture["response"]["rows"]
     assert fresh["mode"] == fixture["response"]["mode"]
+    # The recorded firmware version is what the browser preview shows, so it is part of
+    # the recording: without this the preview would keep displaying the old version.
+    assert fresh["firmware"] == fixture["response"]["firmware"]
 
 
 def test_analysis_reports_budgets_and_field_findings() -> None:

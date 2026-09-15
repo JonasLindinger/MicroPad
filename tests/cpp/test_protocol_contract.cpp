@@ -4,7 +4,7 @@
 #include <cstring>
 
 int main() {
-  static_assert(mp::CONTRACT_VERSION == 1);
+  static_assert(mp::CONTRACT_VERSION == 2);
   static_assert(mp::KEY_ID_COUNT == 14);
   static_assert(mp::ACTION_COUNT == 21);
   assert(std::strcmp(mp::TOPIC_EVENT, "micropad/event") == 0);

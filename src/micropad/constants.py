@@ -24,7 +24,7 @@ AI_NOTICE = (
 )
 
 CONTRACT_PATH = Path(__file__).resolve().parents[2] / "contracts" / "mqtt-contract.json"
-SUPPORTED_CONTRACT_VERSION = 1
+SUPPORTED_CONTRACT_VERSION = 2
 
 
 def load_contract() -> dict[str, Any]:

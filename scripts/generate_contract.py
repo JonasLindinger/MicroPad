@@ -45,10 +45,25 @@ JS_BEGIN = "// <generated from contracts/mqtt-contract.json>"
 JS_END = "// </generated from contracts/mqtt-contract.json>"
 
 
+# Contract revisions this codegen has been taught. Bump the contract's `version` when the
+# wire format gains or changes something the pad must understand (a new field the strict
+# parser would reject, a renamed topic, a renumbered enum), then list the new revision
+# here - the refusal below exists so a version bump is a conscious edit rather than a
+# number change that silently generates the old shape. Older revisions stay listed as
+# long as the generated output would be identical for them.
+SUPPORTED_CONTRACT_VERSIONS = frozenset({2})
+
+
 def load_contract() -> dict[str, Any]:
     contract: dict[str, Any] = json.loads(CONTRACT_PATH.read_text(encoding="utf-8"))
-    if contract.get("version") != 1:
-        raise SystemExit(f"unsupported contract version: {contract.get('version')!r}")
+    version = contract.get("version")
+    if version not in SUPPORTED_CONTRACT_VERSIONS:
+        known = ", ".join(str(v) for v in sorted(SUPPORTED_CONTRACT_VERSIONS))
+        raise SystemExit(
+            f"unsupported contract version: {version!r} (this codegen knows: {known}); "
+            "teach it the new revision in SUPPORTED_CONTRACT_VERSIONS if the change is "
+            "deliberate"
+        )
     return contract
 
 

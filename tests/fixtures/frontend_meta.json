@@ -1,6 +1,6 @@
 {
   "_ai_assisted_notice": "AI-assisted development — firmware, HA automation, config generator and docs were created with AI (LLM) help, reviewed and tested by the author. Provided as-is, without warranty; verify on your own hardware, don't use for safety-critical applications.",
-  "mqtt_contract_version": 1,
+  "mqtt_contract_version": 2,
   "home_page_id": "home",
   "key_ids": ["r0c0","r0c1","r0c2","r0c3","r1c0","r1c1","r1c2","r1c3","r2c0","r2c1","r2c2","r2c3","enc_up","enc_down"],
   "actions": [

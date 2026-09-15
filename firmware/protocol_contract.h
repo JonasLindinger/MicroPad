@@ -9,7 +9,7 @@ namespace mp {
 // wire-contract binding shared by the firmware sketch, the config generator,
 // the /api/meta endpoint and the browser. Change the contract and run
 // `python3 scripts/generate_contract.py --write`; `--check` fails on drift.
-inline constexpr unsigned CONTRACT_VERSION = 1;
+inline constexpr unsigned CONTRACT_VERSION = 2;
 inline constexpr char TOPIC_CURRENT_PAGE[] = "micropad/page/current";
 inline constexpr char TOPIC_DEVICE[] = "micropad/device";
 inline constexpr char TOPIC_DIAG[] = "micropad/diag";
