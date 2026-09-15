@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from collections.abc import Callable, Sequence
@@ -61,7 +62,28 @@ from micropad.security import (
 from micropad.ssh_upload import SSHDeployer, SSHUploadError, downloadable_ssh_script
 from micropad.ui_meta import action_metadata, item_type_metadata, page_templates
 
-ASSET_VERSION = "1"
+
+def _asset_version() -> str:
+    """Content hash of the served frontend bundle.
+
+    The version is part of an *immutable* asset URL (``max-age=31536000``), so
+    it has to change whenever a stylesheet or module changes. A constant
+    version instead pins the first copy a browser ever saw for a year: after a
+    deploy the page keeps the old look, which reads as "the CSS is missing".
+    """
+    digest = hashlib.sha256()
+    static_root = Path(__file__).with_name("static")
+    for path in sorted(
+        candidate
+        for candidate in static_root.rglob("*")
+        if candidate.suffix in {".css", ".js"} and candidate.is_file()
+    ):
+        digest.update(path.relative_to(static_root).as_posix().encode("utf-8"))
+        digest.update(path.read_bytes())
+    return digest.hexdigest()[:12]
+
+
+ASSET_VERSION = _asset_version()
 
 
 def _error(
