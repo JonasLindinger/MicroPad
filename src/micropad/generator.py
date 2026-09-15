@@ -9,7 +9,6 @@ import math
 import re
 from dataclasses import dataclass
 from functools import lru_cache
-from pathlib import Path
 from typing import cast
 
 import yaml
@@ -18,18 +17,27 @@ from micropad.constants import (
     AI_NOTICE,
     AUTOMATION_ALIAS,
     AUTOMATION_ID,
+    ITEM_TYPE_META,
     KEY_IDS,
     MAX_CATALOG_PAYLOAD_BYTES,
     MAX_MQTT_PAYLOAD_BYTES,
     MAX_PAGE_PAYLOAD_BYTES,
     MAX_REFLECTED_STATE_BYTES,
     MAX_REFLECTED_UNIT_BYTES,
+    TOPIC_RETAINS,
+    TOPICS,
 )
+from micropad.constants import load_contract as _load_contract
 from micropad.keymaps import effective_keymap
 from micropad.models import AppConfig, EntitySummary, PageItem
 from micropad.page_graph import index_pages
 
-_REFLECTED_ITEM_TYPES = frozenset({"sensor", "number", "light", "switch", "media_player"})
+# Types whose row renders a reflected state/value column: exactly the
+# contract rows with has_value, so the generator and the editor agree with the
+# firmware about which items can carry state.
+_REFLECTED_ITEM_TYPES = frozenset(
+    str(entry["id"]) for entry in ITEM_TYPE_META if entry["has_value"]
+)
 _ENTITY_ID_PATTERN = re.compile(r"^[a-z_][a-z0-9_]*\.[a-z0-9_]+$")
 _SP_TASK_PREFIX = "script.sp_start_"
 _SP_TASK_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -63,35 +71,26 @@ def _super_productivity_task_id(entity: str) -> str | None:
     return task_id if _SP_TASK_ID_PATTERN.fullmatch(task_id) else None
 
 
-_CONTRACT_PATH: Path = Path(__file__).resolve().parents[2] / "contracts" / "mqtt-contract.json"
-
-
 @lru_cache(maxsize=1)
 def load_contract() -> dict[str, object]:
     """Load the canonical versioned MQTT contract as ``dict[str, object]``.
 
     The contract file is the single source of truth for topics, actions, key
     IDs, item types, and payload ceilings shared by firmware, backend, and
-    frontend; every component is bound to it in the integration tasks.
+    frontend. The loader (and its version gate) lives in ``micropad.constants``
+    so there is exactly one place that parses it.
     """
-    data: dict[str, object] = json.loads(_CONTRACT_PATH.read_text(encoding="utf-8"))
-    if data["version"] != 1:
-        raise RuntimeError(f"unsupported MQTT contract version: {data['version']}")
-    return data
+    return cast(dict[str, object], _load_contract())
 
 
 def _contract_topic(key: str) -> str:
     """Resolve one canonical topic string from the contract, e.g. 'event'."""
-    topics = cast(dict[str, dict[str, object]], load_contract()["topics"])
-    entry = topics[key]
-    return str(entry["name"])
+    return TOPICS[key]
 
 
 def _contract_retain(key: str) -> bool:
     """Resolve the retained flag for one topic key from the contract."""
-    topics = cast(dict[str, dict[str, object]], load_contract()["topics"])
-    entry = topics[key]
-    return bool(entry["retain"])
+    return TOPIC_RETAINS[key]
 
 
 def _validate_ha_template_inputs(config: AppConfig) -> None:

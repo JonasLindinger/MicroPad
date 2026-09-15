@@ -12,7 +12,14 @@ from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from micropad.constants import ACTIONS, AI_NOTICE, ITEM_TYPES, KEY_IDS
+from micropad.constants import (
+    ACTIONS,
+    AI_NOTICE,
+    ITEM_TYPE_META,
+    ITEM_TYPES,
+    KEY_IDS,
+    MAX_ITEMS_PER_PAGE,
+)
 
 
 def normalize_identifier(value: str) -> str:
@@ -35,6 +42,20 @@ if frozenset(get_args(Action)) != ACTIONS:
     raise RuntimeError("Action type and ACTIONS constant differ")
 if frozenset(get_args(ItemType)) != ITEM_TYPES:
     raise RuntimeError("ItemType and ITEM_TYPES constant differ")
+
+# Item-type shape rules, taken from the contract's item_type_meta: entity-backed
+# types carry their HA domain(s), needs_target_page marks the types that are
+# useless without a destination page. The firmware mirrors the same rows in
+# micropad_core.h (ITEM_TYPE_DESCRIPTORS); a test asserts the two agree, so the
+# editor, the backend and the pad cannot hold different opinions about a type.
+_ENTITY_DOMAINS: dict[str, frozenset[str]] = {
+    str(entry["id"]): frozenset(str(domain) for domain in entry["ha_domains"])
+    for entry in ITEM_TYPE_META
+    if entry["ha_domains"]
+}
+_TARGET_PAGE_TYPES: frozenset[str] = frozenset(
+    str(entry["id"]) for entry in ITEM_TYPE_META if entry["needs_target_page"]
+)
 
 
 class StrictModel(BaseModel):
@@ -149,15 +170,15 @@ class PageItem(StrictModel):
     def validate_shape(self) -> PageItem:
         if self.min > self.max:
             raise ValueError("min must not exceed max")
-        if self.type == "category" and not self.target_page:
-            raise ValueError("category items require target_page")
-        entity_types = {
-            "light", "switch", "script", "button", "scene", "sensor", "media_player", "number",
-        }
-        if self.type in entity_types and not self.entity:
+        if self.type in _TARGET_PAGE_TYPES and not self.target_page:
+            raise ValueError(f"{self.type} items require target_page")
+        if self.type in _ENTITY_DOMAINS and not self.entity:
             raise ValueError(f"{self.type} items require entity")
-        allowed_domains = {"sensor", "binary_sensor"} if self.type == "sensor" else {self.type}
-        if self.entity and self.type in entity_types and self.entity.partition(".")[0] not in allowed_domains:
+        if (
+            self.entity
+            and self.type in _ENTITY_DOMAINS
+            and self.entity.partition(".")[0] not in _ENTITY_DOMAINS[self.type]
+        ):
             raise ValueError(f"{self.type} items require an entity in the {self.type} domain")
         return self
 
@@ -168,7 +189,7 @@ class Page(StrictModel):
     page_id: str
     title: str
     parent: str = ""
-    items: list[PageItem] = Field(default_factory=list, max_length=20)
+    items: list[PageItem] = Field(default_factory=list, max_length=MAX_ITEMS_PER_PAGE)
     keymap: dict[str, Binding] = Field(default_factory=dict)
 
     @field_validator("page_id", "parent")

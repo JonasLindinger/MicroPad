@@ -92,6 +92,18 @@ constexpr size_t MQTT_USER_CAP = 33;
 constexpr size_t MQTT_PASS_CAP = 65;
 constexpr size_t CLIENT_ID_CAP = 49;
 
+// Firmware release reported in the retained device-info payload (micropad/device)
+// so the backend/UI can see which build is on the pad and refuse a config whose
+// fields this build would clip. Bump on behaviour changes that affect the wire
+// contract's limits.
+inline constexpr const char *FIRMWARE_VERSION = "1.1.0";
+
+// Loop-task stack handed to the Arduino core (getArduinoLoopTaskStackSize in the
+// sketch). The MQTT callback parses PubSubClient's buffer in place, so the frame
+// stays far below this; the value is a core constant so the device-info payload,
+// the sketch and the static tests cannot disagree.
+constexpr size_t LOOP_TASK_STACK_BYTES = 16384;
+
 enum class KeyId : uint8_t {
   R0C0, R0C1, R0C2, R0C3, R1C0, R1C1, R1C2,
   R1C3, R2C0, R2C1, R2C2, R2C3, EncUp, EncDown
@@ -110,6 +122,26 @@ enum class ItemType : uint8_t {
 };
 enum class Edge : uint8_t { None, Pressed, Released };
 enum class PowerEdge : uint8_t { None, Connected, Disconnected };
+
+// Enum-bounded counts. Derived from the enum instead of typed as literals so a
+// new action/item type cannot leave a table short or a loop bound stale; the
+// static tests additionally assert these track contracts/mqtt-contract.json.
+constexpr size_t ACTION_COUNT = static_cast<size_t>(Action::Confirm) + 1;
+constexpr size_t ITEM_TYPE_COUNT = static_cast<size_t>(ItemType::Back) + 1;
+
+// One row per item type: what a press does by default and whether the type
+// accepts the edit/confirm gesture. This is the single place in the firmware
+// that maps a type to behaviour — actionForSelectedItem() reads the table, so a
+// new item type is one row here plus one entry in the contract's
+// item_type_meta (the configurator reads that, and a static test asserts the two
+// agree on defaultAction/editable).
+struct ItemTypeDescriptor {
+  ItemType type;
+  Action defaultAction;
+  bool editable;  // Confirm replaces defaultAction while the pad edits this row
+};
+extern const ItemTypeDescriptor ITEM_TYPE_DESCRIPTORS[ITEM_TYPE_COUNT];
+const ItemTypeDescriptor &itemTypeDescriptor(ItemType type);
 
 // One key's effective action plus optional context strings (see "Fixed Data
 // Model"). entity is the target HA entity id, targetPage the destination page.

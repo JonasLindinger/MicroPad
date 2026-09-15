@@ -38,3 +38,20 @@ def test_frontend_sources_carry_notice(repo_root):
     paths = [repo_root / "src/micropad/templates/index.html", *sorted((repo_root / "src/micropad/static").rglob("*.js")), *sorted((repo_root / "src/micropad/static").rglob("*.css"))]
     assert paths
     assert all(NOTICE in path.read_text(encoding="utf-8") for path in paths)
+
+
+def test_browser_fixture_mirrors_the_real_meta_payload(client, repo_root):
+    """The browser test fixture stands in for /api/meta, so it must not drift.
+
+    The editor derives its item-type rules (entity required, target page required)
+    from these descriptors, so a stale fixture would let the browser suite pass
+    against rules the real server no longer has.
+    """
+    import json
+
+    fixture = json.loads((repo_root / "tests/fixtures/frontend_meta.json").read_text(encoding="utf-8"))
+    live = client.get("/api/meta").get_json()
+    for key in ("mqtt_contract_version", "home_page_id", "key_ids", "item_types",
+                "item_type_meta", "limits", "caps", "automation_id"):
+        assert fixture[key] == live[key], f"fixture key {key!r} drifted from /api/meta"
+    assert {item["id"] for item in fixture["actions"]} == {item["id"] for item in live["actions"]}

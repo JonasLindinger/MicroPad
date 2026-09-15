@@ -2269,6 +2269,54 @@ void testSleepInterlockInterleavings() {
   assert(!il5.wake());
 }
 
+void testItemTypeDescriptorTable() {
+  // The descriptor table is indexed by ItemType: every enum value needs a row, in
+  // order. A missing or reordered row would silently give one item type another
+  // type's action, which no other test would catch.
+  assert(ITEM_TYPE_COUNT == 11);
+  assert(ACTION_COUNT == 21);
+  for (size_t index = 0; index < ITEM_TYPE_COUNT; ++index) {
+    assert(static_cast<size_t>(ITEM_TYPE_DESCRIPTORS[index].type) == index);
+  }
+
+  // A non-editing press is the row's default action; edit mode adds Confirm for
+  // exactly the editable types and changes nothing otherwise.
+  for (size_t index = 0; index < ITEM_TYPE_COUNT; ++index) {
+    Item item{};
+    item.type = static_cast<ItemType>(index);
+    const ItemTypeDescriptor &descriptor = itemTypeDescriptor(item.type);
+    assert(actionForSelectedItem(item, false) == descriptor.defaultAction);
+    assert(actionForSelectedItem(item, true) ==
+           (descriptor.editable ? Action::Confirm : descriptor.defaultAction));
+  }
+
+  // Pin the documented behaviour so a "harmless refactor" cannot change what a
+  // press does on real hardware.
+  assert(itemTypeDescriptor(ItemType::Category).defaultAction == Action::Navigate);
+  assert(itemTypeDescriptor(ItemType::Light).defaultAction == Action::Toggle);
+  assert(itemTypeDescriptor(ItemType::Switch).defaultAction == Action::Toggle);
+  assert(itemTypeDescriptor(ItemType::Script).defaultAction == Action::Press);
+  assert(itemTypeDescriptor(ItemType::Button).defaultAction == Action::Press);
+  assert(itemTypeDescriptor(ItemType::Scene).defaultAction == Action::Press);
+  assert(itemTypeDescriptor(ItemType::Sensor).defaultAction == Action::None);
+  assert(itemTypeDescriptor(ItemType::MediaPlayer).defaultAction == Action::None);
+  assert(itemTypeDescriptor(ItemType::Number).defaultAction == Action::Edit);
+  assert(itemTypeDescriptor(ItemType::Number).editable);
+  assert(itemTypeDescriptor(ItemType::Settings).defaultAction == Action::Settings);
+  assert(itemTypeDescriptor(ItemType::Back).defaultAction == Action::Back);
+
+  // Only Number is editable today; a second editable type must be intentional.
+  size_t editableCount = 0;
+  for (size_t index = 0; index < ITEM_TYPE_COUNT; ++index) {
+    if (ITEM_TYPE_DESCRIPTORS[index].editable) ++editableCount;
+  }
+  assert(editableCount == 1);
+
+  // An out-of-range type (corrupt or truncated payload) must not read past the
+  // table; the accessor clamps to the inert Category row.
+  assert(itemTypeDescriptor(static_cast<ItemType>(200)).type == ItemType::Category);
+}
+
 int main() {
   static_assert(KEY_COUNT == 14);
   static_assert(QUEUE_CAPACITY == 16);
@@ -2357,7 +2405,10 @@ int main() {
   testQueuePressureScenario();
   testAuthoritativeCorrectionScenario();
   testUsbToSleepPredicateScenario();
+  testItemTypeDescriptorTable();
   testAllActionsReachDefinedOutcome();
+  static_assert(micropad::ACTION_COUNT == 21, "21 supported actions");
+  static_assert(micropad::ITEM_TYPE_COUNT == 11, "11 supported item types");
   static_assert(micropad::USB_SAMPLE_MS == 500, "500 ms USB sample interval");
   static_assert(micropad::USB_STABLE_MS == 1500, "1500 ms USB stable window");
   static_assert(sizeof(RenderSnapshot) > 0, "snapshot type is defined");

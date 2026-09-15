@@ -44,7 +44,9 @@ using micropad::safeCopyClip;
 // in place), which shrank its frame from 23,424 to ~7 KB; 16 KiB therefore
 // keeps a ~2.3x margin over the measured frame while returning 16 KiB to the
 // heap, where the 16-KiB MQTT buffer and the WiFi/lwIP buffers are allocated.
-size_t getArduinoLoopTaskStackSize(void) { return 16384; }
+// The value lives in the core so the device-info payload (micropad/device) and
+// the tests report the same number the linker actually reserves.
+size_t getArduinoLoopTaskStackSize(void) { return micropad::LOOP_TASK_STACK_BYTES; }
 
 // Render adapters defined at the end of the sketch (see the Task 8 render
 // block): requestDraw publishes on Core 1, renderTask draws on pinned Core 0.
@@ -770,6 +772,38 @@ bool publishPowerStateRetained(bool usbHost) {
   return mqttClient.publish(mp::TOPIC_POWER, buffer, true);
 }
 
+// Publish the retained device-info payload: which firmware/contract build runs
+// on the pad plus the caps it actually enforces. The backend receives it as a
+// retained message (no request needed) so it can refuse a config this build would
+// clip, and the configurator shows the pad's real limits instead of inferring
+// them from its own constants. Informational: a failed publish costs nothing but
+// a stale version string until the next reconnect republishes it.
+bool publishDeviceInfoRetained() {
+  if (!mqttClient.connected()) return false;
+  JsonDocument doc;
+  doc["fw"] = micropad::FIRMWARE_VERSION;
+  doc["contract"] = mp::CONTRACT_VERSION;
+  JsonObject caps = doc["caps"].to<JsonObject>();
+  caps["pages"] = micropad::MAX_PAGES;
+  caps["items"] = micropad::MAX_ITEMS_PER_PAGE;
+  // Field caps are the firmware's byte budgets minus the NUL terminator, i.e. the
+  // usable character count the pad renders before it clips.
+  caps["name"] = micropad::ITEM_NAME_CAP - 1;
+  caps["title"] = micropad::TITLE_CAP - 1;
+  caps["page_id"] = micropad::PAGE_ID_CAP - 1;
+  caps["entity"] = micropad::ENTITY_CAP - 1;
+  caps["state"] = micropad::STATE_CAP - 1;
+  caps["unit"] = micropad::UNIT_CAP - 1;
+  caps["mqtt_buffer"] = micropad::MQTT_BUFFER_BYTES;
+  caps["stack"] = micropad::LOOP_TASK_STACK_BYTES;
+  char buffer[320];
+  const size_t written = serializeJson(doc, buffer, sizeof(buffer));
+  if (written == 0 || written >= sizeof(buffer)) {
+    return false;  // never malformed
+  }
+  return mqttClient.publish(mp::TOPIC_DEVICE, buffer, true);
+}
+
 // Exactly one get_all_pages request per boot; every reconnect (and every
 // quiet-period resync) asks for the current authoritative page instead. The
 // retained subscriptions received on connect normally satisfy both.
@@ -783,6 +817,7 @@ void publishInitialRequests() {
     queueNavigateRequest(requestedPage);
   }
   publishPowerStateRetained(stableUsbHost);
+  publishDeviceInfoRetained();
 }
 
 // ============================================================================

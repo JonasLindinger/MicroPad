@@ -12,7 +12,7 @@ generates or uploads the automation. It talks to the repo over these endpoints:
 | `GET /healthz` | liveness probe → `{"ok": true, "service": "micropad-configurator"}` |
 | `GET/POST /api/config` | read / validate-and-save configuration |
 | `POST /api/validate` | validate without saving |
-| `GET /api/meta` | contract version, key IDs, actions, item types, templates, default keymap |
+| `GET /api/meta` | contract version, key IDs, actions, item types **and their descriptors** (`item_type_meta`), payload ceilings (`limits`), device caps (`caps`), templates, default keymap |
 | `GET /api/generate` | generated automation YAML + retained MQTT payloads |
 | `POST /api/ha/test` | test Home Assistant auth |
 | `GET /api/ha/entities` | discover and cache Home Assistant entities |

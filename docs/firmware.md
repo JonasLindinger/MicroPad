@@ -7,6 +7,27 @@ This guide covers building and flashing the MicroPad firmware
 `firmware/protocol_contract.h`). It is written in English and contains no real
 credentials — only the neutral placeholders described below.
 
+## Contract
+
+`contracts/mqtt-contract.json` is the single source of truth for the wire
+protocol: version, topics, key IDs, actions, item types, the descriptor row per
+item type, the payload ceilings and the device caps. Everything else is derived
+from it:
+
+- `firmware/protocol_contract.h` is **generated** —
+  `python3 scripts/generate_contract.py --write` after a contract change, and
+  `--check` is the drift gate (also asserted by
+  `tests/integration/test_mqtt_contract.py`). Never hand-edit the header.
+- `src/micropad/constants.py` and `src/micropad/ui_meta.py` read the contract at
+  import time, so the backend, `/api/meta` and the browser cannot lag behind it.
+- the browser's `static/js/contracts.js` key-ID/version block is generated too.
+
+Adding an action, an item type, a topic or a limit is therefore a contract edit
+plus a regenerate — no code path has to be kept in sync by hand. A static test
+additionally asserts that the firmware's `Action`/`ItemType`/`KeyId` enums are in
+contract order, that `micropad_core.h`'s caps equal the contract's, and that
+`micropad_core.cpp`'s `ITEM_TYPE_DESCRIPTORS` table matches `item_type_meta`.
+
 ## Pin map
 
 | Function | GPIO(s) |
@@ -132,7 +153,23 @@ checks) see `docs/hardware-acceptance.md`.
 - **The loop task stack is 16 KiB.** The MQTT callback parses the PubSubClient
   receive buffer in place (no payload copy), which keeps its frame near 7 KB;
   16 KiB leaves a ~2.3x margin and returns the rest of the former 32 KiB to the
-  heap, where the 16-KiB MQTT buffer and the WiFi/lwIP buffers live.
+  heap, where the 16-KiB MQTT buffer and the WiFi/lwIP buffers live. The value is
+  the core constant `LOOP_TASK_STACK_BYTES`, so the sketch, the device-info
+  payload and the tests cannot disagree about it.
+- **The pad advertises its own limits.** On every MQTT connection the device
+  publishes the *retained* payload `micropad/device`:
+
+  ```json
+  {"fw": "1.1.0", "contract": 1, "caps": {"pages": 24, "items": 20, "name": 32,
+   "title": 32, "page_id": 32, "entity": 96, "state": 32, "unit": 16,
+   "mqtt_buffer": 16384, "stack": 16384}}
+  ```
+
+  Every value is read from the firmware's own constants, so it describes what
+  this build really enforces instead of what the backend assumes. A late
+  subscriber (the backend, the configurator) gets it without asking, which is
+  what lets `/api/meta` report the pad's real field caps and warn before a value
+  would be clipped on the panel.
 
 ## Not safety-critical
 

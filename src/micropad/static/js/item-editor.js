@@ -17,16 +17,31 @@ function commitChange(store, pageId, index, patch) {
 
 // Client-side mirror of the backend's required-field rules (P1.8): the save
 // button only enables when the draft could round-trip through parse_config.
-const ENTITY_TYPES = new Set(['light', 'switch', 'script', 'button', 'scene', 'sensor', 'media_player', 'number']);
+// Which types need an entity and which need a destination page comes from
+// /api/meta's item_type_meta, the same descriptor rows the firmware's
+// ITEM_TYPE_DESCRIPTORS table and the backend model use — hard-coding them here
+// is how the editor would come to accept a config the pad rejects.
+function itemRules(meta) {
+  const descriptors = Array.isArray(meta?.item_type_meta) ? meta.item_type_meta : [];
+  return {
+    entityTypes: new Set(
+      descriptors.filter((row) => (row.ha_domains || []).length > 0).map((row) => row.id)
+    ),
+    targetPageTypes: new Set(
+      descriptors.filter((row) => row.needs_target_page).map((row) => row.id)
+    ),
+  };
+}
 
-function draftErrors(draft) {
+function draftErrors(draft, meta) {
+  const { entityTypes, targetPageTypes } = itemRules(meta);
   const errors = [];
   if (!draft.name || !String(draft.name).trim()) errors.push('Name is required.');
-  if (ENTITY_TYPES.has(draft.type) && !draft.entity.trim()) {
+  if (entityTypes.has(draft.type) && !draft.entity.trim()) {
     errors.push(`Entity is required for type "${draft.type}".`);
   }
-  if (draft.type === 'category' && !draft.target_page) {
-    errors.push('Target page is required for type "category".');
+  if (targetPageTypes.has(draft.type) && !draft.target_page) {
+    errors.push(`Target page is required for type "${draft.type}".`);
   }
   return errors;
 }
@@ -224,7 +239,7 @@ export function mountItemEditor(element, store) {
 
       const refreshDraft = () => {
         const current = store.getState().drafts[dIndex] || draft;
-        const errors = draftErrors(current);
+        const errors = draftErrors(current, store.getState().meta);
         errorsEl.textContent = errors.join(' ');
         errorsEl.hidden = errors.length === 0;
         saveBtn.disabled = errors.length !== 0;
@@ -289,7 +304,7 @@ export function mountItemEditor(element, store) {
       saveBtn.disabled = true;
       saveBtn.addEventListener('click', () => {
         const current = store.getState().drafts[dIndex];
-        if (!current || draftErrors(current).length !== 0) return;
+        if (!current || draftErrors(current, store.getState().meta).length !== 0) return;
         store.dispatch({ type: 'draft-commit', index: dIndex });
         store.replaceConfig(insertItem(store.getState().config, page.page_id, current));
       });

@@ -14,7 +14,7 @@ from pydantic import ValidationError
 from werkzeug.exceptions import BadRequest, MethodNotAllowed, NotFound
 
 from micropad.config_store import ConfigStore
-from micropad.constants import AUTOMATION_ID, ITEM_TYPES
+from micropad.constants import AUTOMATION_ID, CAPS, FIELD_CAPS, ITEM_TYPES, LIMITS
 from micropad.generator import (
     GenerationError,
     generate_bundle,
@@ -47,7 +47,7 @@ from micropad.security import (
     admin_secret as env_admin_secret,
 )
 from micropad.ssh_upload import SSHDeployer, SSHUploadError, downloadable_ssh_script
-from micropad.ui_meta import action_metadata, page_templates
+from micropad.ui_meta import action_metadata, item_type_metadata, page_templates
 
 ASSET_VERSION = "1"
 
@@ -250,6 +250,20 @@ def create_app(
                 "key_ids": list(cast(list[object], contract["key_ids"])),
                 "actions": action_metadata(),
                 "item_types": sorted(ITEM_TYPES),
+                # Descriptor per item type (HA domains, default action, whether the
+                # editor must collect an entity or a target page) so the frontend
+                # stops hard-coding the mapping the firmware already owns.
+                "item_type_meta": item_type_metadata(),
+                # Byte ceilings and device caps: the numbers the editor needs to
+                # warn before the pad silently clips a value or the MQTT client
+                # drops an oversized catalog.
+                "limits": dict(LIMITS),
+                "caps": {
+                    "max_pages": CAPS["max_pages"],
+                    "max_items_per_page": CAPS["max_items_per_page"],
+                    "key_count": CAPS["key_count"],
+                    "field_caps": dict(FIELD_CAPS),
+                },
                 "default_keymap": {
                     key: value.model_dump(mode="json") for key, value in default_keymap().items()
                 },

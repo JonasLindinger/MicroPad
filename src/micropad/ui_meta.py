@@ -4,37 +4,27 @@
 
 from __future__ import annotations
 
-_ACTIONS = (
-    ("enter", "Enter", "Navigation", "none"),
-    ("back", "Back", "Navigation", "none"),
-    ("home", "Home", "Navigation", "none"),
-    ("navigate", "Navigate", "Navigation", "target_page"),
-    ("keymap", "Keymap", "Navigation", "target_page"),
-    ("scroll", "Scroll", "Scrolling", "none"),
-    ("scroll_up", "Scroll up", "Scrolling", "none"),
-    ("scroll_down", "Scroll down", "Scrolling", "none"),
-    ("toggle", "Toggle", "Device", "entity"),
-    ("on", "Turn on", "Device", "entity"),
-    ("off", "Turn off", "Device", "entity"),
-    ("press", "Press", "Device", "entity"),
-    ("edit", "Edit", "Device", "entity"),
-    ("confirm", "Confirm", "Device", "entity"),
-    ("volume_up", "Volume up", "Media", "entity"),
-    ("volume_down", "Volume down", "Media", "entity"),
-    ("media_next", "Next track", "Media", "entity"),
-    ("media_prev", "Previous track", "Media", "entity"),
-    ("none", "No action", "System", "none"),
-    ("settings", "Settings", "System", "none"),
-    ("get_all_pages", "Refresh all pages", "System", "none"),
-)
+from micropad.constants import ACTION_META, ITEM_TYPE_META
 
 
 def action_metadata() -> list[dict[str, str]]:
-    """Return the complete ordered action table used by the key editor."""
-    return [
-        {"id": action, "label": label, "group": group, "argument": argument}
-        for action, label, group, argument in _ACTIONS
-    ]
+    """Return the complete ordered action table used by the key editor.
+
+    Generated from ``contracts/mqtt-contract.json`` (``action_meta``): adding an
+    action there is all it takes for the firmware header, ``/api/meta``, the key
+    editor and the browser to agree.
+    """
+    return [dict(entry) for entry in ACTION_META]
+
+
+def item_type_metadata() -> list[dict[str, object]]:
+    """Return the item-type descriptors (HA domains, default action, flags).
+
+    Mirrors the firmware's ``ITEM_TYPE_DESCRIPTORS`` table (micropad_core.h) so
+    the editor can pick the right default action and requirement per type
+    instead of hard-coding the mapping in JavaScript.
+    """
+    return [dict(entry) for entry in ITEM_TYPE_META]
 
 
 def _item(name: str, item_type: str, entity: str = "") -> dict[str, object]:

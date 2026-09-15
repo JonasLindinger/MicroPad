@@ -45,7 +45,14 @@ class FirmwareStaticContractTest(unittest.TestCase):
         # documented 16 KiB keeps a ~2.3x margin over the frame while returning
         # 16 KiB to the internal heap.
         text = self.source("firmware/MicroPad_HA_Controller.ino")
-        self.assertIn("size_t getArduinoLoopTaskStackSize(void) { return 16384; }", text)
+        core = self.source("firmware/micropad_core.h")
+        self.assertIn(
+            "size_t getArduinoLoopTaskStackSize(void) { return micropad::LOOP_TASK_STACK_BYTES; }",
+            text,
+        )
+        # One definition, in the core, so the device-info payload and the tests
+        # report the same number the linker reserves.
+        self.assertIn("constexpr size_t LOOP_TASK_STACK_BYTES = 16384;", core)
 
     def test_exact_hardware_pins(self):
         text = self.source("firmware/MicroPad_HA_Controller.ino")
@@ -428,14 +435,14 @@ class FirmwareNetworkContractTest(FirmwareStaticContractTest):
         return self.source("firmware/MicroPad_HA_Controller.ino")
 
     def test_topic_literals_bound_to_contract_header(self):
-        # The five wire topics are defined exactly once, in
+        # The six wire topics are defined exactly once, in
         # firmware/protocol_contract.h (the canonical contract binding that
         # firmware, backend, /api/meta, and the browser all share); the sketch
         # includes that header and must not duplicate the literals.
         header = self.source("firmware/protocol_contract.h")
         for topic in ("micropad/event", "micropad/pages/all",
                       "micropad/page/current", "micropad/keymap",
-                      "micropad/power"):
+                      "micropad/power", "micropad/device"):
             self.assertIn(f'"{topic}"', header)
             self.assertNotIn(f'"{topic}"', self.ino())
 

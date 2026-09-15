@@ -13,7 +13,7 @@ constexpr const char *kKeyNames[KEY_COUNT] = {
     "r0c0", "r0c1", "r0c2", "r0c3", "r1c0", "r1c1", "r1c2",
     "r1c3", "r2c0", "r2c1", "r2c2", "r2c3", "enc_up", "enc_down"};
 
-constexpr const char *kActionNames[21] = {
+constexpr const char *kActionNames[ACTION_COUNT] = {
     "none",          "enter",      "back",          "home",
     "settings",      "scroll",     "scroll_up",     "scroll_down",
     "navigate",      "keymap",     "get_all_pages", "toggle",
@@ -21,7 +21,7 @@ constexpr const char *kActionNames[21] = {
     "volume_down",   "media_next", "media_prev",    "edit",
     "confirm"};
 
-constexpr const char *kItemTypeNames[11] = {
+constexpr const char *kItemTypeNames[ITEM_TYPE_COUNT] = {
     "category", "light", "switch", "script", "button", "scene",
     "sensor",   "media_player", "number", "settings", "back"};
 
@@ -61,6 +61,31 @@ constexpr int8_t kQuadratureSteps[16] = {
 
 }  // namespace
 
+// Behaviour per item type. Rows are in ItemType order (a host test asserts that)
+// so itemTypeDescriptor() can index directly; the static tests assert these
+// defaultAction/editable values match contracts/mqtt-contract.json
+// (item_type_meta), which is what the configurator renders.
+const ItemTypeDescriptor ITEM_TYPE_DESCRIPTORS[ITEM_TYPE_COUNT] = {
+    {ItemType::Category, Action::Navigate, false},
+    {ItemType::Light, Action::Toggle, false},
+    {ItemType::Switch, Action::Toggle, false},
+    {ItemType::Script, Action::Press, false},
+    {ItemType::Button, Action::Press, false},
+    {ItemType::Scene, Action::Press, false},
+    {ItemType::Sensor, Action::None, false},
+    {ItemType::MediaPlayer, Action::None, false},
+    {ItemType::Number, Action::Edit, true},
+    {ItemType::Settings, Action::Settings, false},
+    {ItemType::Back, Action::Back, false},
+};
+
+const ItemTypeDescriptor &itemTypeDescriptor(ItemType type) {
+  const size_t index = static_cast<size_t>(type);
+  // Defensive: an out-of-range type (corrupt payload) must not read past the
+  // table; Category is a harmless inert default.
+  return ITEM_TYPE_DESCRIPTORS[index < ITEM_TYPE_COUNT ? index : 0];
+}
+
 const char *keyIdName(KeyId key) {
   return nameFor(kKeyNames, KEY_COUNT, static_cast<size_t>(key));
 }
@@ -73,19 +98,19 @@ bool parseKeyId(const char *text, KeyId &out) {
 }
 
 const char *actionName(Action action) {
-  return nameFor(kActionNames, 21, static_cast<size_t>(action));
+  return nameFor(kActionNames, ACTION_COUNT, static_cast<size_t>(action));
 }
 
 bool parseAction(const char *text, Action &out) {
   size_t index = 0;
-  if (!valueFor(kActionNames, 21, text, index)) return false;
+  if (!valueFor(kActionNames, ACTION_COUNT, text, index)) return false;
   out = static_cast<Action>(index);
   return true;
 }
 
 bool parseItemType(const char *text, ItemType &out) {
   size_t index = 0;
-  if (!valueFor(kItemTypeNames, 11, text, index)) return false;
+  if (!valueFor(kItemTypeNames, ITEM_TYPE_COUNT, text, index)) return false;
   out = static_cast<ItemType>(index);
   return true;
 }
@@ -547,21 +572,11 @@ void normalizeSelection(const Page *page, AppState &state) {
 }
 
 Action actionForSelectedItem(const Item &item, bool editing) {
-  if (editing && item.type == ItemType::Number) return Action::Confirm;
-  switch (item.type) {
-    case ItemType::Category: return Action::Navigate;
-    case ItemType::Light:
-    case ItemType::Switch: return Action::Toggle;
-    case ItemType::Script:
-    case ItemType::Button:
-    case ItemType::Scene: return Action::Press;
-    case ItemType::Number: return Action::Edit;
-    case ItemType::Settings: return Action::Settings;
-    case ItemType::Back: return Action::Back;
-    case ItemType::Sensor:
-    case ItemType::MediaPlayer: return Action::None;
-  }
-  return Action::None;
+  const ItemTypeDescriptor &descriptor = itemTypeDescriptor(item.type);
+  // Edit mode turns the confirming press of an editable type into Confirm; every
+  // other combination is the table's default action for the type.
+  if (editing && descriptor.editable) return Action::Confirm;
+  return descriptor.defaultAction;
 }
 
 namespace {

@@ -10,6 +10,9 @@ shared fixture factories consumed by later integration tasks.
 from __future__ import annotations
 
 import json
+import re
+import subprocess
+import sys
 from pathlib import Path
 
 import jsonschema
@@ -58,6 +61,7 @@ EXPECTED_TOPICS = {
     "event": {"name": "micropad/event", "retain": False},
     "pages": {"name": "micropad/pages/all", "retain": True},
     "current_page": {"name": "micropad/page/current", "retain": True},
+    "device": {"name": "micropad/device", "retain": True},
     "keymap": {"name": "micropad/keymap", "retain": True},
     "power": {"name": "micropad/power", "retain": True},
 }
@@ -359,3 +363,143 @@ def test_generated_bundle_validates_against_every_schema():
     jsonschema.validate(json.loads(bundle.catalog_payload), read_json("catalog.schema.json"))
     jsonschema.validate(json.loads(bundle.home_payload), read_json("page.schema.json"))
     jsonschema.validate(json.loads(bundle.home_keymap_payload), read_json("keymap.schema.json"))
+
+
+# --- Contract single-source gates -------------------------------------------------
+# Every consumer keeps a copy of some contract value: the firmware header (generated),
+# the browser bundle (generated), the sketch's enum-bounded tables, the backend's
+# constants and the model's item rules. These tests assert each copy still agrees with
+# contracts/mqtt-contract.json, so a contract edit cannot leave one side behind.
+
+
+def _snake_case(name: str) -> str:
+    """``GetAllPages`` -> ``get_all_pages``; ``EncUp`` -> ``enc_up``."""
+    return re.sub(r"(?<=[a-z])(?=[A-Z])", "_", name).lower()
+
+
+def _enum_members(source: str, enum: str) -> list[str]:
+    body = re.search(rf"enum class {enum} : uint8_t \{{(.*?)\}};", source, re.S)
+    assert body is not None, f"enum class {enum} not found in the firmware core"
+    return [member.strip() for member in body.group(1).replace("\n", " ").split(",") if member.strip()]
+
+
+def _core_constants() -> dict[str, int]:
+    header = (ROOT / "firmware" / "micropad_core.h").read_text(encoding="utf-8")
+    return {name: int(value) for name, value in re.findall(r"constexpr size_t (\w+) = (\d+);", header)}
+
+
+def test_generated_contract_sources_are_in_sync():
+    """firmware/protocol_contract.h and static/js/contracts.js are generated files."""
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "generate_contract.py"), "--check"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_constants_derive_from_the_contract():
+    from micropad import constants
+
+    contract = read_json("mqtt-contract.json")
+    assert list(constants.KEY_IDS) == contract["key_ids"]
+    assert constants.ACTIONS == set(contract["actions"])
+    assert constants.ITEM_TYPES == set(contract["item_types"])
+    assert constants.ACTION_META == tuple(contract["action_meta"])
+    assert constants.ITEM_TYPE_META == tuple(contract["item_type_meta"])
+    assert constants.TOPICS == {key: value["name"] for key, value in contract["topics"].items()}
+    assert constants.TOPIC_RETAINS == {
+        key: bool(value["retain"]) for key, value in contract["topics"].items()
+    }
+    assert constants.LIMITS == contract["limits"]
+    assert constants.FIELD_CAPS == contract["caps"]["field_caps"]
+
+
+def test_firmware_enum_order_matches_the_contract():
+    """The firmware indexes its name tables by enum value, so enum order is the wire order."""
+    core = (ROOT / "firmware" / "micropad_core.h").read_text(encoding="utf-8")
+    contract = read_json("mqtt-contract.json")
+    assert [_snake_case(name) for name in _enum_members(core, "Action")] == contract["actions"]
+    assert [_snake_case(name) for name in _enum_members(core, "ItemType")] == contract["item_types"]
+    assert [_snake_case(name) for name in _enum_members(core, "KeyId")] == contract["key_ids"]
+
+
+def test_firmware_caps_match_the_contract():
+    """The caps the pad advertises on micropad/device are its real compile-time limits."""
+    contract = read_json("mqtt-contract.json")
+    caps = contract["caps"]
+    fields = caps["field_caps"]
+    const = _core_constants()
+    assert const["PAGE_ID_CAP"] - 1 == fields["page_id"]
+    assert const["TITLE_CAP"] - 1 == fields["title"]
+    assert const["ITEM_NAME_CAP"] - 1 == fields["name"]
+    assert const["ENTITY_CAP"] - 1 == fields["entity"]
+    assert const["STATE_CAP"] - 1 == fields["state"]
+    assert const["UNIT_CAP"] - 1 == fields["unit"]
+    assert const["MAX_PAGES"] == caps["max_pages"]
+    assert const["MAX_ITEMS_PER_PAGE"] == caps["max_items_per_page"]
+    assert const["KEY_COUNT"] == caps["key_count"]
+    assert const["MQTT_BUFFER_BYTES"] == caps["mqtt_buffer_bytes"]
+    assert const["LOOP_TASK_STACK_BYTES"] == caps["loop_task_stack_bytes"]
+    # Ceilings must fit the pad's receive buffer, else the MQTT client drops the
+    # payload and the pad keeps its old page (the failure this contract exists to
+    # prevent).
+    assert contract["limits"]["mqtt_buffer_bytes"] == caps["mqtt_buffer_bytes"]
+    assert contract["limits"]["catalog_bytes"] < caps["mqtt_buffer_bytes"]
+    assert contract["limits"]["keymap_bytes"] < caps["mqtt_buffer_bytes"]
+    assert contract["limits"]["page_bytes"] < caps["mqtt_buffer_bytes"]
+
+
+def test_firmware_item_type_descriptors_match_the_contract():
+    """micropad_core.cpp's table and the contract's item_type_meta are one truth in two files."""
+    source = (ROOT / "firmware" / "micropad_core.cpp").read_text(encoding="utf-8")
+    rows = re.findall(r"\{(ItemType::\w+), (Action::\w+), (true|false)\}", source)
+    assert rows, "ITEM_TYPE_DESCRIPTORS not found in firmware/micropad_core.cpp"
+    firmware = {
+        _snake_case(item_type.split("::")[1]): (_snake_case(action.split("::")[1]), editable == "true")
+        for item_type, action, editable in rows
+    }
+    contract = {
+        entry["id"]: (entry["default_action"], entry["editable"])
+        for entry in (read_json("mqtt-contract.json")["item_type_meta"])
+    }
+    assert firmware == contract
+
+
+def test_backend_item_rules_follow_the_contract_descriptors():
+    """models.py's entity/target-page rules are driven by the same descriptor rows."""
+    from pydantic import ValidationError
+
+    from micropad.models import PageItem
+
+    for entry in read_json("mqtt-contract.json")["item_type_meta"]:
+        item_type = entry["id"]
+        kwargs = {"name": "probe", "type": item_type}
+        if entry["needs_target_page"]:
+            with pytest.raises(ValidationError):
+                PageItem(**kwargs)
+            PageItem(**kwargs, target_page="home")
+        if entry["ha_domains"]:
+            with pytest.raises(ValidationError):
+                PageItem(**kwargs)
+            PageItem(**kwargs, entity=f"{entry['ha_domains'][0]}.probe")
+            wrong = "switch" if entry["ha_domains"][0] != "switch" else "light"
+            with pytest.raises(ValidationError):
+                PageItem(**kwargs, entity=f"{wrong}.probe")
+
+
+def test_api_meta_exposes_caps_and_item_type_descriptors():
+    """The configurator needs the device's real limits to warn before it publishes."""
+    from micropad.app import create_app
+
+    contract = read_json("mqtt-contract.json")
+    body = create_app().test_client().get("/api/meta").get_json()
+    assert body["limits"] == contract["limits"]
+    assert body["item_type_meta"] == contract["item_type_meta"]
+    assert body["caps"] == {
+        "max_pages": contract["caps"]["max_pages"],
+        "max_items_per_page": contract["caps"]["max_items_per_page"],
+        "key_count": contract["caps"]["key_count"],
+        "field_caps": contract["caps"]["field_caps"],
+    }

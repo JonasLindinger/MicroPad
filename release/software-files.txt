@@ -63,6 +63,7 @@ scripts/audit_public_release.py
 scripts/build_approval_bundle.py
 scripts/ci.sh
 scripts/compile-firmware.sh
+scripts/generate_contract.py
 scripts/install-arduino-toolchain.sh
 scripts/integrate_public_repo.py
 scripts/render_live_ha_preview.py
