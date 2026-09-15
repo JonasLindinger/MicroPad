@@ -43,9 +43,12 @@ So: **edit the contract, run the generator, run the tests.** Never hand-edit
 ### Add an item type
 
 1. Contract: append to `item_types`, add an `item_type_meta` row
-   (`ha_domains`, `default_action`, `editable`, `has_value`, `needs_target_page`).
+   (`ha_domains`, `default_action`, `alternate_action`, `editable`, `has_value`,
+   `needs_target_page`) — `alternate_action` is what a *hold* on the row dispatches
+   (`none` when the type has no meaningful second action).
 2. Regenerate (`--write`), then add the enumerator + name in `micropad_core.{h,cpp}`
-   and one row to `ITEM_TYPE_DESCRIPTORS` (`{type, defaultAction, editable}`).
+   and one row to `ITEM_TYPE_DESCRIPTORS`
+   (`{type, defaultAction, alternateAction, editable}`).
 3. Nothing else: `models.py` (entity/target-page rules), `generator.py`
    (reflected/state types), `/api/meta`, the editor's validation and the keymap
    editor read the descriptor rows. A test asserts the firmware table and

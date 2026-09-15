@@ -16,6 +16,10 @@ constexpr size_t MAX_ITEMS_PER_PAGE = 20;
 constexpr size_t VISIBLE_ROWS = 4;
 constexpr size_t SETUP_PASSWORD_LENGTH = 16;
 constexpr uint32_t INPUT_DEBOUNCE_MS = 25;
+// How long a key must stay held before the hold counts as a long press. Chosen
+// well above a deliberate tap (a normal press here is 25 ms of debounce plus a
+// human tap) so the gesture cannot fire by accident.
+constexpr uint32_t LONG_PRESS_MS = 600;
 constexpr uint32_t RESYNC_SETTLE_MS = 350;
 constexpr uint32_t WIFI_RETRY_MS = 5000;
 // Recovery: a saved Wi-Fi record that can never associate (typo, moved AP,
@@ -147,7 +151,8 @@ enum class ItemType : uint8_t {
   Category, Light, Switch, Script, Button, Scene, Sensor,
   MediaPlayer, Number, Settings, Back
 };
-enum class Edge : uint8_t { None, Pressed, Released };
+// LongPress is emitted once per hold, LONG_PRESS_MS after the debounced press.
+enum class Edge : uint8_t { None, Pressed, Released, LongPress };
 enum class PowerEdge : uint8_t { None, Connected, Disconnected };
 
 // Enum-bounded counts. Derived from the enum instead of typed as literals so a
@@ -165,6 +170,10 @@ constexpr size_t ITEM_TYPE_COUNT = static_cast<size_t>(ItemType::Back) + 1;
 struct ItemTypeDescriptor {
   ItemType type;
   Action defaultAction;
+  // What a *hold* on the row does (a tap keeps defaultAction). None means the
+  // hold is ignored for this type, which is the default for anything without a
+  // meaningful second action.
+  Action alternateAction;
   bool editable;  // Confirm replaces defaultAction while the pad edits this row
 };
 extern const ItemTypeDescriptor ITEM_TYPE_DESCRIPTORS[ITEM_TYPE_COUNT];
@@ -185,6 +194,11 @@ struct InputEvent {
   bool pressed;
   int8_t direction;
   uint32_t atMs;
+  // True for the synthetic hold event emitted LONG_PRESS_MS into a press (see
+  // DebouncedInput). Actions resolve the same way; only the caller decides that a
+  // hold means "the other thing". Declared last so the existing four-field
+  // aggregate initializers (and any future one) stay valid and default to a tap.
+  bool longPress = false;
 };
 
 // Per-key active-low debouncer (see "Debounced Matrix and Encoder Input").
@@ -199,6 +213,8 @@ struct InputEvent {
 // being accepted silently as a new baseline.
 class DebouncedInput {
  public:
+  // Returns None when nothing changed, the debounced edge on a change, and
+  // LongPress exactly once while a debounced press is held past LONG_PRESS_MS.
   Edge update(bool rawPressed, uint32_t nowMs);
   void primeForWake(bool rawPressed, uint32_t nowMs);
   bool held() const;
@@ -206,7 +222,9 @@ class DebouncedInput {
  private:
   bool stable_ = false;
   bool candidate_ = false;
+  bool longPressFired_ = false;
   uint32_t candidateSinceMs_ = 0;
+  uint32_t pressedAtMs_ = 0;
 };
 
 // 16-state quadrature decoder tuned for the board's two transitions per
@@ -695,6 +713,10 @@ void normalizeSelection(const Page *page, AppState &state);
 // One item-type-driven action for the selected item (see brief Step 6a).
 Action actionForSelectedItem(const Item &item, bool editing);
 
+// The type's second action for a hold on that row; Action::None when the
+// type has no meaningful alternate (see ITEM_TYPE_DESCRIPTORS).
+Action alternateActionForSelectedItem(const Item &item);
+
 // Pop and dispatch up to budget events, returning how many were dispatched.
 size_t flushEvents(EventQueue &queue, EventDispatchFn dispatch, size_t budget);
 
@@ -717,6 +739,7 @@ struct PadController {
   ApplyResult applyAction(Action action, const Binding &binding,
                           uint32_t atMs);
   Action selectedItemAction() const;
+  Action selectedItemLongPressAction() const;
   bool resyncDue(uint32_t nowMs) const;
   void noteInputBurst(uint32_t atMs);
 };

@@ -155,7 +155,16 @@ void emitInput(const micropad::InputEvent &input) {
   // never rewritten and no selected item is substituted for a keymap entity.
   micropad::Binding resolved = binding;
   if (action == micropad::Action::Enter) {
-    action = pad.selectedItemAction();
+    // A hold asks the item for its second action (light/switch: turn off instead
+    // of toggle); a type without one ignores the hold, so nothing is dispatched
+    // that the operator did not ask for. The tap path is untouched.
+    if (input.longPress) {
+      const micropad::Action alternate = pad.selectedItemLongPressAction();
+      if (alternate == micropad::Action::None) return;
+      action = alternate;
+    } else {
+      action = pad.selectedItemAction();
+    }
     resolved.action = action;
     const micropad::Item *selected = pad.currentItem();
     if (selected != nullptr) safeCopy(resolved.entity, selected->entity);

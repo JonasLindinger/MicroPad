@@ -171,6 +171,25 @@ checks) see `docs/hardware-acceptance.md`.
   what lets `/api/meta` report the pad's real field caps and warn before a value
   would be clipped on the panel.
 
+## Input gestures
+
+Each of the fourteen inputs behaves the same whether it is tapped or held, with one
+exception that costs no extra binding storage: **holding the Enter key fires the
+item's *alternate* action instead of its default one.** The item-type descriptor
+decides which types have one — a light or a switch turns **off** on a hold instead
+of toggling; every other type ignores the hold (`alternate_action` in
+`contracts/mqtt-contract.json`, mirrored by `ITEM_TYPE_DESCRIPTORS`). The gesture
+dispatches an ordinary action, so the MQTT event, the Home Assistant automation and
+the payload schemas are unchanged.
+
+* `LONG_PRESS_MS` (600 ms, core) is measured from the *debounced* press, so a tap
+  can never fire it, and it fires exactly once per hold.
+* A hold keeps the pad awake (it counts as input activity) and therefore cannot
+  race the 60 s sleep gate.
+* The press that woke the device from light sleep is consumed by the immediate wake
+  scan, so holding it does not also fire the gesture — otherwise holding the key
+  that woke the pad would turn something off.
+
 ## Diagnostics
 
 Every connection publishes the retained `micropad/diag` payload, refreshed once a

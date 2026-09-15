@@ -66,17 +66,17 @@ constexpr int8_t kQuadratureSteps[16] = {
 // defaultAction/editable values match contracts/mqtt-contract.json
 // (item_type_meta), which is what the configurator renders.
 const ItemTypeDescriptor ITEM_TYPE_DESCRIPTORS[ITEM_TYPE_COUNT] = {
-    {ItemType::Category, Action::Navigate, false},
-    {ItemType::Light, Action::Toggle, false},
-    {ItemType::Switch, Action::Toggle, false},
-    {ItemType::Script, Action::Press, false},
-    {ItemType::Button, Action::Press, false},
-    {ItemType::Scene, Action::Press, false},
-    {ItemType::Sensor, Action::None, false},
-    {ItemType::MediaPlayer, Action::None, false},
-    {ItemType::Number, Action::Edit, true},
-    {ItemType::Settings, Action::Settings, false},
-    {ItemType::Back, Action::Back, false},
+    {ItemType::Category, Action::Navigate, Action::None, false},
+    {ItemType::Light, Action::Toggle, Action::Off, false},
+    {ItemType::Switch, Action::Toggle, Action::Off, false},
+    {ItemType::Script, Action::Press, Action::None, false},
+    {ItemType::Button, Action::Press, Action::None, false},
+    {ItemType::Scene, Action::Press, Action::None, false},
+    {ItemType::Sensor, Action::None, Action::None, false},
+    {ItemType::MediaPlayer, Action::None, Action::None, false},
+    {ItemType::Number, Action::Edit, Action::None, true},
+    {ItemType::Settings, Action::Settings, Action::None, false},
+    {ItemType::Back, Action::Back, Action::None, false},
 };
 
 const ItemTypeDescriptor &itemTypeDescriptor(ItemType type) {
@@ -270,10 +270,23 @@ Edge DebouncedInput::update(bool rawPressed, uint32_t nowMs) {
     candidateSinceMs_ = nowMs;
     return Edge::None;
   }
-  if (candidate_ == stable_) return Edge::None;
-  if (!stableFor(nowMs, candidateSinceMs_)) return Edge::None;
-  stable_ = candidate_;
-  return stable_ ? Edge::Pressed : Edge::Released;
+  if (candidate_ != stable_) {
+    if (!stableFor(nowMs, candidateSinceMs_)) return Edge::None;
+    stable_ = candidate_;
+    if (stable_) {
+      pressedAtMs_ = nowMs;
+      longPressFired_ = false;
+      return Edge::Pressed;
+    }
+    longPressFired_ = false;  // a release ends any pending hold
+    return Edge::Released;
+  }
+  // Debounced state unchanged: the only event left is the hold crossing the long
+  // press threshold. Emitted once, and only while the key is really held.
+  if (!stable_ || longPressFired_) return Edge::None;
+  if (static_cast<uint32_t>(nowMs - pressedAtMs_) < LONG_PRESS_MS) return Edge::None;
+  longPressFired_ = true;
+  return Edge::LongPress;
 }
 
 void DebouncedInput::primeForWake(bool rawPressed, uint32_t nowMs) {
@@ -287,6 +300,11 @@ void DebouncedInput::primeForWake(bool rawPressed, uint32_t nowMs) {
   candidate_ = rawPressed;
   stable_ = rawPressed;
   candidateSinceMs_ = nowMs;
+  // The wake press is fully consumed by that immediate scan, so holding it must
+  // not turn into a long press half a second later: the operator would get the
+  // item's alternate action ("turn off") on top of the action they already
+  // triggered, just for holding the key that woke the pad.
+  longPressFired_ = rawPressed;
 }
 
 bool DebouncedInput::held() const { return stable_; }
@@ -363,8 +381,13 @@ void scanMatrixPass(DebouncedInput (&debounce)[MATRIX_KEY_COUNT],
       const uint8_t index = matrixKeyIndex(row, col);
       const Edge edge = debounce[index].update(readKey(row, col), nowMs);
       if (edge != Edge::None) {
-        emit(InputEvent{static_cast<KeyId>(index), edge == Edge::Pressed, 0,
-                        nowMs});
+        InputEvent event{};
+        event.key = static_cast<KeyId>(index);
+        event.pressed = (edge == Edge::Pressed) || (edge == Edge::LongPress);
+        event.direction = 0;
+        event.longPress = (edge == Edge::LongPress);
+        event.atMs = nowMs;
+        emit(event);
       }
     }
   }
@@ -571,6 +594,15 @@ void normalizeSelection(const Page *page, AppState &state) {
   }
 }
 
+Action alternateActionForSelectedItem(const Item &item) {
+  // A hold on a row asks for the type's second action (light/switch: turn off
+  // instead of toggle). Types without one answer None, so the caller can ignore
+  // the hold entirely rather than dispatching something arbitrary.
+  const ItemTypeDescriptor &descriptor = itemTypeDescriptor(item.type);
+  if (descriptor.alternateAction == descriptor.defaultAction) return Action::None;
+  return descriptor.alternateAction;
+}
+
 Action actionForSelectedItem(const Item &item, bool editing) {
   const ItemTypeDescriptor &descriptor = itemTypeDescriptor(item.type);
   // Edit mode turns the confirming press of an editable type into Confirm; every
@@ -602,6 +634,15 @@ Action PadController::selectedItemAction() const {
   const Page *page = findPage(catalog, state.pageId);
   if (page == nullptr || state.selected >= page->itemCount) return Action::None;
   return actionForSelectedItem(page->items[state.selected], state.editing);
+}
+
+Action PadController::selectedItemLongPressAction() const {
+  // Resolved for the item under the cursor, never for a keymap binding: a hold
+  // only means "the other thing" where there is an item to ask (light/switch:
+  // turn off instead of toggle).
+  const Page *page = findPage(catalog, state.pageId);
+  if (page == nullptr || state.selected >= page->itemCount) return Action::None;
+  return alternateActionForSelectedItem(page->items[state.selected]);
 }
 
 bool PadController::resyncDue(uint32_t nowMs) const {

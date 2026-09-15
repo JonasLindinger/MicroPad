@@ -455,14 +455,21 @@ def test_firmware_caps_match_the_contract():
 def test_firmware_item_type_descriptors_match_the_contract():
     """micropad_core.cpp's table and the contract's item_type_meta are one truth in two files."""
     source = (ROOT / "firmware" / "micropad_core.cpp").read_text(encoding="utf-8")
-    rows = re.findall(r"\{(ItemType::\w+), (Action::\w+), (true|false)\}", source)
+    rows = re.findall(
+        r"\{(ItemType::\w+), (Action::\w+), (Action::\w+), (true|false)\}", source
+    )
     assert rows, "ITEM_TYPE_DESCRIPTORS not found in firmware/micropad_core.cpp"
     firmware = {
-        _snake_case(item_type.split("::")[1]): (_snake_case(action.split("::")[1]), editable == "true")
-        for item_type, action, editable in rows
+        _snake_case(item_type.split("::")[1]): (
+            _snake_case(default_action.split("::")[1]),
+            _snake_case(alternate.split("::")[1]),
+            editable == "true",
+        )
+        for item_type, default_action, alternate, editable in rows
     }
+    # default_action = a tap, alternate_action = a hold, editable = the confirm gesture
     contract = {
-        entry["id"]: (entry["default_action"], entry["editable"])
+        entry["id"]: (entry["default_action"], entry["alternate_action"], entry["editable"])
         for entry in (read_json("mqtt-contract.json")["item_type_meta"])
     }
     assert firmware == contract

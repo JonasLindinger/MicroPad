@@ -466,6 +466,26 @@ class FirmwareNetworkContractTest(FirmwareStaticContractTest):
         self.assertIn("micropad::formatDiagnostics(diagnostics, buffer)", text)
         self.assertIn("ESP.getMinFreeHeap()", text)
 
+    def test_long_press_resolves_through_the_core(self):
+        # A hold is a gesture the core recognises (LONG_PRESS_MS after a debounced
+        # press) and resolves through the item-type descriptor; the sketch must not
+        # carry its own threshold or its own idea of "the other action".
+        text = self.ino()
+        core = self.source("firmware/micropad_core.h")
+        core_cpp = self.source("firmware/micropad_core.cpp")
+        self.assertIn("constexpr uint32_t LONG_PRESS_MS = 600;", core)
+        self.assertIn("enum class Edge : uint8_t { None, Pressed, Released, LongPress };", core)
+        self.assertIn("Action selectedItemLongPressAction() const;", core)
+        self.assertIn("Action alternateActionForSelectedItem(const Item &item);", core)
+        self.assertIn("pad.selectedItemLongPressAction()", text)
+        self.assertIn("if (input.longPress)", text)
+        # The wake press is consumed by the immediate wake scan, so holding the key
+        # that woke the pad never turns into a gesture.
+        self.assertIn("longPressFired_ = rawPressed;", core_cpp)
+        # Gestures must not add a second threshold or a private action table.
+        self.assertNotIn("LONG_PRESS_MS =", text)
+        self.assertNotIn("longPressFired", text)
+
     def test_mqtt_buffer_size_exact(self):
         self.assertIn(
             "mqttClient.setBufferSize(micropad::MQTT_BUFFER_BYTES)",

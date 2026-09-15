@@ -2369,6 +2369,62 @@ void testFormatDiagnostics() {
   static_assert(DIAGNOSTICS_JSON_CAP >= 200, "diagnostics payload budget");
 }
 
+void testLongPressGesture() {
+  // Debounce contract: a tap never fires the hold, a hold fires exactly once at
+  // the threshold, and a release re-arms it for the next press.
+  DebouncedInput input;
+  const uint32_t t0 = 1000;
+  assert(input.update(true, t0) == Edge::None);            // candidate, not stable
+  assert(input.update(true, t0 + INPUT_DEBOUNCE_MS) == Edge::Pressed);
+  assert(input.update(true, t0 + 100) == Edge::None);
+  assert(input.update(true, t0 + INPUT_DEBOUNCE_MS + LONG_PRESS_MS - 1) == Edge::None);
+  assert(input.update(true, t0 + INPUT_DEBOUNCE_MS + LONG_PRESS_MS) == Edge::LongPress);
+  assert(input.update(true, t0 + INPUT_DEBOUNCE_MS + LONG_PRESS_MS + 500) == Edge::None);
+  assert(input.update(false, t0 + 3000) == Edge::None);
+  assert(input.update(false, t0 + 3000 + INPUT_DEBOUNCE_MS) == Edge::Released);
+  // Second hold on the same key fires again (longPressFired_ was cleared).
+  assert(input.update(true, t0 + 4000) == Edge::None);
+  assert(input.update(true, t0 + 4000 + INPUT_DEBOUNCE_MS) == Edge::Pressed);
+  assert(input.update(true, t0 + 4000 + INPUT_DEBOUNCE_MS + LONG_PRESS_MS) == Edge::LongPress);
+
+  // A long press reaches the item's alternate action, and only where one exists.
+  PadController pad;
+  addPage(pad, "home", "", 3);
+  Item (&items)[MAX_ITEMS_PER_PAGE] = pad.catalog.pages[0].items;
+  items[0].type = ItemType::Light;
+  safeCopy(items[0].entity, "light.desk");
+  items[1].type = ItemType::Switch;
+  safeCopy(items[1].entity, "switch.fan");
+  items[2].type = ItemType::Sensor;
+  safeCopy(items[2].entity, "sensor.temp");
+  safeCopy(pad.state.pageId, "home");
+  pad.state.selected = 0;
+  assert(pad.selectedItemAction() == Action::Toggle);
+  assert(pad.selectedItemLongPressAction() == Action::Off);
+  pad.state.selected = 1;
+  assert(pad.selectedItemAction() == Action::Toggle);
+  assert(pad.selectedItemLongPressAction() == Action::Off);
+  // A sensor has no second action: the hold is ignored, not redirected.
+  pad.state.selected = 2;
+  assert(pad.selectedItemAction() == Action::None);
+  assert(pad.selectedItemLongPressAction() == Action::None);
+  // Off a page (no selection) the hold resolves to nothing.
+  safeCopy(pad.state.pageId, "missing");
+  assert(pad.selectedItemLongPressAction() == Action::None);
+
+  // Every type's alternate is either distinct from its default or explicitly
+  // None: an accidental "alternate == default" would make a hold dispatch a
+  // duplicate action.
+  for (size_t index = 0; index < ITEM_TYPE_COUNT; ++index) {
+    const ItemTypeDescriptor &descriptor = ITEM_TYPE_DESCRIPTORS[index];
+    Item item{};
+    item.type = static_cast<ItemType>(index);
+    const Action alternate = alternateActionForSelectedItem(item);
+    if (alternate != Action::None) assert(alternate != descriptor.defaultAction);
+  }
+  static_assert(LONG_PRESS_MS == 600, "long press threshold");
+}
+
 int main() {
   static_assert(KEY_COUNT == 14);
   static_assert(QUEUE_CAPACITY == 16);
@@ -2459,6 +2515,7 @@ int main() {
   testUsbToSleepPredicateScenario();
   testItemTypeDescriptorTable();
   testFormatDiagnostics();
+  testLongPressGesture();
   testAllActionsReachDefinedOutcome();
   static_assert(micropad::ACTION_COUNT == 21, "21 supported actions");
   static_assert(micropad::ITEM_TYPE_COUNT == 11, "11 supported item types");
