@@ -1,0 +1,20 @@
+{
+  "_ai_assisted_notice": "AI-assisted development — firmware, HA automation, config generator and docs were created with AI (LLM) help, reviewed and tested by the author. Provided as-is, without warranty; verify on your own hardware, don't use for safety-critical applications.",
+  "settings": {},
+  "pages": [
+    {"page_id":"home","title":"Home","parent":"","items":[{"name":"Living room","type":"category","entity":"","state":"","value":0,"min":0,"max":100,"step":1,"unit":"","editable":false,"target_page":"living-room"}]},
+    {"page_id":"living-room","title":"Living room","parent":"home","items":[],"keymap":{"r1c0":{"action":"toggle","entity":"light.living_room","target_page":""}}},
+    {"page_id":"upstairs","title":"Upstairs","parent":"living-room","items":[]},
+    {"page_id":"kitchen","title":"Kitchen","parent":"home","items":[]}
+  ],
+  "entity_cache": [
+    {"entity_id":"light.desk_lamp","friendly_name":"Desk Lamp","domain":"light"},
+    {"entity_id":"light.living_room","friendly_name":"Living Room","domain":"light"}
+  ],
+  "global_keymap": {
+    "r0c0":{"action":"home","entity":"","target_page":""},"r0c1":{"action":"none","entity":"","target_page":""},"r0c2":{"action":"none","entity":"","target_page":""},"r0c3":{"action":"enter","entity":"","target_page":""},
+    "r1c0":{"action":"none","entity":"","target_page":""},"r1c1":{"action":"none","entity":"","target_page":""},"r1c2":{"action":"none","entity":"","target_page":""},"r1c3":{"action":"enter","entity":"","target_page":""},
+    "r2c0":{"action":"none","entity":"","target_page":""},"r2c1":{"action":"none","entity":"","target_page":""},"r2c2":{"action":"none","entity":"","target_page":""},"r2c3":{"action":"back","entity":"","target_page":""},
+    "enc_up":{"action":"scroll_up","entity":"","target_page":""},"enc_down":{"action":"scroll_down","entity":"","target_page":""}
+  }
+}

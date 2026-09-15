@@ -1,20 +1,32 @@
-# Build artifacts
+# AI-assisted development — firmware, HA automation, config generator and docs were created with AI (LLM) help, reviewed and tested by the author. Provided as-is, without warranty; verify on your own hardware, don't use for safety-critical applications.
+# Local / generated / private state must never enter version control (they are
+# also excluded from the public release manifest and the public-tree audit).
+/.arduino/
+/.venv/
+/venv/
+/build/
+/.pytest_cache/
+/.mypy_cache/
+/.ruff_cache/
 __pycache__/
 *.pyc
-*.pyo
-*.pyd
-
-# Venv
-.venv/
-venv/
-
-# OS junk
-.DS_Store
-Thumbs.db
-
-# Editor
-.vscode/
-.idea/
-
-# Secrets — never commit real broker passwords
-secrets/
+node_modules/
+/playwright-report/
+/test-results/
+/config.json
+# Configuration history snapshots (micropad.history): same secrets as the config
+# file itself, so they are local state like it.
+/config.json.history/
+*.history/
+*.tmp
+*.bak
+*.backup
+*.orig
+*.pem
+*.key
+.release/
+/release/local-*.json
+.coverage
+htmlcov/
+dist/
+*.egg-info/

@@ -1,0 +1,74 @@
+# AI-assisted development — firmware, HA automation, config generator and docs were created with AI (LLM) help, reviewed and tested by the author. Provided as-is, without warranty; verify on your own hardware, don't use for safety-critical applications.
+#
+# Reproducible clean-room CI (Integration Task 7). Ubuntu, Python 3.10, a venv,
+# fully pinned Python requirements, the ESP32 toolchain cached by the four exact
+# pinned versions, pinned Playwright Chromium, and the evidence tree uploaded
+# even when a stage fails. This job holds no Home Assistant, MQTT broker, SSH,
+# or GitHub push credentials: it only has read scopes and needs none.
+#
+# Third-party actions are pinned to commit SHAs (P2.1), never mutable tags, so
+# a supplier cannot silently change what CI runs. All lint/typecheck/coverage/
+# workflow validation stages run inside `make ci` (P1.20).
+name: ci
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cleanroom:
+    name: Clean-room reproducible build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.10"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+
+      - name: Set up pinned Arduino CLI (1.5.1)
+        uses: arduino/setup-arduino-cli@81d310742121c928ea9c8bbd407b4217b432ae02 # v2
+        with:
+          version: "1.5.1"
+
+      - name: Cache Arduino core and libraries by exact pinned versions
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            .arduino
+          # Cache key covers CLI 1.5.1, esp32 core 3.3.11, and the three pinned
+          # library versions; any bump in any one of these busts the cache.
+          key: arduino-${{ runner.os }}-1.5.1-3.3.11-1.6.9-7.4.3-2.8
+
+      - name: Install and verify pinned Arduino toolchain
+        run: ./scripts/install-arduino-toolchain.sh
+
+      - name: Create venv and install pinned Python requirements
+        run: |
+          python3 -m venv .venv
+          .venv/bin/python -m pip install --upgrade pip
+          .venv/bin/python -m pip install --requirement requirements-dev.txt
+
+      - name: Install pinned Playwright Chromium
+        run: .venv/bin/python -m playwright install chromium
+
+      - name: Run full clean-room CI
+        run: make ci
+
+      - name: Upload evidence (even on failure)
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: cleanroom-evidence
+          path: build/evidence/

@@ -1,0 +1,2 @@
+# AI-assisted development — firmware, HA automation, config generator and docs were created with AI (LLM) help, reviewed and tested by the author. Provided as-is, without warranty; verify on your own hardware, don't use for safety-critical applications.
+"""Firmware host unit and static contract tests."""

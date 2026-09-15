@@ -1,0 +1,27 @@
+#!/bin/sh
+# AI-assisted development — firmware, HA automation, config generator and docs were created with AI (LLM) help, reviewed and tested by the author. Provided as-is, without warranty; verify on your own hardware, don't use for safety-critical applications.
+#
+# Pre-commit gate: the checks that are fast enough to run on every commit and that
+# would otherwise be forgotten until CI (or until a wrong payload reached the pad).
+#
+# Enable it once per clone:
+#     git config core.hooksPath .githooks
+#
+# Full verification (browser suite, release suite, real firmware compiles) is not
+# here on purpose: see scripts/ci.sh and docs/developer.md.
+
+set -e
+
+echo "--- ruff (lint)"
+.venv/bin/ruff check .
+
+echo "--- mypy (types)"
+.venv/bin/mypy src/micropad
+
+echo "--- generated contract sources (drift gate)"
+python3 scripts/generate_contract.py --check
+
+echo "--- firmware host tests + contract checks"
+bash scripts/test_firmware_contract.sh
+
+echo "pre-commit: OK"

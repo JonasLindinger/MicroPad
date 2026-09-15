@@ -1,0 +1,53 @@
+# AI-assisted development — firmware, HA automation, config generator and docs were created with AI (LLM) help, reviewed and tested by the author. Provided as-is, without warranty; verify on your own hardware, don't use for safety-critical applications.
+[build-system]
+# P2.2: build backend pinned exactly so builds do not move with mutable
+# setuptools versions; the full dependency graph is locked in uv.lock and
+# materialized with content hashes in requirements-lock.txt.
+requires = ["setuptools==84.0.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "micropad-configurator"
+version = "0.1.0"
+requires-python = ">=3.10"
+dynamic = ["dependencies"]
+
+[tool.setuptools.dynamic]
+dependencies = {file = ["requirements.txt"]}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+addopts = "--strict-markers --strict-config"
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.coverage.run]
+branch = true
+source = ["micropad"]
+
+[tool.coverage.report]
+fail_under = 90
+show_missing = true
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "S", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests and operator scripts deliberately drive git/subprocess/sha256sum etc.
+# with explicit argv lists and shell=False (never untrusted shell text): the
+# S603/S607 subprocess heuristics are noise there. E501/S101 are test-style.
+"tests/*" = ["E501", "S101", "S603", "S607"]
+"scripts/*" = ["E501", "S603", "S607"]
+# Local-only migration helper (not shipped): line-length style only.
+"scripts_local/*" = ["E501"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+packages = ["micropad"]

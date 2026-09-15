@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://micropad.local/contracts/keymap.schema.json",
+  "$comment": "AI-assisted development — firmware, HA automation, config generator and docs were created with AI (LLM) help, reviewed and tested by the author. Provided as-is, without warranty; verify on your own hardware, don't use for safety-critical applications.",
+  "title": "MicroPad Keymap",
+  "description": "A complete effective keymap published on topic micropad/keymap. Exactly the fourteen physical input IDs (r0c0..r2c3 plus enc_up and enc_down) must appear; no extra or missing key is accepted, and each binding carries the action/entity/target_page fields the firmware parses.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["r0c0", "r0c1", "r0c2", "r0c3", "r1c0", "r1c1", "r1c2", "r1c3", "r2c0", "r2c1", "r2c2", "r2c3", "enc_up", "enc_down"],
+  "minProperties": 14,
+  "maxProperties": 14,
+  "properties": {
+    "r0c0": {"$ref": "#/$defs/binding"},
+    "r0c1": {"$ref": "#/$defs/binding"},
+    "r0c2": {"$ref": "#/$defs/binding"},
+    "r0c3": {"$ref": "#/$defs/binding"},
+    "r1c0": {"$ref": "#/$defs/binding"},
+    "r1c1": {"$ref": "#/$defs/binding"},
+    "r1c2": {"$ref": "#/$defs/binding"},
+    "r1c3": {"$ref": "#/$defs/binding"},
+    "r2c0": {"$ref": "#/$defs/binding"},
+    "r2c1": {"$ref": "#/$defs/binding"},
+    "r2c2": {"$ref": "#/$defs/binding"},
+    "r2c3": {"$ref": "#/$defs/binding"},
+    "enc_up": {"$ref": "#/$defs/binding"},
+    "enc_down": {"$ref": "#/$defs/binding"}
+  },
+  "$defs": {
+    "binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["action", "entity", "target_page"],
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": ["none", "enter", "back", "home", "settings", "scroll", "scroll_up", "scroll_down", "navigate", "keymap", "get_all_pages", "toggle", "on", "off", "press", "volume_up", "volume_down", "media_next", "media_prev", "edit", "confirm"]
+        },
+        "entity": {"type": "string", "default": ""},
+        "target_page": {"type": "string", "default": ""}
+      }
+    }
+  }
+}

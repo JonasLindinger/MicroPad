@@ -1,0 +1,33 @@
+# AI-assisted development — firmware, HA automation, config generator and docs were created with AI (LLM) help, reviewed and tested by the author. Provided as-is, without warranty; verify on your own hardware, don't use for safety-critical applications.
+[Unit]
+Description=MicroPad configurator
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=micropad
+Group=micropad
+WorkingDirectory=/opt/micropad/app
+Environment=PYTHONUNBUFFERED=1
+Environment=MICROPAD_CONFIG_PATH=/var/lib/micropad/config.json
+# Optional admin secrets supplied by the operator (0600): MICROPAD_ADMIN_SECRET
+# (required for any non-loopback bind) and MICROPAD_BIND. Without them the app
+# binds 127.0.0.1 only and is not exposed to the network.
+EnvironmentFile=-/etc/micropad/admin.env
+ExecStart=/opt/micropad/app/.venv/bin/gunicorn --config /opt/micropad/app/gunicorn.conf.py micropad.wsgi:app
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+PrivateDevices=true
+CapabilityBoundingSet=
+ReadWritePaths=/var/lib/micropad
+
+[Install]
+WantedBy=multi-user.target

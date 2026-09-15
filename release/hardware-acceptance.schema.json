@@ -1,0 +1,192 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://micropad.invalid/schemas/hardware-acceptance.schema.json",
+  "title": "MicroPad Physical Hardware Acceptance Record",
+  "description": "Strict, machine-validated record of on-device physical acceptance checks for a MicroPad bench unit. Every required check must be present and true, each with at least one evidence entry; additionalProperties is false throughout so no operator, Wi-Fi, MQTT, Home Assistant, broker host, or device entity data can enter the record.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "board_id",
+    "firmware_sha256",
+    "started_at",
+    "completed_at",
+    "checks",
+    "evidence"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "board_id": {
+      "type": "string",
+      "pattern": "^bench-[0-9]{2}$"
+    },
+    "firmware_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "started_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "completed_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "checks": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "boot-full-refresh",
+        "display-four-rows",
+        "full-panel-partial-refresh",
+        "ghosting-bound",
+        "matrix-all-twelve",
+        "encoder-clockwise-down",
+        "encoder-counterclockwise-up",
+        "encoder-push-r0c3",
+        "input-during-refresh",
+        "portal-random-password",
+        "portal-never-sleeps",
+        "portal-input-responsive",
+        "portal-back-no-save",
+        "wifi-mqtt-nonblocking",
+        "mqtt-reconnect-resubscribe",
+        "authoritative-resync",
+        "usb-host-icon-after-1500ms",
+        "usb-host-prevents-sleep",
+        "usb-disconnect-clears-after-1500ms",
+        "battery-idle-sleeps-near-60s",
+        "wake-action-immediate",
+        "charge-only-follows-battery-sleep"
+      ],
+      "properties": {
+        "boot-full-refresh": {
+          "const": true
+        },
+        "display-four-rows": {
+          "const": true
+        },
+        "full-panel-partial-refresh": {
+          "const": true
+        },
+        "ghosting-bound": {
+          "const": true
+        },
+        "matrix-all-twelve": {
+          "const": true
+        },
+        "encoder-clockwise-down": {
+          "const": true
+        },
+        "encoder-counterclockwise-up": {
+          "const": true
+        },
+        "encoder-push-r0c3": {
+          "const": true
+        },
+        "input-during-refresh": {
+          "const": true
+        },
+        "portal-random-password": {
+          "const": true
+        },
+        "portal-never-sleeps": {
+          "const": true
+        },
+        "portal-input-responsive": {
+          "const": true
+        },
+        "portal-back-no-save": {
+          "const": true
+        },
+        "wifi-mqtt-nonblocking": {
+          "const": true
+        },
+        "mqtt-reconnect-resubscribe": {
+          "const": true
+        },
+        "authoritative-resync": {
+          "const": true
+        },
+        "usb-host-icon-after-1500ms": {
+          "const": true
+        },
+        "usb-host-prevents-sleep": {
+          "const": true
+        },
+        "usb-disconnect-clears-after-1500ms": {
+          "const": true
+        },
+        "battery-idle-sleeps-near-60s": {
+          "const": true
+        },
+        "wake-action-immediate": {
+          "const": true
+        },
+        "charge-only-follows-battery-sleep": {
+          "const": true
+        }
+      }
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "check_id",
+          "kind",
+          "sha256",
+          "captured_at"
+        ],
+        "properties": {
+          "check_id": {
+            "enum": [
+              "boot-full-refresh",
+              "display-four-rows",
+              "full-panel-partial-refresh",
+              "ghosting-bound",
+              "matrix-all-twelve",
+              "encoder-clockwise-down",
+              "encoder-counterclockwise-up",
+              "encoder-push-r0c3",
+              "input-during-refresh",
+              "portal-random-password",
+              "portal-input-responsive",
+              "portal-back-no-save",
+              "wifi-mqtt-nonblocking",
+              "mqtt-reconnect-resubscribe",
+              "authoritative-resync",
+              "usb-host-icon-after-1500ms",
+              "usb-host-prevents-sleep",
+              "usb-disconnect-clears-after-1500ms",
+              "battery-idle-sleeps-near-60s",
+              "wake-action-immediate",
+              "charge-only-follows-battery-sleep",
+              "portal-never-sleeps"
+            ]
+          },
+          "kind": {
+            "enum": [
+              "photo",
+              "video",
+              "serial-disabled",
+              "timing-log",
+              "manual-observation"
+            ]
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "captured_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      }
+    }
+  }
+}

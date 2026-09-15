@@ -1,0 +1,88 @@
+{
+  "_ai_assisted_notice": "AI-assisted development — firmware, HA automation, config generator and docs were created with AI (LLM) help, reviewed and tested by the author. Provided as-is, without warranty; verify on your own hardware, don't use for safety-critical applications.",
+  "version": 2,
+  "topics": {
+    "event": {"name": "micropad/event", "retain": false},
+    "pages": {"name": "micropad/pages/all", "retain": true},
+    "current_page": {"name": "micropad/page/current", "retain": true},
+    "keymap": {"name": "micropad/keymap", "retain": true},
+    "power": {"name": "micropad/power", "retain": true},
+    "device": {"name": "micropad/device", "retain": true},
+    "diag": {"name": "micropad/diag", "retain": true}
+  },
+  "actions": ["none", "enter", "back", "home", "settings", "scroll", "scroll_up", "scroll_down", "navigate", "keymap", "get_all_pages", "toggle", "on", "off", "press", "volume_up", "volume_down", "media_next", "media_prev", "edit", "confirm"],
+  "action_meta": [
+    {"id": "enter", "label": "Enter", "group": "Navigation", "argument": "none"},
+    {"id": "back", "label": "Back", "group": "Navigation", "argument": "none"},
+    {"id": "home", "label": "Home", "group": "Navigation", "argument": "none"},
+    {"id": "navigate", "label": "Navigate", "group": "Navigation", "argument": "target_page"},
+    {"id": "keymap", "label": "Keymap", "group": "Navigation", "argument": "target_page"},
+    {"id": "scroll", "label": "Scroll", "group": "Scrolling", "argument": "none"},
+    {"id": "scroll_up", "label": "Scroll up", "group": "Scrolling", "argument": "none"},
+    {"id": "scroll_down", "label": "Scroll down", "group": "Scrolling", "argument": "none"},
+    {"id": "toggle", "label": "Toggle", "group": "Device", "argument": "entity"},
+    {"id": "on", "label": "Turn on", "group": "Device", "argument": "entity"},
+    {"id": "off", "label": "Turn off", "group": "Device", "argument": "entity"},
+    {"id": "press", "label": "Press", "group": "Device", "argument": "entity"},
+    {"id": "edit", "label": "Edit", "group": "Device", "argument": "entity"},
+    {"id": "confirm", "label": "Confirm", "group": "Device", "argument": "entity"},
+    {"id": "volume_up", "label": "Volume up", "group": "Media", "argument": "entity"},
+    {"id": "volume_down", "label": "Volume down", "group": "Media", "argument": "entity"},
+    {"id": "media_next", "label": "Next track", "group": "Media", "argument": "entity"},
+    {"id": "media_prev", "label": "Previous track", "group": "Media", "argument": "entity"},
+    {"id": "none", "label": "No action", "group": "System", "argument": "none"},
+    {"id": "settings", "label": "Settings", "group": "System", "argument": "none"},
+    {"id": "get_all_pages", "label": "Refresh all pages", "group": "System", "argument": "none"}
+  ],
+  "key_ids": ["r0c0", "r0c1", "r0c2", "r0c3", "r1c0", "r1c1", "r1c2", "r1c3", "r2c0", "r2c1", "r2c2", "r2c3", "enc_up", "enc_down"],
+  "item_types": ["category", "light", "switch", "script", "button", "scene", "sensor", "media_player", "number", "settings", "back", "cover", "fan", "input_boolean", "lock"],
+  "item_type_meta": [
+    {"id": "category", "label": "Category", "ha_domains": [], "default_action": "navigate", "alternate_action": "none", "editable": false, "has_value": false, "needs_target_page": true},
+    {"id": "light", "label": "Light", "ha_domains": ["light"], "default_action": "toggle", "alternate_action": "off", "editable": false, "has_value": true, "needs_target_page": false},
+    {"id": "switch", "label": "Switch", "ha_domains": ["switch"], "default_action": "toggle", "alternate_action": "off", "editable": false, "has_value": true, "needs_target_page": false},
+    {"id": "script", "label": "Script", "ha_domains": ["script"], "default_action": "press", "alternate_action": "none", "editable": false, "has_value": false, "needs_target_page": false},
+    {"id": "button", "label": "Button", "ha_domains": ["button"], "default_action": "press", "alternate_action": "none", "editable": false, "has_value": false, "needs_target_page": false},
+    {"id": "scene", "label": "Scene", "ha_domains": ["scene"], "default_action": "press", "alternate_action": "none", "editable": false, "has_value": false, "needs_target_page": false},
+    {"id": "sensor", "label": "Sensor", "ha_domains": ["sensor", "binary_sensor"], "default_action": "none", "alternate_action": "none", "editable": false, "has_value": true, "needs_target_page": false},
+    {"id": "media_player", "label": "Media player", "ha_domains": ["media_player"], "default_action": "none", "alternate_action": "none", "editable": false, "has_value": true, "needs_target_page": false},
+    {"id": "number", "label": "Number", "ha_domains": ["number"], "default_action": "edit", "alternate_action": "none", "editable": true, "has_value": true, "needs_target_page": false},
+    {"id": "settings", "label": "Settings", "ha_domains": [], "default_action": "settings", "alternate_action": "none", "editable": false, "has_value": false, "needs_target_page": false},
+    {"id": "back", "label": "Back", "ha_domains": [], "default_action": "back", "alternate_action": "none", "editable": false, "has_value": false, "needs_target_page": false},
+    {"id": "cover", "label": "Cover", "ha_domains": ["cover"], "default_action": "toggle", "alternate_action": "none", "editable": false, "has_value": true, "needs_target_page": false},
+    {"id": "fan", "label": "Fan", "ha_domains": ["fan"], "default_action": "toggle", "alternate_action": "off", "editable": false, "has_value": true, "needs_target_page": false},
+    {"id": "input_boolean", "label": "Helper switch", "ha_domains": ["input_boolean"], "default_action": "toggle", "alternate_action": "off", "editable": false, "has_value": true, "needs_target_page": false},
+    {"id": "lock", "label": "Lock", "ha_domains": ["lock"], "default_action": "on", "alternate_action": "off", "editable": false, "has_value": true, "needs_target_page": false}
+  ],
+  "limits": {
+    "page_bytes": 8192,
+    "catalog_bytes": 16000,
+    "keymap_bytes": 16380,
+    "mqtt_buffer_bytes": 16384
+  },
+  "caps": {
+    "max_pages": 24,
+    "max_items_per_page": 20,
+    "key_count": 14,
+    "queue_capacity": 16,
+    "mqtt_buffer_bytes": 16384,
+    "event_buffer_bytes": 512,
+    "loop_task_stack_bytes": 16384,
+    "render_prim_cap": 32,
+    "max_partial_refreshes": 0,
+    "input_debounce_ms": 25,
+    "field_caps": {
+      "page_id": 32,
+      "title": 32,
+      "name": 32,
+      "entity": 96,
+      "state": 32,
+      "unit": 16
+    }
+  },
+  "schemas": {
+    "event": "event.schema.json",
+    "page": "page.schema.json",
+    "catalog": "catalog.schema.json",
+    "keymap": "keymap.schema.json"
+  }
+}

@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://micropad.local/contracts/catalog.schema.json",
+  "$comment": "AI-assisted development — firmware, HA automation, config generator and docs were created with AI (LLM) help, reviewed and tested by the author. Provided as-is, without warranty; verify on your own hardware, don't use for safety-critical applications.",
+  "title": "MicroPad Catalog",
+  "description": "The boot-time catalog published by the backend on topic micropad/pages/all. The page definition is inlined here so the catalog validates standalone without external reference resolution.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["pages"],
+  "properties": {
+    "pages": {
+      "type": "array",
+      "maxItems": 24,
+      "items": {"$ref": "#/$defs/page"}
+    }
+  },
+  "$defs": {
+    "page": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["page_id", "title", "parent", "items"],
+      "properties": {
+        "page_id": {"type": "string", "minLength": 1, "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"},
+        "title": {"type": "string", "minLength": 1},
+        "parent": {"type": "string"},
+        "items": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {"$ref": "#/$defs/item"}
+        }
+      }
+    },
+    "item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "type"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "type": {
+          "type": "string",
+          "enum": ["category", "light", "switch", "script", "button", "scene", "sensor", "media_player", "number", "settings", "back"]
+        },
+        "entity": {"type": "string", "default": ""},
+        "state": {"type": "string", "default": ""},
+        "value": {"type": "number", "default": 0},
+        "min": {"type": "number", "default": 0},
+        "max": {"type": "number", "default": 100},
+        "step": {"type": "number", "exclusiveMinimum": 0, "default": 1},
+        "unit": {"type": "string", "default": ""},
+        "editable": {"type": "boolean", "default": false},
+        "target_page": {"type": "string", "default": ""}
+      }
+    }
+  }
+}

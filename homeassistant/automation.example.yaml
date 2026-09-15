@@ -1,0 +1,123 @@
+# AI-assisted development — firmware, HA automation, config generator and docs were created with AI (LLM) help, reviewed and tested by the author. Provided as-is, without warranty; verify on your own hardware, don't use for safety-critical applications.
+id: micropad_controller
+alias: MicroPad Controller
+mode: queued
+max: 20
+triggers:
+- trigger: mqtt
+  topic: micropad/event
+  id: micropad_event
+- trigger: homeassistant
+  event: start
+  id: ha_start
+conditions: []
+actions:
+- choose:
+  - conditions:
+    - condition: trigger
+      id: ha_start
+    sequence:
+    - action: mqtt.publish
+      data:
+        topic: micropad/pages/all
+        payload: '{"pages":[{"page_id":"home","title":"Home","parent":"","items":[]}]}'
+        retain: true
+        qos: 0
+    - action: mqtt.publish
+      data:
+        topic: micropad/page/current
+        payload: '{"page_id":"home","title":"Home","parent":"","items":[]}'
+        retain: true
+        qos: 0
+    - action: mqtt.publish
+      data:
+        topic: micropad/keymap
+        payload: '{"r0c0":{"action":"home","entity":"","target_page":""},"r0c1":{"action":"none","entity":"","target_page":""},"r0c2":{"action":"none","entity":"","target_page":""},"r0c3":{"action":"enter","entity":"","target_page":""},"r1c0":{"action":"none","entity":"","target_page":""},"r1c1":{"action":"none","entity":"","target_page":""},"r1c2":{"action":"none","entity":"","target_page":""},"r1c3":{"action":"enter","entity":"","target_page":""},"r2c0":{"action":"none","entity":"","target_page":""},"r2c1":{"action":"none","entity":"","target_page":""},"r2c2":{"action":"none","entity":"","target_page":""},"r2c3":{"action":"back","entity":"","target_page":""},"enc_up":{"action":"scroll_up","entity":"","target_page":""},"enc_down":{"action":"scroll_down","entity":"","target_page":""}}'
+        retain: true
+        qos: 0
+  - conditions:
+    - condition: trigger
+      id: micropad_event
+    sequence:
+    - variables:
+        event: '{{ trigger.payload_json }}'
+    - choose:
+      - conditions:
+        - condition: template
+          value_template: '{{ event.action == "navigate" and event.target_page ==
+            "home" }}'
+        sequence:
+        - action: mqtt.publish
+          data:
+            topic: micropad/page/current
+            payload: '{"page_id":"home","title":"Home","parent":"","items":[]}'
+            retain: true
+            qos: 0
+        - action: mqtt.publish
+          data:
+            topic: micropad/keymap
+            payload: '{"r0c0":{"action":"home","entity":"","target_page":""},"r0c1":{"action":"none","entity":"","target_page":""},"r0c2":{"action":"none","entity":"","target_page":""},"r0c3":{"action":"enter","entity":"","target_page":""},"r1c0":{"action":"none","entity":"","target_page":""},"r1c1":{"action":"none","entity":"","target_page":""},"r1c2":{"action":"none","entity":"","target_page":""},"r1c3":{"action":"enter","entity":"","target_page":""},"r2c0":{"action":"none","entity":"","target_page":""},"r2c1":{"action":"none","entity":"","target_page":""},"r2c2":{"action":"none","entity":"","target_page":""},"r2c3":{"action":"back","entity":"","target_page":""},"enc_up":{"action":"scroll_up","entity":"","target_page":""},"enc_down":{"action":"scroll_down","entity":"","target_page":""}}'
+            retain: true
+            qos: 0
+      - conditions:
+        - condition: template
+          value_template: '{{ event.action == "keymap" and event.target_page == "home"
+            }}'
+        sequence:
+        - action: mqtt.publish
+          data:
+            topic: micropad/keymap
+            payload: '{"r0c0":{"action":"home","entity":"","target_page":""},"r0c1":{"action":"none","entity":"","target_page":""},"r0c2":{"action":"none","entity":"","target_page":""},"r0c3":{"action":"enter","entity":"","target_page":""},"r1c0":{"action":"none","entity":"","target_page":""},"r1c1":{"action":"none","entity":"","target_page":""},"r1c2":{"action":"none","entity":"","target_page":""},"r1c3":{"action":"enter","entity":"","target_page":""},"r2c0":{"action":"none","entity":"","target_page":""},"r2c1":{"action":"none","entity":"","target_page":""},"r2c2":{"action":"none","entity":"","target_page":""},"r2c3":{"action":"back","entity":"","target_page":""},"enc_up":{"action":"scroll_up","entity":"","target_page":""},"enc_down":{"action":"scroll_down","entity":"","target_page":""}}'
+            retain: true
+            qos: 0
+      - conditions:
+        - condition: template
+          value_template: '{{ event.action == "keymap" and event.page_id == "home"
+            and event.target_page | default('''') == '''' }}'
+        sequence:
+        - action: mqtt.publish
+          data:
+            topic: micropad/keymap
+            payload: '{"r0c0":{"action":"home","entity":"","target_page":""},"r0c1":{"action":"none","entity":"","target_page":""},"r0c2":{"action":"none","entity":"","target_page":""},"r0c3":{"action":"enter","entity":"","target_page":""},"r1c0":{"action":"none","entity":"","target_page":""},"r1c1":{"action":"none","entity":"","target_page":""},"r1c2":{"action":"none","entity":"","target_page":""},"r1c3":{"action":"enter","entity":"","target_page":""},"r2c0":{"action":"none","entity":"","target_page":""},"r2c1":{"action":"none","entity":"","target_page":""},"r2c2":{"action":"none","entity":"","target_page":""},"r2c3":{"action":"back","entity":"","target_page":""},"enc_up":{"action":"scroll_up","entity":"","target_page":""},"enc_down":{"action":"scroll_down","entity":"","target_page":""}}'
+            retain: true
+            qos: 0
+      - conditions:
+        - condition: template
+          value_template: '{{ event.action == "home" }}'
+        sequence:
+        - action: mqtt.publish
+          data:
+            topic: micropad/page/current
+            payload: '{"page_id":"home","title":"Home","parent":"","items":[]}'
+            retain: true
+            qos: 0
+        - action: mqtt.publish
+          data:
+            topic: micropad/keymap
+            payload: '{"r0c0":{"action":"home","entity":"","target_page":""},"r0c1":{"action":"none","entity":"","target_page":""},"r0c2":{"action":"none","entity":"","target_page":""},"r0c3":{"action":"enter","entity":"","target_page":""},"r1c0":{"action":"none","entity":"","target_page":""},"r1c1":{"action":"none","entity":"","target_page":""},"r1c2":{"action":"none","entity":"","target_page":""},"r1c3":{"action":"enter","entity":"","target_page":""},"r2c0":{"action":"none","entity":"","target_page":""},"r2c1":{"action":"none","entity":"","target_page":""},"r2c2":{"action":"none","entity":"","target_page":""},"r2c3":{"action":"back","entity":"","target_page":""},"enc_up":{"action":"scroll_up","entity":"","target_page":""},"enc_down":{"action":"scroll_down","entity":"","target_page":""}}'
+            retain: true
+            qos: 0
+      - conditions:
+        - condition: template
+          value_template: '{{ event.action == "get_all_pages" }}'
+        sequence:
+        - action: mqtt.publish
+          data:
+            topic: micropad/pages/all
+            payload: '{"pages":[{"page_id":"home","title":"Home","parent":"","items":[]}]}'
+            retain: true
+            qos: 0
+        - action: mqtt.publish
+          data:
+            topic: micropad/page/current
+            payload: '{"page_id":"home","title":"Home","parent":"","items":[]}'
+            retain: true
+            qos: 0
+        - action: mqtt.publish
+          data:
+            topic: micropad/keymap
+            payload: '{"r0c0":{"action":"home","entity":"","target_page":""},"r0c1":{"action":"none","entity":"","target_page":""},"r0c2":{"action":"none","entity":"","target_page":""},"r0c3":{"action":"enter","entity":"","target_page":""},"r1c0":{"action":"none","entity":"","target_page":""},"r1c1":{"action":"none","entity":"","target_page":""},"r1c2":{"action":"none","entity":"","target_page":""},"r1c3":{"action":"enter","entity":"","target_page":""},"r2c0":{"action":"none","entity":"","target_page":""},"r2c1":{"action":"none","entity":"","target_page":""},"r2c2":{"action":"none","entity":"","target_page":""},"r2c3":{"action":"back","entity":"","target_page":""},"enc_up":{"action":"scroll_up","entity":"","target_page":""},"enc_down":{"action":"scroll_down","entity":"","target_page":""}}'
+            retain: true
+            qos: 0
+      default: []
+  default: []
