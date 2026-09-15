@@ -21,6 +21,14 @@ function flatten(pages) {
 }
 
 export function mountPageTree(element, store) {
+  // The toolbar is rebuilt from scratch on every render, so the title field is a fresh
+  // element each time. Anything typed therefore has to be remembered outside the DOM:
+  // without this, a re-render between typing and the rename click silently discarded the
+  // value - a save landing from the previous action was enough - and the rename became a
+  // no-op that still looked like a successful click (found on a slow CI runner, where the
+  // duplicate was then named after the old title).
+  let pendingTitle = null;
+  let titlePageId = null;
   function openDeleteDialog(title, pageId, parentId) {
     const dialog = document.createElement('dialog');
     const message = document.createElement('p');
@@ -97,9 +105,18 @@ export function mountPageTree(element, store) {
     });
     toolbar.appendChild(addButton);
 
+    // A different page selected means a new editing session: forget the typed value.
+    if (state.selectedPageId !== titlePageId) {
+      titlePageId = state.selectedPageId;
+      pendingTitle = null;
+    }
     const titleInput = document.createElement('input');
     titleInput.type = 'text';
     titleInput.setAttribute('aria-label', 'Page title');
+    titleInput.value = pendingTitle ?? '';
+    titleInput.addEventListener('input', () => {
+      pendingTitle = titleInput.value;
+    });
     toolbar.appendChild(titleInput);
 
     const renameButton = document.createElement('button');
@@ -108,7 +125,10 @@ export function mountPageTree(element, store) {
     renameButton.addEventListener('click', () => {
       const current = store.getState();
       const next = renamePage(current.config, current.selectedPageId, titleInput.value);
-      if (next !== current.config) store.replaceConfig(next);
+      if (next !== current.config) {
+        store.replaceConfig(next);
+        pendingTitle = null;  // the field is done, the next render starts clean
+      }
     });
     toolbar.appendChild(renameButton);
 
