@@ -27,6 +27,28 @@ time - an image without it starts and then fails on the first request. `data/` h
 configuration and its history snapshots; mount it or the settings live and die with the
 container. Never bake a real secret into the image.
 
+The image also carries the host simulator (`build/host/micropad_sim`), compiled in a build
+stage from the shipped firmware core. The panel preview and the byte budgets come from
+that binary, so an image without it answers `503 simulator_unavailable` on `/api/simulate`
+and the preview panel shows a build path instead of the pad's screen.
+
+**No login on a trusted LAN.** The fail-closed default refuses to bind a non-loopback
+address without a secret. An operator who wants the configurator open on their own network
+(no sign-in dialog, as the pre-auth builds behaved) opts in explicitly - and every start
+logs a warning, because anyone who can reach the port can read the stored Home Assistant
+token and publish with it:
+
+```bash
+docker run --rm -p 8080:8080 \
+  -e MICROPAD_ALLOW_UNAUTHENTICATED_LAN=1 \
+  -e MICROPAD_BIND=0.0.0.0:8080 \
+  -v "$PWD/data:/app/data" micropad-configurator
+```
+
+Writes from non-loopback clients still require the `X-Requested-With` guard, so a
+cross-site form cannot publish anything. Use the secret (see below) whenever the network
+is not entirely yours.
+
 ## Install
 
 `scripts/setup.sh` deploys the app to `/opt/micropad/app`, runs it as the

@@ -27,12 +27,18 @@ from __future__ import annotations
 import hmac
 import ipaddress
 import os
+import sys
 
 #: Environment variable holding the admin secret (the value is the variable NAME,
 #: not a secret; the secret itself only ever lives in the environment).
 SECRET_ENV = "MICROPAD_ADMIN_SECRET"  # noqa: S105
 #: Environment variable overriding the bind endpoint (default is loopback).
 BIND_ENV = "MICROPAD_BIND"
+#: Environment variable that explicitly permits serving the API without a secret on a
+#: non-loopback bind. Off by default: this endpoint can read the stored HA token and
+#: publish to Home Assistant, so an open deployment has to be a deliberate, visible
+#: choice ("my own LAN, no login") rather than an accident of a missing variable.
+ALLOW_UNAUTHENTICATED_LAN_ENV = "MICROPAD_ALLOW_UNAUTHENTICATED_LAN"
 #: Default bind: loopback only, so a misconfigured deployment is not public.
 DEFAULT_BIND = "127.0.0.1:8080"
 
@@ -52,6 +58,12 @@ def admin_secret() -> str | None:
     """Return the configured admin secret, or ``None`` when unset/empty."""
     value = os.environ.get(SECRET_ENV)
     return value if value else None
+
+
+def allow_unauthenticated_lan() -> bool:
+    """True when the operator opted into an open, secret-less API on a non-loopback bind."""
+    value = (os.environ.get(ALLOW_UNAUTHENTICATED_LAN_ENV) or "").strip().lower()
+    return value in {"1", "true", "yes", "on"}
 
 
 def is_loopback(remote_addr: str | None) -> bool:
@@ -100,10 +112,22 @@ def secure_bind(default_bind: str = DEFAULT_BIND) -> str:
 
     Raises ``SystemExit`` when no admin secret is configured and the resolved
     bind would be reachable from outside the host.  This makes a misconfigured
-    production start fail loudly instead of coming up insecure.
+    production start fail loudly instead of coming up insecure.  An operator who
+    wants that posture anyway (a trusted LAN, no login) sets
+    ``MICROPAD_ALLOW_UNAUTHENTICATED_LAN=1``; the start then logs a warning on
+    every boot instead of failing.
     """
     bind = os.environ.get(BIND_ENV) or default_bind
     if not bind_loopback(bind) and admin_secret() is None:
+        if allow_unauthenticated_lan():
+            print(
+                f"WARNING: binding {bind} WITHOUT {SECRET_ENV} because "
+                f"{ALLOW_UNAUTHENTICATED_LAN_ENV} is set. Anyone who can reach this "
+                "port can read the stored Home Assistant token and publish to Home "
+                "Assistant. Use it only on a network you trust.",
+                file=sys.stderr,
+            )
+            return bind
         raise SystemExit(
             f"refusing to bind {bind!r} without {SECRET_ENV}: an unauthenticated "
             "endpoint must not be exposed on a non-loopback address"

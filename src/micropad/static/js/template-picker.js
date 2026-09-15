@@ -38,12 +38,22 @@ export function mountTemplatePicker(element, store) {
       create.textContent = `Create ${template.label} page`;
       create.addEventListener('click', () => {
         const current = store.getState();
-        const {config: nextConfig, pageId} = createPageFromTemplate(current.config, current.selectedPageId, template);
+        const parentId = current.selectedPageId;
+        const parent = current.config.pages.find(page => page.page_id === parentId);
+        const {config: nextConfig, pageId, linked} = createPageFromTemplate(
+          current.config, parentId, template,
+          {maxItemsPerPage: current.meta?.caps?.max_items_per_page},
+        );
         store.replaceConfig(nextConfig);
         store.dispatch({type:'select-page', pageId});
         const titleInput = document.querySelector('#page-tree [aria-label="Page title"]');
         if (titleInput) titleInput.focus();
-        notice.textContent = `${template.label} page created.`;
+        // Say where the new page hangs: on the pad it is only reachable through the
+        // parent's menu entry, so "created" alone would be misleading (and a page that
+        // fits nowhere must not look like a success).
+        notice.textContent = linked
+          ? `${template.label} page created and linked from ${parent ? parent.title : parentId}.`
+          : `${template.label} page created, but ${parent ? parent.title : parentId} is at the item limit — link it from another page.`;
       });
 
       card.appendChild(title);

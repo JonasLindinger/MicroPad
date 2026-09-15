@@ -14,18 +14,54 @@ export function uniquePageId(pages, title) {
   return candidate;
 }
 
-export function createPage(config, parentId) {
+// The pad renders a menu from the *items* of a page, never from the page list: a page
+// that no parent links to exists in the configurator and can never be opened on the
+// device. Reported symptom: "the website says there is a Spotify page, the board does
+// not show it". Every page created here therefore also becomes a category item on its
+// parent — unless that parent is already at the item cap, because silently making a
+// valid page invalid is worse than an unlinked page the lint reports.
+const categoryItem = (name, targetPage) => ({
+  name,
+  type: 'category',
+  entity: '',
+  state: '',
+  value: 0,
+  min: 0,
+  max: 100,
+  step: 1,
+  unit: '',
+  editable: false,
+  target_page: targetPage,
+});
+
+function withChildLink(pages, parentId, name, childId, maxItemsPerPage) {
+  const parent = pages.find(page => page.page_id === parentId);
+  if (!parent || parent.items.length >= maxItemsPerPage) return {pages, linked: false};
+  return {
+    pages: pages.map(page => page.page_id === parentId
+      ? {...page, items: [...page.items, categoryItem(name, childId)]}
+      : page),
+    linked: true,
+  };
+}
+
+const linkLimit = options => (Number.isFinite(options.maxItemsPerPage) ? options.maxItemsPerPage : Infinity);
+
+export function createPage(config, parentId, options = {}) {
   const page_id = uniquePageId(config.pages, 'New page');
-  return {...config, pages:[...config.pages, {page_id, title:'New page', parent:parentId, items:[]}]};
+  const pages = [...config.pages, {page_id, title:'New page', parent:parentId, items:[]}];
+  return {...config, pages: withChildLink(pages, parentId, 'New page', page_id, linkLimit(options)).pages};
 }
 
 // Create one child page from an API-supplied template. Items are deep-copied with
 // structuredClone so the template object is never mutated; the new page gets a unique
-// id derived from the template title and is appended under parentId.
-export function createPageFromTemplate(config, parentId, template) {
+// id derived from the template title, is appended under parentId and is linked from it
+// (see withChildLink). ``linked`` reports whether that link fit on the parent page.
+export function createPageFromTemplate(config, parentId, template, options = {}) {
   const pageId = uniquePageId(config.pages, template.page.title);
   const page = {page_id:pageId, title:template.page.title, parent:parentId, items:structuredClone(template.page.items)};
-  return {config:{...config, pages:[...config.pages, page]}, pageId};
+  const {pages, linked} = withChildLink([...config.pages, page], parentId, template.label, pageId, linkLimit(options));
+  return {config:{...config, pages}, pageId, linked};
 }
 
 export function duplicatePage(config, pageId) {

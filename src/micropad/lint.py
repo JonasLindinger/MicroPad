@@ -24,6 +24,7 @@ from typing import Any
 
 from micropad.constants import (
     FIELD_CAPS,
+    HOME_PAGE_ID,
     MAX_CATALOG_PAYLOAD_BYTES,
     MAX_ITEMS_PER_PAGE,
     MAX_MQTT_PAYLOAD_BYTES,
@@ -269,6 +270,31 @@ def analyze(config: Mapping[str, Any]) -> Analysis:
                     f"does not fit the pad's {limits['mqtt_buffer_bytes']}-byte MQTT "
                     "buffer; PubSubClient would drop it without an error."
                 ),
+            )
+        )
+    # Reachability: the pad builds every menu from the *items* of a page, so a page no
+    # other page links to is stored, published, and still unreachable on the device.
+    # Reported symptom: "the website says there is a Spotify page, the board does not
+    # show it" - the page existed, its parent had no menu entry pointing at it.
+    linked_pages = {
+        item.target_page
+        for page in parsed.pages
+        for item in page.items
+        if item.target_page
+    }
+    for page in parsed.pages:
+        if page.page_id == HOME_PAGE_ID or page.page_id in linked_pages:
+            continue
+        analysis.findings.append(
+            Finding(
+                code="page_unreachable",
+                severity="warning",
+                message=(
+                    f'Page "{page.title}" ({page.page_id}) is not linked from any page: '
+                    "the pad only reaches pages through a menu item, so this page can "
+                    "never be opened on the device. Add a category item pointing at it."
+                ),
+                where=f"pages[{page.page_id}]",
             )
         )
     return analysis

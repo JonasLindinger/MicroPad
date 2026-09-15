@@ -100,7 +100,9 @@ export function mountPageTree(element, store) {
     addButton.addEventListener('click', () => {
       const current = store.getState();
       const pageId = uniquePageId(current.config.pages, 'New page');
-      store.replaceConfig(createPage(current.config, current.selectedPageId));
+      store.replaceConfig(createPage(current.config, current.selectedPageId, {
+        maxItemsPerPage: current.meta?.caps?.max_items_per_page,
+      }));
       store.dispatch({type:'select-page', pageId});
     });
     toolbar.appendChild(addButton);

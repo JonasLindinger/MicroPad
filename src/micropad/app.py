@@ -52,6 +52,7 @@ from micropad.security import (
     CSRF_HEADER,
     CSRF_VALUE,
     UNSAFE_METHODS,
+    allow_unauthenticated_lan,
     bearer_token,
     constant_time_equal,
     is_loopback,
@@ -117,8 +118,9 @@ def _authorize(secret: str | None) -> tuple[Response, int] | None:
             bearer_token(request.headers.get("Authorization")), secret
         )
     else:
-        # No secret configured: allow only genuine loopback clients (dev posture).
-        authorized = remote_is_loopback
+        # No secret configured: loopback clients only (dev posture) unless the operator
+        # deliberately opened the API to a trusted LAN (MICROPAD_ALLOW_UNAUTHENTICATED_LAN).
+        authorized = remote_is_loopback or allow_unauthenticated_lan()
 
     if not authorized:
         return _error("unauthorized", "Administrator authentication required", 401)
@@ -232,8 +234,15 @@ def create_app(
     def healthz() -> Response:
         return jsonify({"ok": True, "service": "micropad-configurator"})
 
-    def parse_incoming_config() -> AppConfig:
-        raw = request.get_json(force=True)
+    def normalize_incoming_document(raw: object) -> dict[str, object]:
+        """Undo the display-only redaction that ``public_config`` applies.
+
+        ``GET /api/config`` answers with empty secrets plus ``*_configured`` flags, and
+        the editor legitimately echoes that document back (lint, validate, save). Handled
+        only in the save path, the redaction flags reached the strict model through
+        ``/api/lint`` -- so the analysis reported our own API response as "not publishable"
+        and every byte budget stayed 0 for a perfectly valid configuration.
+        """
         if not isinstance(raw, dict):
             # P1.13: a non-object top-level body is a structured JSON 400, never
             # an HTML 500 from dict() on an int/list/None.
@@ -261,7 +270,10 @@ def create_app(
         cache_raw = incoming.get("entity_cache")
         if not isinstance(cache_raw, list) or not cache_raw:
             incoming["entity_cache"] = current.entity_cache
-        return parse_config(incoming)
+        return incoming
+
+    def parse_incoming_config() -> AppConfig:
+        return parse_config(normalize_incoming_document(request.get_json(force=True)))
 
     @app.get("/api/config")
     def get_config() -> Response:
@@ -450,12 +462,15 @@ def create_app(
         Accepts the same body as ``/api/validate`` (a full configuration document)
         so the editor can analyse an unsaved draft. Findings come from the contract
         caps; byte budgets come from the real generator, so a valid config reports
-        the exact sizes the deployment will publish.
+        the exact sizes the deployment will publish. The body is normalized first for
+        the same reason the save path normalizes it: the editor analyses the document
+        ``GET /api/config`` returned, which carries the redaction flags the strict
+        model must not see.
         """
         raw = request.get_json(force=True)
         if not isinstance(raw, dict):
             raise BadRequest("request body must be a JSON object")
-        return jsonify(analyze(raw).as_dict())
+        return jsonify(analyze(normalize_incoming_document(raw)).as_dict())
 
     @app.post("/api/simulate")
     def simulate_page() -> Response | tuple[Response, int]:

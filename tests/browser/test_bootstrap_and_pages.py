@@ -37,6 +37,27 @@ def test_page_commands_persist_complete_config(page, app_url, captured_requests,
 
 
 @pytest.mark.browser
+def test_template_page_is_linked_from_its_parent(page, app_url, config_writes):
+    """A created page must be *reachable* on the pad, not merely present in the config.
+
+    The device builds every menu from the items of a page, so "Create Spotify page" used
+    to produce a page that existed in the configurator and could never be opened on the
+    board - exactly the reported symptom ("the website says there is a Spotify page, the
+    board does not show it").
+    """
+    page.goto(app_url)
+    page.get_by_role("button", name="Create Spotify page").click()
+    expect(page.get_by_text("Spotify page created and linked from")).to_be_visible()
+    expect(page.locator("#save-status")).to_have_text("Saved")
+    config = config_writes()[-1]["json"]
+    home = next(p for p in config["pages"] if p["page_id"] == "home")
+    links = [item for item in home["items"] if item.get("target_page") == "spotify"]
+    assert len(links) == 1
+    assert links[0]["type"] == "category"
+    assert links[0]["name"] == "Spotify"
+
+
+@pytest.mark.browser
 def test_rename_survives_a_re_render_between_typing_and_clicking(page, app_url):
     """The typed title must outlive a toolbar re-render.
 

@@ -61,6 +61,10 @@ ITEM_TYPE_META: tuple[dict[str, Any], ...] = tuple(CONTRACT["item_type_meta"])
 CAPS: dict[str, Any] = CONTRACT["caps"]
 MAX_PAGES = int(CAPS["max_pages"])
 MAX_ITEMS_PER_PAGE = int(CAPS["max_items_per_page"])
+
+#: The one page every pad has: menus are built from items, so this is the only page a
+#: device can reach without any other page linking to it.
+HOME_PAGE_ID = "home"
 KEY_COUNT = int(CAPS["key_count"])
 QUEUE_CAPACITY = int(CAPS["queue_capacity"])
 FIELD_CAPS: dict[str, int] = {key: int(value) for key, value in CAPS["field_caps"].items()}

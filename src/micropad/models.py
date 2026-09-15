@@ -277,9 +277,28 @@ def default_config() -> AppConfig:
     )
 
 
+#: Settings keys written by the pre-clean-room configurator (free-form remote shell
+#: commands). Kept as a named constant so the drop-on-load rule below and its tests refer
+#: to the same list.
+LEGACY_SETTINGS_KEYS: tuple[str, ...] = ("ssh_validate_command", "ssh_reload_command")
+
+
 def parse_config(data: Mapping[str, object]) -> AppConfig:
     """Validate configuration data after filling absent global bindings."""
     normalized = dict(data)
+    # Settings keys the pre-clean-room configurator wrote: free-form remote shell
+    # commands, removed by the P0.2 hardening (``ssh_reload_strategy`` replaced them).
+    # They are dropped on load rather than rejected, because a config file from the
+    # legacy generation must not turn the whole tool into a 422 - that strands the
+    # operator's data with no way to read or migrate it. Honouring them is what the
+    # hardening forbids; ignoring them is not.
+    settings_value = normalized.get("settings")
+    if isinstance(settings_value, Mapping):
+        normalized["settings"] = {
+            key: value
+            for key, value in settings_value.items()
+            if key not in LEGACY_SETTINGS_KEYS
+        }
     supplied_value = normalized.get("global_keymap", {})
     if not isinstance(supplied_value, Mapping):
         return AppConfig.model_validate(normalized)
