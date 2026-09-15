@@ -31,18 +31,20 @@
 #include "micropad_core.h"
 #include "protocol_contract.h"
 
-// Bring the bounded copy helper into the sketch namespace. safeCopy() is a
-// micropad template taking char[N]/const char* args — neither is a micropad
-// type, so unqualified calls get no ADL and only an explicit using-declaration
-// resolves them. Every other core call is either prefixed (micropad::) or
-// found by ADL from a micropad:: argument type.
+// Bring the bounded copy helpers into the sketch namespace. safeCopy() and
+// safeCopyClip() are micropad templates taking char[N]/const char* args —
+// neither is a micropad type, so unqualified calls get no ADL and only an
+// explicit using-declaration resolves them. Every other core call is either
+// prefixed (micropad::) or found by ADL from a micropad:: argument type.
 using micropad::safeCopy;
+using micropad::safeCopyClip;
 
-// The Arduino loop task runs setup/loop and the MQTT callback. With the
-// 16-KiB MQTT buffer plus Page/Binding structures on that stack, the default
-// 8-KiB loop-task stack overflows and panics the device (observed as PANIC /
-// INT_WDT resets). Raise it to the documented 32 KiB.
-size_t getArduinoLoopTaskStackSize(void) { return 32768; }
+// The Arduino loop task runs setup/loop and the MQTT callback. The callback no
+// longer copies the payload onto this stack (it parses the PubSubClient buffer
+// in place), which shrank its frame from 23,424 to ~7 KB; 16 KiB therefore
+// keeps a ~2.3x margin over the measured frame while returning 16 KiB to the
+// heap, where the 16-KiB MQTT buffer and the WiFi/lwIP buffers are allocated.
+size_t getArduinoLoopTaskStackSize(void) { return 16384; }
 
 // Render adapters defined at the end of the sketch (see the Task 8 render
 // block): requestDraw publishes on Core 1, renderTask draws on pinned Core 0.
@@ -75,13 +77,12 @@ micropad::QuadratureDecoder encoderDecoder;
 // ============================================================================
 
 // Fixed sketch-side portal display state, copied by the display task into
-// RenderSnapshot (Task 8).
+// RenderSnapshot (Task 8). Only the three fields the panel renders are kept:
+// the former `active` and `instructions` members were written and never read.
 struct PortalViewState {
-  bool active;
   char ssid[33];
   char password[micropad::SETUP_PASSWORD_LENGTH + 1];
   char address[16];
-  char instructions[65];
 };
 
 bool portalActive = false;
@@ -291,7 +292,14 @@ bool saveSettings(const micropad::Settings &settings) {
   Preferences preferences;
   if (!preferences.begin("micropad", false)) return false;
 
-  bool ok = true;
+  // Invalidate the commit marker FIRST. cfg_ver is already 1 from an earlier
+  // successful save, so a field write that fails midway would otherwise leave a
+  // mixture of old and new values that still passes validateSettings() on the
+  // next boot — for example a new SSID with the previous Wi-Fi password, i.e. a
+  // pad that associates nowhere and no longer opens its own setup portal.
+  // With the marker at 0 first, an interrupted save is simply an invalid record
+  // and the pad falls back to the setup portal.
+  bool ok = preferences.putUChar("cfg_ver", 0) > 0;
   ok &= putSettingsString(preferences, "wifi_ssid", settings.wifiSsid);
   ok &= putSettingsString(preferences, "wifi_pass", settings.wifiPassword);
   ok &= putSettingsString(preferences, "mqtt_host", settings.mqttHost);
@@ -377,10 +385,19 @@ WiFiClient mqttNetworkClient;
 PubSubClient mqttClient(mqttNetworkClient);
 uint32_t wifiLastAttemptMs = 0;
 bool wifiWasConnected = false;
+// Consecutive failed station attempts since the last successful association:
+// reaching WIFI_FAILS_BEFORE_PORTAL re-opens the setup portal so a mistyped or
+// stale Wi-Fi record cannot strand the pad without any way to re-enter setup
+// (the default keymap binds no `settings` action and the effective keymap only
+// arrives over MQTT). A successful association resets the counter.
+uint32_t wifiFailures = 0;
 // Seed one full retry interval in the past so the first attempt is immediate;
 // later failures remain throttled by MQTT_RETRY_MS.
 uint32_t mqttNextAttemptMs =
     static_cast<uint32_t>(0U - micropad::MQTT_RETRY_MS);
+// When the current MQTT connection came up: the catalog re-request timer
+// (catalogRequestTick) measures from here.
+uint32_t mqttConnectedSinceMs = 0;
 bool firstMqttConnectionThisBoot = false;
 
 uint8_t currentNetworkState() {
@@ -442,7 +459,13 @@ void appendEscaped(String &out, const char *text) {
 // password is ever pre-filled; the generated AP password is displayed once so
 // the phone can join the AP.
 String portalPage() {
-  String page = F("<!DOCTYPE html><html><head><meta charset='utf-8'>"
+  // The setup page is ~2 KB of mostly static template. Reserving the capacity
+  // once keeps the ~15 concatenations below from repeatedly reallocating (and
+  // fragmenting) the internal heap right before the WiFi/lwIP/MQTT buffers are
+  // allocated on the same heap.
+  String page;
+  page.reserve(2300);
+  page = F("<!DOCTYPE html><html><head><meta charset='utf-8'>"
                   "<meta name='viewport' content='width=device-width, "
                   "initial-scale=1'><title>MicroPad Setup</title></head>"
                   "<body><h1>MicroPad Setup</h1>"
@@ -617,11 +640,9 @@ void startPortal(uint32_t nowMs) {
   portalActive = true;
   portalExitSaved = false;
   portalLastActivityMs = nowMs;
-  portalView.active = true;
   safeCopy(portalView.ssid, "MicroPad-Setup");
   safeCopy(portalView.password, setupPassword);
   safeCopy(portalView.address, "192.168.4.1");
-  safeCopy(portalView.instructions, "Open http://192.168.4.1");
 
   WiFi.mode(WIFI_AP);
   WiFi.softAP("MicroPad-Setup", setupPassword);
@@ -650,7 +671,6 @@ void stopPortal(bool saved) {
   dnsServer.stop();
   WiFi.softAPdisconnect();
   WiFi.mode(WIFI_STA);
-  portalView.active = false;
   requestDraw(micropad::DrawReason::PortalExit);
   if (saved) {
     // Reconnect starts here; the throttled Wi-Fi state machine (Task 7)
@@ -685,6 +705,7 @@ void wifiTick(uint32_t nowMs) {
   if (portalActive) return;
   if (WiFi.isConnected()) {
     wifiWasConnected = true;
+    wifiFailures = 0;  // a real association clears the failure streak
     return;
   }
   if (wifiWasConnected) {
@@ -692,11 +713,23 @@ void wifiTick(uint32_t nowMs) {
     wifiLastAttemptMs = 0;
   }
   if (deviceSettings.wifiSsid[0] == '\0') return;
+  // Recovery net: a saved record that can never associate (typo, moved AP,
+  // rotated password) would otherwise strand the pad, because the setup portal
+  // is only reachable through a `settings` keymap action and the effective
+  // keymap only arrives over MQTT. Re-open the configured portal instead; the
+  // stored settings stay untouched until the portal saves new ones, and the
+  // default Back binding still cancels the portal.
+  if (wifiFailures >= micropad::WIFI_FAILS_BEFORE_PORTAL) {
+    wifiFailures = 0;
+    startPortal(nowMs);
+    return;
+  }
   if (static_cast<uint32_t>(nowMs - wifiLastAttemptMs) <
       micropad::WIFI_RETRY_MS) {
     return;
   }
   wifiLastAttemptMs = nowMs;
+  ++wifiFailures;
   WiFi.begin(deviceSettings.wifiSsid, deviceSettings.wifiPassword);
 }
 
@@ -720,14 +753,21 @@ bool queueNavigateRequest(const char *pageId) {
   return pad.queue.push(event);
 }
 
-void publishPowerStateRetained(bool usbHost) {
-  if (!mqttClient.connected()) return;
+// Publish the retained power state. Returns false when the retained
+// publication could not be written (broken socket), which the caller treats as
+// a connection failure so the next connect republishes the authoritative
+// state via publishInitialRequests() — a silently dropped retained power state
+// would otherwise leave the dashboard showing a stale icon.
+bool publishPowerStateRetained(bool usbHost) {
+  if (!mqttClient.connected()) return false;
   JsonDocument doc;
   doc["usb_host"] = usbHost;
   char buffer[32];
   const size_t written = serializeJson(doc, buffer, sizeof(buffer));
-  if (written == 0 || written >= sizeof(buffer)) return;  // never malformed
-  mqttClient.publish(mp::TOPIC_POWER, buffer, true);
+  if (written == 0 || written >= sizeof(buffer)) {
+    return false;  // never malformed
+  }
+  return mqttClient.publish(mp::TOPIC_POWER, buffer, true);
 }
 
 // Exactly one get_all_pages request per boot; every reconnect (and every
@@ -758,8 +798,10 @@ const char *jsonString(JsonVariantConst value) {
   return value.is<const char *>() ? value.as<const char *>() : nullptr;
 }
 
-// Copy an optional string field: absent (null) keeps the destination empty;
-// a wrong type or an overflow rejects the whole payload.
+// Copy an optional identifier field (entity id, target page, parent page): a
+// wrong type or an overflow rejects the whole payload, because a silently
+// clipped identifier would address the wrong entity or page. Absent (null)
+// keeps the destination empty.
 template <size_t N>
 bool copyOptionalString(JsonVariantConst value, char (&dst)[N]) {
   if (value.isNull()) {
@@ -769,6 +811,26 @@ bool copyOptionalString(JsonVariantConst value, char (&dst)[N]) {
   const char *text = jsonString(value);
   if (text == nullptr) return false;
   return safeCopy(dst, text);
+}
+
+// Copy an optional display-only field (item name, state, unit, page title):
+// absent (null) keeps the destination empty, a wrong type still rejects the
+// payload, but an over-long value is clipped to the field capacity instead of
+// discarding the entire page/catalog. The backend's own budgets (a 128-byte
+// reflected state, unvalidated HA template states) are larger than the
+// firmware caps, and a rejected payload is invisible on the device, so
+// clipping is the only safe behaviour for a value that is rendered, not
+// interpreted.
+template <size_t N>
+bool copyOptionalDisplayText(JsonVariantConst value, char (&dst)[N]) {
+  if (value.isNull()) {
+    dst[0] = '\0';
+    return true;
+  }
+  const char *text = jsonString(value);
+  if (text == nullptr) return false;
+  safeCopyClip(dst, text);
+  return true;
 }
 
 // Strict optional numeric field (P1.6): absent/null keeps the documented
@@ -819,11 +881,14 @@ bool parseItem(JsonVariantConst value, micropad::Item &out) {
   const char *name = jsonString(obj["name"]);
   const char *typeText = jsonString(obj["type"]);
   if (name == nullptr || typeText == nullptr) return false;
-  if (!safeCopy(out.name, name)) return false;
+  // Display-only name: clip, never reject, so a long HA-friendly name cannot
+  // discard the page. The renderer clips it to 12 characters anyway.
+  safeCopyClip(out.name, name);
   if (!micropad::parseItemType(typeText, out.type)) return false;
+  // entity and target_page are identifiers: wrong type or overflow rejects.
   if (!copyOptionalString(obj["entity"], out.entity)) return false;
-  if (!copyOptionalString(obj["state"], out.state)) return false;
-  if (!copyOptionalString(obj["unit"], out.unit)) return false;
+  if (!copyOptionalDisplayText(obj["state"], out.state)) return false;
+  if (!copyOptionalDisplayText(obj["unit"], out.unit)) return false;
   if (!copyOptionalString(obj["target_page"], out.targetPage)) return false;
   // Numeric/edit fields are optional and defaulted so retained payloads from
   // older generators (name/type/entity/state only) stay loadable; each present
@@ -852,7 +917,9 @@ bool parsePage(JsonVariantConst value, micropad::Page &out) {
   if (pageId == nullptr || pageId[0] == '\0') return false;
   if (title == nullptr || title[0] == '\0') return false;
   if (!safeCopy(out.pageId, pageId)) return false;
-  if (!safeCopy(out.title, title)) return false;
+  // Title is display-only: clip a long title instead of discarding the page.
+  safeCopyClip(out.title, title);
+  // parent is a page identifier used for Back navigation: stays strict.
   if (!copyOptionalString(obj["parent"], out.parent)) return false;
   const JsonVariantConst itemsValue = obj["items"];
   if (!itemsValue.is<JsonArrayConst>()) return false;
@@ -937,17 +1004,18 @@ bool parseEffectiveKeymap(JsonVariantConst root,
 
 // Bounded one-pass MQTT callback (defined before mqttTick so setCallback can
 // take its address without a forward declaration): an oversized payload is
-// rejected before the copy, the fixed MQTT_BUFFER_BYTES + 1 buffer is copied
-// and NUL-terminated exactly once, the payload is deserialized exactly once,
-// and the parsed root is dispatched by exact topic. Live cache/keymap fields
-// change only after a complete parse succeeds.
+// rejected before the parse, the PubSubClient receive buffer is parsed exactly
+// once in place (the client keeps it valid for the whole callback and the
+// payload length is known, so no copy and no NUL terminator are needed), and
+// the parsed root is dispatched by exact topic. Live cache/keymap fields change
+// only after a complete parse succeeds.
 void onMqttMessage(char *topic, uint8_t *payload, unsigned int length) {
-  if (length > micropad::MQTT_BUFFER_BYTES) return;
-  uint8_t mqttPayload[micropad::MQTT_BUFFER_BYTES + 1];
-  memcpy(mqttPayload, payload, length);
-  mqttPayload[length] = '\0';
+  if (topic == nullptr || payload == nullptr || length == 0 ||
+      length > micropad::MQTT_BUFFER_BYTES) {
+    return;
+  }
   JsonDocument doc;
-  if (deserializeJson(doc, mqttPayload, length) != DeserializationError::Ok) {
+  if (deserializeJson(doc, payload, length) != DeserializationError::Ok) {
     return;
   }
   JsonVariantConst root = doc.as<JsonVariantConst>();
@@ -996,6 +1064,19 @@ void onMqttMessage(char *topic, uint8_t *payload, unsigned int length) {
     }
     return;
   }
+}
+
+// Treat a failed MQTT write (subscribe, publish) as a connection failure
+// instead of a detail to ignore: drop the socket and let the throttled
+// mqttTick() reconnect and republish the authoritative state. Staying
+// "connected" without what the write was supposed to deliver would silently
+// leave the pad without pages, keymap or power state until the next reconnect.
+void mqttConnectionLost(uint32_t nowMs) {
+  if (mqttClient.connected()) {
+    mqttClient.disconnect();
+  }
+  mqttNetworkClient.stop();
+  mqttNextAttemptMs = nowMs;
 }
 
 // One throttled MQTT pass (after onMqttMessage so the callback address needs
@@ -1048,9 +1129,17 @@ void mqttTick(uint32_t nowMs) {
                           deviceSettings.mqttPassword)) {
     return;
   }
-  mqttClient.subscribe(mp::TOPIC_PAGES);
-  mqttClient.subscribe(mp::TOPIC_CURRENT_PAGE);
-  mqttClient.subscribe(mp::TOPIC_KEYMAP);
+  mqttConnectedSinceMs = nowMs;
+  // Every subscription is checked: a silently failed subscribe would leave the
+  // pad connected but without pages, current page or keymap, with nothing to
+  // repair it until the next reconnect.
+  const bool pagesSubscribed = mqttClient.subscribe(mp::TOPIC_PAGES);
+  const bool pageSubscribed = mqttClient.subscribe(mp::TOPIC_CURRENT_PAGE);
+  const bool keymapSubscribed = mqttClient.subscribe(mp::TOPIC_KEYMAP);
+  if (!pagesSubscribed || !pageSubscribed || !keymapSubscribed) {
+    mqttConnectionLost(nowMs);
+    return;
+  }
   publishInitialRequests();
 }
 
@@ -1115,6 +1204,27 @@ void resyncTick(uint32_t nowMs) {
   }
 }
 
+// Retained-catalog recovery. PubSubClient discards a packet that exceeds the
+// client buffer without telling the application (readPacket sets len = 0), so
+// an oversized or otherwise lost retained micropad/pages/all would leave the
+// pad connected with an empty catalog and nothing to repair it. While the
+// broker is connected but no catalog has arrived, the catalog is re-requested
+// every CATALOG_RETRY_MS; a healthy broker answers the first request from the
+// retained publication, so this normally stays quiet.
+void catalogRequestTick(uint32_t nowMs) {
+  if (portalActive) return;
+  if (!mqttClient.connected()) return;
+  if (catalogReady) return;
+  if (static_cast<uint32_t>(nowMs - mqttConnectedSinceMs) <
+      micropad::CATALOG_RETRY_MS) {
+    return;
+  }
+  mqttConnectedSinceMs = nowMs;
+  const char *requestedPage =
+      pad.state.pageId[0] == '\0' ? "home" : pad.state.pageId;
+  queueSystemEvent(micropad::Action::GetAllPages, requestedPage);
+}
+
 // ============================================================================
 // Debounce-guarded USB host detection and power state (Task 10). The power
 // model is the data lines only: isPowered() means an active CDC data
@@ -1131,6 +1241,9 @@ void resyncTick(uint32_t nowMs) {
 
 micropad::PowerDebouncer powerDebouncer;
 uint32_t lastUsbSampleMs = 0;
+// Sleep-predicate sample clock (see sleepGateReady): the gate is evaluated at
+// most once per SLEEP_GATE_SAMPLE_MS instead of once per loop pass.
+uint32_t lastSleepGateMs = 0;
 
 // Active CDC data host/session, never inferred charge-only power.
 bool isPowered() {
@@ -1165,11 +1278,11 @@ void powerTick(uint32_t nowMs) {
   if (edge == micropad::PowerEdge::Connected) {
     stableUsbHost = true;
     requestDraw(micropad::DrawReason::PowerEdge);
-    publishPowerStateRetained(true);
+    if (!publishPowerStateRetained(true)) mqttConnectionLost(nowMs);
   } else if (edge == micropad::PowerEdge::Disconnected) {
     stableUsbHost = false;
     requestDraw(micropad::DrawReason::PowerEdge);
-    publishPowerStateRetained(false);
+    if (!publishPowerStateRetained(false)) mqttConnectionLost(nowMs);
   }
 }
 
@@ -1208,6 +1321,15 @@ bool sleepGateReady(uint32_t nowMs) {
   // pad and the session looks like a crash. The portal has its own
   // PORTAL_IDLE_MS restart instead.
   if (portalActive) return false;
+  // Sample the predicate instead of evaluating it on every loop pass: it can
+  // only become true after IDLE_SLEEP_MS (60 s) of idleness, so 250 ms of added
+  // latency is irrelevant, while the fresh anyMatrixKeyHeld() pass below
+  // otherwise doubled the input I/O of an awake, battery-powered pad.
+  if (micropad::elapsedMs(nowMs, lastSleepGateMs) <
+      micropad::SLEEP_GATE_SAMPLE_MS) {
+    return false;
+  }
+  lastSleepGateMs = nowMs;
   // P1.2: the busy and pending reads are race-free — they are taken under the
   // same mutex the render task uses to claim/release snapshots and publish
   // renderBusy.
@@ -1314,7 +1436,17 @@ void enterLightSleep(uint32_t nowMs) {
 // pre-sleep phase is preserved.
 void restoreAfterWake(uint32_t wakeMs, uint64_t sleptUs) {
   vTaskResume(renderTaskHandle);
-  esp_task_wdt_add(NULL);
+  // Re-arm the loop task on the watchdog. A failed subscription is retried
+  // once against a freshly applied deadline: a silently unwatched loop task
+  // would be a lost safety net for the rest of the boot.
+  esp_task_wdt_config_t wakeWdtCfg = {};
+  wakeWdtCfg.timeout_ms = micropad::TASK_WDT_TIMEOUT_MS;
+  wakeWdtCfg.idle_core_mask = 0;
+  wakeWdtCfg.trigger_panic = true;
+  if (esp_task_wdt_add(NULL) != ESP_OK) {
+    esp_task_wdt_reconfigure(&wakeWdtCfg);
+    esp_task_wdt_add(NULL);
+  }
   // Back to full speed — proven v6 behaviour: the pre-sleep modem sleep must
   // be turned off again, otherwise every MQTT packet after the wake is
   // throttled and the pad feels laggy.
@@ -1755,8 +1887,13 @@ void setup() {
   }
   // Subscribe the loop task (this task) to the task watchdog and feed it on
   // every loop() pass; the render task is deliberately left unsubscribed so
-  // long GxEPD2 panel busy-waits on Core 0 never trip the TWDT.
-  esp_task_wdt_add(NULL);
+  // long GxEPD2 panel busy-waits on Core 0 never trip the TWDT. A failed
+  // subscription is retried once against the freshly applied deadline instead
+  // of silently leaving the loop task unwatched.
+  if (esp_task_wdt_add(NULL) != ESP_OK) {
+    esp_task_wdt_reconfigure(&wdtCfg);
+    esp_task_wdt_add(NULL);
+  }
 
   // Activity and USB-sample clocks seeded at boot: the first powerTick waits
   // one full 500 ms interval and the 3000 ms post-wake minimum-awake brake
@@ -1793,6 +1930,7 @@ void loop() {
   if (mqttClient.connected()) mqttClient.loop();
   flushEventQueue();
   resyncTick(nowMs);
+  catalogRequestTick(nowMs);
   powerTick(nowMs);
   renderRecoveryTick(nowMs);
   // Light sleep is disabled until the ESP32-S3 wake path is fixed: hardware

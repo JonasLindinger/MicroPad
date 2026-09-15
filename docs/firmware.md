@@ -79,6 +79,18 @@ is bound to the `settings` action. While the setup portal is open the device
 **never enters light sleep** — sleeping would silence the AP, DNS and web server
 mid-setup.
 
+The portal is also reachable without a working keymap: if the pad has stored
+settings but cannot associate for 24 consecutive attempts (~2 minutes), it
+re-opens the setup portal by itself, so a mistyped Wi-Fi password or a moved
+access point cannot strand the device. The panel shows the portal view, and
+`Back` (bound by default) cancels it and keeps the stored settings.
+
+A save is applied atomically in the sense that the NVS commit marker (`cfg_ver`)
+is cleared before the first field is written and set to `1` only after every
+field was stored. An interrupted save is therefore an invalid record, and the
+next boot falls back to the setup portal instead of connecting with a mixture of
+old and new credentials.
+
 The broker host placeholder used in source is `192.168.0.100`, the user
 placeholder is `micropad`, and the password placeholder is `replace-me`. Replace
 these only through the portal.
@@ -102,6 +114,25 @@ the matrix or encoder (EXT1, ANY_LOW). Behaviours worth knowing:
 
 For the full acceptance rows (including the >60 s sleep, watchdog, and ghost-pixel
 checks) see `docs/hardware-acceptance.md`.
+
+## Input, payload and stack limits
+
+- **Values are never rejected for being long.** Item names, page titles, states
+  and units are *clipped* to their 32-character fields (the renderer shows 12
+  characters of a value and 22 of a title), so a long Home Assistant state — for
+  example a template sensor with a verbose string — cannot discard a whole page
+  or catalog payload. Identifiers (`page_id`, `entity`, `target_page`) keep the
+  strict check: a silently clipped entity id would address the wrong device.
+- **The MQTT buffer bounds the catalog.** The client buffer is 16 KiB
+  (`MQTT_BUFFER_BYTES`, mirrored in `contracts/mqtt-contract.json`); a retained
+  `micropad/pages/all` that exceeds it is discarded by PubSubClient without
+  telling the application. While the pad is connected but has no catalog, it
+  re-requests the catalog every 60 seconds, so a lost publication is repaired
+  instead of leaving an empty page.
+- **The loop task stack is 16 KiB.** The MQTT callback parses the PubSubClient
+  receive buffer in place (no payload copy), which keeps its frame near 7 KB;
+  16 KiB leaves a ~2.3x margin and returns the rest of the former 32 KiB to the
+  heap, where the 16-KiB MQTT buffer and the WiFi/lwIP buffers live.
 
 ## Not safety-critical
 

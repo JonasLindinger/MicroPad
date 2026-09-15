@@ -39,11 +39,13 @@ class FirmwareStaticContractTest(unittest.TestCase):
         raise AssertionError(f"unterminated body for {signature}")
 
     def test_loop_task_stack_size_raised(self):
-        # The documented 32-KiB loop stack requirement is implemented as the
-        # sketch-level weak override; default 8 KiB overflows under the 16-KiB
-        # MQTT callback payload (observed PANIC/INT_WDT resets).
+        # The loop stack covers the MQTT callback frame. The callback no longer
+        # copies the payload onto it (it parses the PubSubClient buffer in
+        # place), which shrank the measured frame from 23,424 to ~7 KB, so the
+        # documented 16 KiB keeps a ~2.3x margin over the frame while returning
+        # 16 KiB to the internal heap.
         text = self.source("firmware/MicroPad_HA_Controller.ino")
-        self.assertIn("size_t getArduinoLoopTaskStackSize(void) { return 32768; }", text)
+        self.assertIn("size_t getArduinoLoopTaskStackSize(void) { return 16384; }", text)
 
     def test_exact_hardware_pins(self):
         text = self.source("firmware/MicroPad_HA_Controller.ino")
@@ -172,15 +174,23 @@ class FirmwareSettingsContractTest(FirmwareStaticContractTest):
         self.assertNotIn("println", body)
         self.assertNotIn("printf", body)
         self.assertNotIn("log(", body)
-        # Every credential is written before the cfg_ver commit marker, and
-        # NVS is closed before returning.
-        commit_at = body.index('"cfg_ver"')
+        # The commit marker is invalidated BEFORE the field writes and set to 1
+        # only after every field was stored: a save that fails midway must not
+        # leave a mixture of old and new values that still validates on the next
+        # boot (the pad would associate with a mismatched record and never
+        # reopen its setup portal).
+        self.assertIn('putUChar("cfg_ver", 0)', body)
+        invalidate_at = body.index('putUChar("cfg_ver", 0)')
         for cred in ("wifi_ssid", "wifi_pass", "mqtt_host", "mqtt_port",
                      "mqtt_user", "mqtt_pass", "client_id"):
-            self.assertLess(body.index(f'"{cred}"'), commit_at)
+            cred_at = body.index(f'"{cred}"')
+            self.assertGreater(cred_at, invalidate_at,
+                               f"{cred} must be written after the marker reset")
+        self.assertLess(invalidate_at, body.index('putUChar("cfg_ver", 1)'))
+        self.assertNotIn('preferences.clear()', body)
         self.assertIn("preferences.end()", body)
-        self.assertIn("putUChar(\"cfg_ver\", 1) > 0", body)
-        self.assertIn("putSettingsString(preferences, \"mqtt_pass\"", body)
+        self.assertIn('putUChar("cfg_ver", 1) > 0', body)
+        self.assertIn('putSettingsString(preferences, "mqtt_pass"', body)
         self.assertIn("mqttClientConfigured = false", body)
         self.assertNotIn("ok &= preferences.putString", body)
 
@@ -369,9 +379,14 @@ class FirmwarePortalContractTest(FirmwareStaticContractTest):
     def test_portal_view_state_published(self):
         text = self.ino()
         self.assertIn("struct PortalViewState", text)
+        # Only the fields the panel renders are published/copied; the former
+        # `active` and `instructions` members were written and never read.
+        self.assertNotIn("portalView.instructions", text)
+        self.assertNotIn("portalView.active", text)
+        self.assertNotIn("char instructions[", text)
         body = self.function_body(self.ino(), "void startPortal(uint32_t nowMs)")
         for field in ("portalView.ssid", "portalView.password",
-                      "portalView.address", "portalView.instructions"):
+                      "portalView.address"):
             self.assertIn(f"safeCopy({field},", body)
         self.assertIn('"MicroPad-Setup"', body)
         self.assertIn('"192.168.4.1"', body)
@@ -482,15 +497,19 @@ class FirmwareNetworkContractTest(FirmwareStaticContractTest):
             "void onMqttMessage(char *topic, uint8_t *payload, "
             "unsigned int length)",
         )
-        # Payload copy, termination, and parse each happen exactly once.
-        self.assertEqual(body.count("memcpy"), 1)
-        self.assertEqual(body.count("mqttPayload[length] = '\\0'"), 1)
+        # The payload is parsed exactly once, straight out of the PubSubClient
+        # receive buffer: the client keeps it valid for the whole callback and
+        # the length is known, so no stack copy and no NUL terminator are
+        # needed (they cost 16,385 bytes of permanent loop-task stack for
+        # nothing and shrank the heap by as much).
+        self.assertEqual(body.count("memcpy"), 0)
+        self.assertNotIn("mqttPayload", body)
         self.assertEqual(body.count("deserializeJson"), 1)
-        # Oversized payloads are rejected before the copy.
+        self.assertIn("deserializeJson(doc, payload, length)", body)
+        # Oversized payloads are rejected before the parse.
         self.assertIn("length > micropad::MQTT_BUFFER_BYTES", body)
-        # The local buffer carries the NUL terminator: capacity + 1.
-        self.assertIn(
-            "uint8_t mqttPayload[micropad::MQTT_BUFFER_BYTES + 1]", body)
+        # Null pointers from a misbehaving client are rejected before use.
+        self.assertIn("payload == nullptr", body)
         # Active cache/keymap assignment happens only after parse success.
         self.assertLess(body.index("deserializeJson"),
                         body.index("commitCurrentPage("))
@@ -891,9 +910,12 @@ class FirmwarePowerContractTest(FirmwareStaticContractTest):
 
     def test_power_publish_retained_and_republished_on_connect(self):
         body = self.function_body(
-            self.ino(), "void publishPowerStateRetained(bool usbHost)")
+            self.ino(), "bool publishPowerStateRetained(bool usbHost)")
         self.assertIn('doc["usb_host"] = usbHost;', body)
         self.assertIn("publish(mp::TOPIC_POWER, buffer, true)", body)
+        # The retained publication reports its own failure so a dropped power
+        # state is repaired by the next reconnect instead of being ignored.
+        self.assertIn("return mqttClient.publish", body)
         # Every successful MQTT connection republishes the current stable
         # state independently (retained subscribers get the truth on boot).
         self.assertIn(
@@ -1087,6 +1109,7 @@ class FirmwareLoopContractTest(FirmwareStaticContractTest):
             "if (mqttClient.connected()) mqttClient.loop();",
             "flushEventQueue();",
             "resyncTick(nowMs)",
+            "catalogRequestTick(nowMs)",
             "powerTick(nowMs)",
             "renderRecoveryTick(nowMs)",
             "LIGHT_SLEEP_ENABLED && sleepGateReady(nowMs)",
@@ -1192,6 +1215,7 @@ class FirmwareLoopContractTest(FirmwareStaticContractTest):
         for signature in ("void wifiTick(uint32_t nowMs)",
                           "void mqttTick(uint32_t nowMs)",
                           "void resyncTick(uint32_t nowMs)",
+                          "void catalogRequestTick(uint32_t nowMs)",
                           "void flushEventQueue()"):
             body = self.function_body(text, signature)
             self.assertIn("portalActive", body, signature)
@@ -1616,3 +1640,126 @@ class FirmwareSleepInterlockTest(FirmwareStaticContractTest):
         # Only the loop task is watchdog-subscribed; the renderer never arms a
         # busy wait that could trip the TWDT.
         self.assertIn("esp_task_wdt_reset()", body)
+
+
+class FirmwareOptimisationContractTest(FirmwareStaticContractTest):
+    """Fixes from the deep-dive optimisation analysis (RAM, robustness,
+    responsiveness). Each check pins the behaviour the fix introduced, so a
+    later refactor cannot silently undo it."""
+
+    def ino(self) -> str:
+        return self.source("firmware/MicroPad_HA_Controller.ino")
+
+    def core_header(self) -> str:
+        return self.source("firmware/micropad_core.h")
+
+    # --- RAM: display-only strings clip, identifiers stay strict -----------
+
+    def test_display_only_strings_are_clipped_not_rejected(self):
+        # A long HA state or item name must never discard an entire page or
+        # catalog payload: the rejection would be invisible on the device.
+        text = self.ino()
+        helper = self.function_body(text, "bool copyOptionalDisplayText(")
+        self.assertIn("safeCopyClip(", helper)
+        self.assertIn("jsonString(", helper)
+        item = self.function_body(text, "bool parseItem(")
+        self.assertIn('copyOptionalDisplayText(obj["state"]', item)
+        self.assertIn('copyOptionalDisplayText(obj["unit"]', item)
+        self.assertIn("safeCopyClip(out.name, name)", item)
+        # Identifiers keep the strict copy: a silently clipped entity id would
+        # address the wrong device.
+        self.assertIn('copyOptionalString(obj["entity"]', item)
+        self.assertIn('copyOptionalString(obj["target_page"]', item)
+        page = self.function_body(text, "bool parsePage(")
+        self.assertIn("safeCopyClip(out.title, title)", page)
+        self.assertIn('copyOptionalString(obj["parent"]', page)
+        self.assertIn("bool safeCopyClip(char (&dst)[N], const char *src)",
+                      self.core_header())
+
+    def test_display_caps_shrunk_and_identifier_caps_kept(self):
+        core = self.core_header()
+        self.assertIn("constexpr size_t ITEM_NAME_CAP = 33;", core)
+        self.assertIn("constexpr size_t TITLE_CAP = 33;", core)
+        self.assertIn("constexpr size_t STATE_CAP = 33;", core)
+        # Identifier caps stay deliberately larger than the display caps.
+        self.assertIn("constexpr size_t ENTITY_CAP = 97;", core)
+        self.assertIn("constexpr size_t PAGE_ID_CAP = 33;", core)
+
+    def test_render_prim_budget_has_measured_headroom(self):
+        # The measured worst-case frame is 22 prims; 32 keeps >25 % headroom
+        # (testRenderPrimBudgetHeadroom in the host binary proves it).
+        self.assertIn("constexpr size_t RENDER_PRIM_CAP = 32;",
+                      self.core_header())
+
+    # --- responsiveness: the sleep predicate is sampled -------------------
+
+    def test_sleep_gate_is_sampled_not_per_pass(self):
+        self.assertIn("constexpr uint32_t SLEEP_GATE_SAMPLE_MS = 250;",
+                      self.core_header())
+        body = self.function_body(self.ino(), "bool sleepGateReady(")
+        self.assertIn("SLEEP_GATE_SAMPLE_MS", body)
+        self.assertIn("lastSleepGateMs", body)
+        # The rate limit must run before the expensive held-key matrix pass.
+        self.assertLess(body.index("SLEEP_GATE_SAMPLE_MS"),
+                        body.index("anyKeyHeld()"))
+
+    # --- robustness: a failed write is a failed connection ----------------
+
+    def test_subscribe_results_are_checked(self):
+        body = self.function_body(self.ino(), "void mqttTick(uint32_t nowMs)")
+        for name in ("pagesSubscribed", "pageSubscribed", "keymapSubscribed"):
+            self.assertIn(name, body)
+        self.assertIn("mqttConnectionLost(nowMs)", body)
+        self.assertLess(body.index("mqttConnectionLost(nowMs)"),
+                        body.index("publishInitialRequests()"))
+        self.assertIn("mqttConnectedSinceMs = nowMs;", body)
+
+    def test_connection_lost_helper_drops_the_socket(self):
+        body = self.function_body(
+            self.ino(), "void mqttConnectionLost(uint32_t nowMs)")
+        self.assertIn("mqttClient.disconnect()", body)
+        self.assertIn("mqttNetworkClient.stop()", body)
+        self.assertIn("mqttNextAttemptMs = nowMs;", body)
+
+    def test_power_publish_failure_is_not_ignored(self):
+        publish = self.function_body(
+            self.ino(), "bool publishPowerStateRetained(bool usbHost)")
+        self.assertIn("return mqttClient.publish", publish)
+        tick = self.function_body(self.ino(), "void powerTick(uint32_t nowMs)")
+        self.assertEqual(tick.count("mqttConnectionLost(nowMs)"), 2)
+
+    def test_watchdog_subscription_failure_is_handled(self):
+        setup = self.function_body(self.ino(), "void setup()")
+        self.assertIn("esp_task_wdt_add(NULL) != ESP_OK", setup)
+        self.assertLess(setup.index("esp_task_wdt_reconfigure(&wdtCfg)"),
+                        setup.rindex("esp_task_wdt_add(NULL)"))
+        restore = self.function_body(
+            self.ino(),
+            "void restoreAfterWake(uint32_t wakeMs, uint64_t sleptUs)")
+        self.assertIn("esp_task_wdt_add(NULL) != ESP_OK", restore)
+        self.assertIn("esp_task_wdt_reconfigure(&wakeWdtCfg)", restore)
+
+    def test_unreachable_wifi_reopens_the_setup_portal(self):
+        self.assertIn("constexpr uint32_t WIFI_FAILS_BEFORE_PORTAL = 24;",
+                      self.core_header())
+        body = self.function_body(self.ino(), "void wifiTick(uint32_t nowMs)")
+        self.assertIn("wifiFailures", body)
+        self.assertIn("WIFI_FAILS_BEFORE_PORTAL", body)
+        self.assertIn("startPortal(nowMs)", body)
+        # A real association clears the failure streak before the next attempt.
+        self.assertLess(body.index("wifiFailures = 0;"),
+                        body.index("++wifiFailures;"))
+
+    def test_missing_catalog_is_re_requested(self):
+        self.assertIn("constexpr uint32_t CATALOG_RETRY_MS = 60000;",
+                      self.core_header())
+        body = self.function_body(self.ino(),
+                                 "void catalogRequestTick(uint32_t nowMs)")
+        self.assertIn("catalogReady", body)
+        self.assertIn("CATALOG_RETRY_MS", body)
+        self.assertIn("GetAllPages", body)
+
+    def test_portal_page_reserves_its_capacity(self):
+        body = self.function_body(self.ino(), "String portalPage()")
+        self.assertIn("page.reserve(", body)
+        self.assertLess(body.index("page.reserve("), body.index("page = F("))

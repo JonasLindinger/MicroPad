@@ -18,7 +18,19 @@ constexpr size_t SETUP_PASSWORD_LENGTH = 16;
 constexpr uint32_t INPUT_DEBOUNCE_MS = 25;
 constexpr uint32_t RESYNC_SETTLE_MS = 350;
 constexpr uint32_t WIFI_RETRY_MS = 5000;
+// Recovery: a saved Wi-Fi record that can never associate (typo, moved AP,
+// changed AP password) must not leave the pad unreachable. The default keymap
+// binds no `settings` action and the effective keymap only arrives over MQTT,
+// so after this many failed station attempts the pad re-opens its own setup
+// portal instead — the Back key (bound by default) still cancels it and leaves
+// the stored settings untouched. 24 attempts x WIFI_RETRY_MS = 2 minutes.
+constexpr uint32_t WIFI_FAILS_BEFORE_PORTAL = 24;
 constexpr uint32_t MQTT_RETRY_MS = 5000;
+// A connected broker that never delivers the retained catalog (dropped because
+// it exceeded the 16 KiB client buffer, or a lost retained publication) is
+// invisible to the client, so the pad re-requests the catalog at this interval
+// while it is connected but has no catalog.
+constexpr uint32_t CATALOG_RETRY_MS = 60000;
 // Setup-portal inactivity safety net (issue #6). The portal used to restart
 // the pad after 5 minutes even while the phone was attached and the user was
 // actively pairing, because the page HTTP traffic did not reach the activity
@@ -32,6 +44,11 @@ constexpr bool LIGHT_SLEEP_ENABLED = true;  // proven v6 wake mechanism merged
 constexpr uint32_t MIN_AWAKE_MS = 3000;
 constexpr uint32_t USB_SAMPLE_MS = 500;
 constexpr uint32_t USB_STABLE_MS = 1500;
+// The warm-sleep predicate is sampled at this interval instead of once per
+// loop pass: it can only become true after IDLE_SLEEP_MS (60 s) of idleness, so
+// 250 ms of extra latency is irrelevant, while re-scanning the whole matrix on
+// every pass (anyMatrixKeyHeld) doubled the input I/O of an awake battery pad.
+constexpr uint32_t SLEEP_GATE_SAMPLE_MS = 250;
 constexpr size_t MQTT_BUFFER_BYTES = 16384;
 constexpr size_t EVENT_BUFFER_BYTES = 512;
 // Periodic full-panel updates are disabled until hardware observation shows
@@ -51,10 +68,16 @@ constexpr uint8_t MATRIX_ROWS = 3;
 constexpr uint8_t MATRIX_COLS = 4;
 constexpr uint8_t MATRIX_KEY_COUNT = MATRIX_ROWS * MATRIX_COLS;
 
-// Bounded string field capacities (see "Fixed Data Model").
+// Bounded string field capacities (see "Fixed Data Model"). Display-only
+// fields (title, item name, state, unit) are clipped by safeCopyClip(); the
+// identifier fields (page id, entity, target page) stay strict, because a
+// clipped identifier would silently address the wrong entity or page. 32
+// characters is already far more than the 12-character value column or the
+// 22-character title strip can render, so shrinking the caps costs no
+// visible information and returns 8 KB of static RAM.
 constexpr size_t PAGE_ID_CAP = 33;
-constexpr size_t TITLE_CAP = 49;
-constexpr size_t ITEM_NAME_CAP = 49;
+constexpr size_t TITLE_CAP = 33;
+constexpr size_t ITEM_NAME_CAP = 33;
 constexpr size_t ENTITY_CAP = 97;
 constexpr size_t STATE_CAP = 33;
 constexpr size_t UNIT_CAP = 17;
@@ -352,7 +375,11 @@ constexpr int16_t ROW_NAME_CLIP_X = 150;
 constexpr int16_t ROW_VALUE_RIGHT_X = 288;    // right-aligned value, before gutter
 constexpr int16_t MONO_CHAR_W = 11;           // FreeMonoBold9pt7b xAdvance (clip math)
 constexpr size_t RENDER_TEXT_CAP = 32;
-constexpr size_t RENDER_PRIM_CAP = 48;
+// 32 prims is the measured worst case plus ~45 % headroom: a full 4-row page
+// with selection cursors, title, network cell, scrollbar and power symbol emits
+// 22 prims (host probe), so the former 48 only paid for unused render-task
+// stack (each prim is 50 bytes).
+constexpr size_t RENDER_PRIM_CAP = 32;
 constexpr uint32_t DISPLAY_BUSY_TIMEOUT_MS = 15000;
 
 // Network state values a snapshot carries (mirrors the sketch enum): 1
@@ -659,6 +686,26 @@ bool safeCopy(char (&dst)[N], const char *src) {
   std::memcpy(dst, src, copied);
   dst[copied] = '\0';
   return length < N;
+}
+
+// Bounded, truncating copy for display-only strings (title, item name, state,
+// unit). Returns true when the whole source fit, false when it was clipped.
+// Unlike safeCopy() this never fails: a long Home Assistant state or item name
+// must not discard an entire page or catalog payload, because the rejection
+// would be invisible on the device (no log, no draw) and the panel would keep
+// showing stale content. Identifier fields still use the strict safeCopy().
+template <size_t N>
+bool safeCopyClip(char (&dst)[N], const char *src) {
+  static_assert(N > 0, "destination must have capacity");
+  if (src == nullptr) {
+    dst[0] = '\0';
+    return false;
+  }
+  const size_t length = std::strlen(src);
+  const size_t copied = length < N - 1 ? length : N - 1;
+  std::memcpy(dst, src, copied);
+  dst[copied] = '\0';
+  return length <= N - 1;
 }
 
 // Key/action/item-type string conversions (see "Key Name and Action Tables").

@@ -234,6 +234,55 @@ void fakeEmit(const InputEvent &input) {
 
 }  // namespace
 
+void testSafeCopyClipDisplayCaps() {
+  // The display-only caps are 32 characters, which is still more than the
+  // renderer can show (12-character value column, 22-character title strip), so
+  // shrinking them from 48 returns static RAM without losing visible content.
+  static_assert(ITEM_NAME_CAP == 33);
+  static_assert(TITLE_CAP == 33);
+  static_assert(STATE_CAP == 33);
+  // Identifier caps stay deliberately larger: a clipped entity id would
+  // address the wrong device, so entity/page fields keep the strict copy.
+  static_assert(ENTITY_CAP > ITEM_NAME_CAP);
+  static_assert(PAGE_ID_CAP == 33);
+  char state[STATE_CAP];
+  const char *longState =
+      "a state that is definitely longer than 32 characters";
+  assert(!safeCopyClip(state, longState));
+  assert(std::strlen(state) == STATE_CAP - 1);
+  RenderRow row{};
+  safeCopyClip(row.state, "2026-09-15T06:33:00.123456+02:00");
+  assert(std::strlen(row.state) == STATE_CAP - 1);
+  safeCopyClip(row.name, "Wohnzimmer Deckenlampe Mitte");
+  assert(std::strcmp(row.name, "Wohnzimmer Deckenlampe Mitte") == 0);
+}
+
+void testRenderPrimBudgetHeadroom() {
+  // Worst case: four visible rows (selection cursor), title, network status
+  // cell, scrollbar and the USB power symbol. The measured worst case is 22
+  // prims; the budget must keep at least 25 % headroom so a layout change that
+  // silently overflows the model is caught here instead of on the panel.
+  RenderSnapshot snap{};
+  snap.totalItems = MAX_ITEMS_PER_PAGE;
+  snap.rowCount = static_cast<uint8_t>(VISIBLE_ROWS);
+  snap.networkState = NETWORK_STATE_MQTT;
+  safeCopy(snap.title, "Erdgeschoss");
+  for (uint8_t i = 0; i < VISIBLE_ROWS; ++i) {
+    std::snprintf(snap.rows[i].name, sizeof(snap.rows[i].name), "row %u",
+                  static_cast<unsigned>(i));
+    snap.rows[i].state[0] = '\0';
+    snap.rows[i].value = 12.5f * static_cast<float>(i + 1);
+    snap.rows[i].selected = (i == 0);
+    snap.rows[i].editing = (i == 0);
+  }
+  RenderModel model;
+  layoutNormalUi(snap, model);
+  networkStatusPrims(snap.networkState, model);
+  powerIconPrims(true, model);
+  assert(model.count <= RENDER_PRIM_CAP);
+  assert(model.count * 4 <= RENDER_PRIM_CAP * 3);  // >= 25 % headroom
+}
+
 void testKeymapModel() {
   constexpr const char *names[KEY_COUNT] = {
       "r0c0", "r0c1", "r0c2", "r0c3", "r1c0", "r1c1", "r1c2",
@@ -2236,6 +2285,24 @@ int main() {
   assert(std::strcmp(clipped, "long") == 0);
   assert(clipped[4] == '\0');
 
+  // safeCopyClip() truncates instead of failing: display-only payload fields
+  // (name, title, state, unit) must never reject a whole page/catalog.
+  char fit[8]{};
+  assert(safeCopyClip(fit, "eight!!"));  // 7 chars + NUL fits exactly
+  assert(std::strcmp(fit, "eight!!") == 0);
+  assert(!safeCopyClip(fit, "much longer text"));
+  assert(std::strcmp(fit, "much lo") == 0);
+  assert(fit[7] == '\0');
+  char empty[4]{'a', 'b', 'c', '\0'};
+  assert(!safeCopyClip(empty, nullptr));
+  assert(empty[0] == '\0');
+  // Clipping a text that exactly fills the cap reports success.
+  char exactCap[4]{};
+  assert(safeCopyClip(exactCap, "abc"));
+  assert(std::strcmp(exactCap, "abc") == 0);
+
+  testSafeCopyClipDisplayCaps();
+  testRenderPrimBudgetHeadroom();
   testKeymapModel();
   testActionModel();
   testItemTypeModel();
