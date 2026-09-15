@@ -82,8 +82,9 @@ require("MAX_FLUSH_PER_LOOP = 4;" in core_h
         and "MAX_FLUSH_PER_LOOP" in ino, "four-event loop flush bound")
 require(ino.count("deserializeJson") == 1,
         "exactly one deserializeJson in the MQTT callback")
-require(ino.count("if (isPowered())") == 2,
-        "both immediate and caller-side isPowered() sleep guards")
+require(ino.count("if (stableUsbHost || isPowered())") == 2,
+        "both immediate and caller-side USB power guards (debounced host + live "
+        "predicate)")
 require("USB_SAMPLE_MS = 500;" in core_h and "USB_STABLE_MS = 1500;" in core_h,
         "USB sample/stable intervals 500 and 1500")
 require("setPartialWindow(0, 0, 128, 296)" in ino,

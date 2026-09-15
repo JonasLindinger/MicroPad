@@ -26,6 +26,14 @@
 #include <esp_system.h>
 #include <esp_task_wdt.h>
 #include <esp_timer.h>
+// USB-host detection (isPowered()): TinyUSB's tud_cdc_n_connected() only exists
+// in the "USB Mode: USB-OTG (TinyUSB)" build (ARDUINO_USB_MODE == 0). With
+// "Hardware CDC and JTAG" (ARDUINO_USB_MODE == 1) there is no TinyUSB stack, so
+// the include stays conditional and the HWCDC host check is used instead.
+#if defined(ARDUINO_USB_CDC_ON_BOOT) && ARDUINO_USB_CDC_ON_BOOT && \
+    defined(ARDUINO_USB_MODE) && !ARDUINO_USB_MODE
+#include "tusb.h"
+#endif
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include "micropad_core.h"
@@ -1365,20 +1373,39 @@ uint32_t lastUsbSampleMs = 0;
 // most once per SLEEP_GATE_SAMPLE_MS instead of once per loop pass.
 uint32_t lastSleepGateMs = 0;
 
-// Active CDC data host/session, never inferred charge-only power.
+// An enumerated USB data host keeps the pad awake; a charge-only supply must
+// not. Both detection arms stay inside the CDC-on-boot guard, so a build without
+// USB CDC reports unpowered.
+//   HWCDC (ARDUINO_USB_MODE == 1): Serial.isPlugged() is the IDF SOF watchdog
+//   (usb_serial_jtag_is_connected) -- true while a host holds the port open, even
+//   with no serial monitor attached. (bool)Serial alone is the CDC *session*
+//   flag, which the HWCDC interrupt handler sets only once it has seen traffic,
+//   and only after HWCDC::begin() installed it (see configureCdc below).
+//   TinyUSB (ARDUINO_USB_MODE == 0): tud_cdc_n_connected(0) reports the attached
+//   CDC host, USBSerial additionally covers an open serial monitor (v6 line).
 bool isPowered() {
 #if defined(ARDUINO_USB_CDC_ON_BOOT) && ARDUINO_USB_CDC_ON_BOOT
-  return static_cast<bool>(Serial);
+#if defined(ARDUINO_USB_MODE) && ARDUINO_USB_MODE
+  return Serial.isPlugged() || static_cast<bool>(Serial);
+#else
+  return tud_cdc_n_connected(0) || static_cast<bool>(Serial);
+#endif
 #else
   return false;
 #endif
 }
 
-// setTxTimeoutMs is a HWCDC-only method: the ARDUINO_USB_MODE == 1 arm keeps
-// TinyUSB and CDC-disabled builds from ever compiling the unavailable call.
+// Configures the USB CDC driver, and is the only place it is started: the core
+// calls Serial.begin() automatically for the TinyUSB build only
+// (cores/esp32/main.cpp: `#if ARDUINO_USB_CDC_ON_BOOT && !ARDUINO_USB_MODE`).
+// Without begin() the HWCDC interrupt handler and the D+ pull-up are never
+// installed, so the CDC session flag can never become true and isPowered() would
+// report battery on a powered pad. The TX timeout setter is HWCDC-only, hence
+// the same guard.
 void configureCdc() {
 #if defined(ARDUINO_USB_CDC_ON_BOOT) && ARDUINO_USB_CDC_ON_BOOT && \
     defined(ARDUINO_USB_MODE) && ARDUINO_USB_MODE == 1
+  Serial.begin(115200);
   Serial.setTxTimeoutMs(0);
 #endif
 }
@@ -1435,7 +1462,10 @@ constexpr uint64_t MQTT_KEEPALIVE_US = 15000000ULL;  // 15 s keepalive
 // the dependency-free predicate with the held-key, render-busy (acquire), and
 // mailbox-pending state, plus the wrap-safe idle and minimum-awake clocks.
 bool sleepGateReady(uint32_t nowMs) {
-  if (isPowered()) return false;
+  // The debounced host state blocks too: once a host has been stable for
+  // USB_STABLE_MS, a raw read that flaps inside the SOF watchdog's tolerance
+  // window must not open the sleep path.
+  if (stableUsbHost || isPowered()) return false;
   // The setup portal must never sleep (issue #6): light sleep silences the
   // AP, DNS and web server mid-setup, so the phone that is pairing loses the
   // pad and the session looks like a crash. The portal has its own
@@ -1457,7 +1487,7 @@ bool sleepGateReady(uint32_t nowMs) {
   const bool busy = renderBusy.load(std::memory_order_acquire);
   const bool pending = snapshotMailbox.hasPending();
   portEXIT_CRITICAL(&snapshotMux);
-  return micropad::canSleep(false, anyKeyHeld(), busy, pending, nowMs,
+  return micropad::canSleep(isPowered(), anyKeyHeld(), busy, pending, nowMs,
                             lastActivityMs, awakeStartedMs);
 }
 
@@ -1496,7 +1526,7 @@ void prepareWakeInputs() {
 // objects stay intact with modem sleep enabled. No display, Serial, MQTT
 // publish, or Preferences call occurs between the guard and the sleep start.
 void enterLightSleep(uint32_t nowMs) {
-  if (isPowered()) return;
+  if (stableUsbHost || isPowered()) return;
   // Structural guard mirroring the gate: the setup portal never sleeps (issue
   // #6), whatever the future call graph looks like.
   if (portalActive) return;

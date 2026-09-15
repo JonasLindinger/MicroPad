@@ -861,36 +861,58 @@ class FirmwarePowerContractTest(FirmwareStaticContractTest):
 
     def test_is_powered_shielded_cdc_only(self):
         body = self.function_body(self.ino(), "bool isPowered()")
-        # The Serial boolean conversion is enclosed by the CDC-on-boot guard;
-        # the #else arm returns false so CDC-disabled builds report unpowered.
+        # Both detection arms are enclosed by the CDC-on-boot guard; the
+        # trailing #else arm returns false so CDC-disabled builds are unpowered.
         guard_at = body.index(
             "#if defined(ARDUINO_USB_CDC_ON_BOOT) && ARDUINO_USB_CDC_ON_BOOT")
-        serial_at = body.index("static_cast<bool>(Serial)")
-        else_at = body.index("#else")
-        false_at = body.index("return false;")
-        endif_at = body.index("#endif")
-        self.assertLess(guard_at, serial_at)
-        self.assertLess(serial_at, else_at)
-        self.assertLess(else_at, false_at)
-        self.assertLess(false_at, endif_at)
-        # The #else arm never touches Serial.
-        self.assertNotIn("Serial", body[else_at:endif_at])
+        # HWCDC build: the IDF SOF host check comes first, the CDC session flag
+        # second - an enumerated host that never opened a session (no serial
+        # monitor attached) must still count as powered. Pinning the bare
+        # bool(Serial) alone is what let a powered pad be treated as battery.
+        hwcdc_at = body.index("Serial.isPlugged() || static_cast<bool>(Serial)")
+        # TinyUSB build: the attached CDC host, plus the open-session flag, as
+        # the v6 line had it.
+        tinyusb_at = body.index(
+            "tud_cdc_n_connected(0) || static_cast<bool>(Serial)")
+        false_at = body.rindex("return false;")
+        self.assertLess(guard_at, hwcdc_at)
+        self.assertLess(hwcdc_at, tinyusb_at)
+        self.assertLess(tinyusb_at, false_at)
         # Data-line detection only: no VBUS/charger GPIO guess anywhere.
         for token in ("VBUS", "vbus", "analogRead", "digitalRead",
                       "digitalWrite", "pinMode", "gpio", "charger"):
             self.assertNotIn(token, body)
 
+    def test_tinyusb_host_check_is_conditionally_included(self):
+        # tud_cdc_n_connected() only exists in the TinyUSB build, so the include
+        # must be guarded; an unconditional include breaks the HWCDC and the
+        # CDC-disabled compile matrix entries.
+        text = self.ino()
+        include_at = text.index('#include "tusb.h"')
+        guard_at = text.rindex("#if", 0, include_at)
+        guard = text[guard_at:include_at]
+        self.assertIn("ARDUINO_USB_CDC_ON_BOOT", guard)
+        self.assertIn("!ARDUINO_USB_MODE", guard)
+        self.assertLess(guard_at, include_at)
+
     def test_configure_cdc_guards_hwcdc_timeout(self):
         body = self.function_body(self.ino(), "void configureCdc()")
-        # setTxTimeoutMs is a HWCDC method: guarded by both the CDC-on-boot
+        # The HWCDC driver is installed here: the core calls Serial.begin()
+        # for the TinyUSB build only, and without it the HWCDC interrupt
+        # handler (the only setter of the CDC session flag) and the D+ pull-up
+        # never exist. The TX timeout setter is a HWCDC method: guarded by both
+        # the CDC-on-boot flag and ARDUINO_USB_MODE == 1, so TinyUSB and
+        # CDC-disabled builds never compile an unavailable call.
         # flag and ARDUINO_USB_MODE == 1, so TinyUSB and CDC-disabled builds
         # never compile an unavailable call.
         guard_at = body.index(
             "#if defined(ARDUINO_USB_CDC_ON_BOOT) && ARDUINO_USB_CDC_ON_BOOT &&")
         mode_at = body.index("ARDUINO_USB_MODE == 1")
+        begin_at = body.index("Serial.begin(115200)")
         call_at = body.index("Serial.setTxTimeoutMs(0)")
         self.assertLess(guard_at, mode_at)
-        self.assertLess(mode_at, call_at)
+        self.assertLess(mode_at, begin_at)
+        self.assertLess(begin_at, call_at)
         self.assertEqual(body.count("setTxTimeoutMs"), 1)
 
     def test_power_tick_interval_gate_and_edge_only_effects(self):
@@ -1002,6 +1024,10 @@ class FirmwareSleepContractTest(FirmwareStaticContractTest):
         gate = self.function_body(
             self.ino(), "bool sleepGateReady(uint32_t nowMs)")
         self.assertLess(gate.index("isPowered()"), gate.index("canSleep("))
+        # The debounced host state blocks the gate too, and the dependency-free
+        # predicate now receives the real power state instead of a literal.
+        self.assertIn("if (stableUsbHost || isPowered()) return false;", gate)
+        self.assertIn("micropad::canSleep(isPowered(), anyKeyHeld()", gate)
         for token in ("anyKeyHeld()",
                       "renderBusy.load(std::memory_order_acquire)",
                       "snapshotMailbox.hasPending()", "lastActivityMs",
@@ -1011,7 +1037,8 @@ class FirmwareSleepContractTest(FirmwareStaticContractTest):
         # any sleep operation.
         body = self.function_body(
             self.ino(), "void enterLightSleep(uint32_t nowMs)")
-        self.assertTrue(body.lstrip().startswith("if (isPowered()) return;"))
+        self.assertTrue(body.lstrip().startswith(
+            "if (stableUsbHost || isPowered()) return;"))
 
     def test_portal_blocks_sleep_at_both_guards(self):
         # The setup portal must never light-sleep (issue #6): light sleep

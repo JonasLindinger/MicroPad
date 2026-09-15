@@ -122,10 +122,25 @@ When the device is on battery and idle for about 60 seconds **and not powered by
 a USB data host**, it enters warm light sleep (`esp_light_sleep_start`), waking on
 the matrix or encoder (EXT1, ANY_LOW). Behaviours worth knowing:
 
-- Sleep is refused while USB-powered (an enumerated CDC data host keeps the device
-  awake and draws the power icon).
+- Sleep is refused while USB-powered, and "powered" means an enumerated **data**
+  host. Detection lives in `isPowered()`: the USB-serial-JTAG host check
+  (`Serial.isPlugged()`, the IDF SOF watchdog — true while a host holds the port
+  open, even with no serial monitor attached) plus the HWCDC session flag. The
+  debounced state (`stableUsbHost`, 500 ms sample / 1500 ms stable) blocks both
+  sleep guards as well, so a single flapping raw read cannot open the sleep path.
+- `configureCdc()` calls `Serial.begin(115200)` in the hwcdc build: the core
+  starts USB CDC automatically for the TinyUSB build only
+  (`cores/esp32/main.cpp`: `#if ARDUINO_USB_CDC_ON_BOOT && !ARDUINO_USB_MODE`), and
+  without the driver being started the HWCDC interrupt handler — the only setter
+  of the CDC session flag — and the D+ pull-up never exist. A pad on a plain USB
+  cable would then read as battery-powered.
 - A **charge-only wall charger** (no enumerated host) intentionally follows normal
   battery sleep behaviour: no power icon and light sleep allowed.
+- Light sleep is currently **disabled** (`LIGHT_SLEEP_ENABLED = false`) until the
+  S3 wake path is fixed (phantom key presses after wake, see the `loop()` comment).
+  The detection above still drives the power icon and the retained
+  `micropad/power` state, and it is what has to be correct before sleep is
+  re-enabled.
 - The 15-second MQTT keepalive is used to invalidate a stale socket after a long
   sleep, so MQTT reconnects immediately on wake.
 - The render task's watchdog entry is removed before sleep and restored after

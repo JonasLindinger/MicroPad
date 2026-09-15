@@ -4,8 +4,32 @@
 
 Two numbers describe a build. The **firmware version** is what the pad publishes on
 `micropad/device` and what the configurator shows; the **contract revision** is the wire
-format both sides speak. Everything below is on `feat/cleanroom-implementation`; the
-branch has its own history and is not a descendant of `main`.
+format both sides speak. The clean-room line was merged into `main` through PR #9 and is
+released from there; the entries below are grouped by the release they shipped in.
+
+## [Unreleased]
+
+### Fixed
+
+- **A powered pad is no longer treated as battery.** `isPowered()` used
+  `static_cast<bool>(Serial)` only, which in the hwcdc build is
+  `HWCDC::isCDC_Connected()`: its session flag is set by the HWCDC interrupt
+  handler, and that handler is installed **only** by `HWCDC::begin()`. The sketch
+  never called it (the core calls `Serial.begin()` automatically for the TinyUSB
+  build only, `cores/esp32/main.cpp`: `#if ARDUINO_USB_CDC_ON_BOOT && !ARDUINO_USB_MODE`),
+  so `isPowered()` was permanently `false`: the pad counted as battery-powered on
+  every cable, slept after 60 s idle, stopped pumping `mqttClient.loop()`, lost the
+  15 s keepalive, and the broker dropped it. Detection now uses the USB-serial-JTAG
+  host check (`Serial.isPlugged()`, the IDF SOF watchdog) before the session flag —
+  the v6 semantics, restored — and `configureCdc()` starts the HWCDC driver. The
+  TinyUSB build uses the v6 `tud_cdc_n_connected(0)` arm, and both sleep guards
+  additionally honour the debounced `stableUsbHost` state.
+- **Repository cleanup:** the `.arduino` toolchain symlink and the
+  `src/micropad_configurator.egg-info/` build artifacts that an accidental commit
+  added to the tree are removed again, and `.gitignore` ignores both (the
+  `*.egg-info/` line had been merged into `*.egg-info/.arduino`). The committed
+  symlink pointed at a local `/tmp` toolchain tree, which made the firmware CI job
+  fail at the toolchain install step.
 
 ## [1.2.0] — 2026-09-15
 
