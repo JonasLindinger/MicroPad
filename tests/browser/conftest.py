@@ -70,6 +70,25 @@ def captured_requests() -> list[dict]:
 
 
 @pytest.fixture
+def config_writes(captured_requests: list[dict]):
+    """A callable returning the configuration writes recorded so far.
+
+    It has to be callable, not a list: pytest builds fixtures at setup, so a list built
+    then would be an empty snapshot and every "the config was saved" read would see
+    nothing. The recorder also carries the panel's /api/simulate and /api/lint posts (the
+    preview and budget tests assert on those), so "the last recorded POST" is not
+    necessarily the configuration write and a count taken around an action can pick up an
+    analysis post that was still in flight. That is what made the keymap restore test fail
+    under CPU load - reproduced with load, not guessed.
+    """
+
+    def _config_writes() -> list[dict]:
+        return [call for call in captured_requests if call["path"] == "/api/config"]
+
+    return _config_writes
+
+
+@pytest.fixture
 def app_url(captured_requests: list[dict], repo_root):
     """Serve the frontend shell and fake API, yielding its base URL."""
     config_payload = _load_fixture(repo_root, "frontend_config.json")

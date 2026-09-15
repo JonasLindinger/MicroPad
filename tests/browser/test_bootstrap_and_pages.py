@@ -16,7 +16,7 @@ def test_loads_contracts_and_selects_home(page, app_url):
 
 
 @pytest.mark.browser
-def test_page_commands_persist_complete_config(page, app_url, captured_requests):
+def test_page_commands_persist_complete_config(page, app_url, captured_requests, config_writes):
     page.goto(app_url)
     page.get_by_role("button", name="Add child page").click()
     page.get_by_label("Page title").fill("Office")
@@ -27,8 +27,8 @@ def test_page_commands_persist_complete_config(page, app_url, captured_requests)
     page.get_by_role("button", name="Delete Office copy").click()
     expect(page.get_by_role("treeitem", name="Office copy")).to_have_count(0)
     expect(page.locator("#save-status")).to_have_text("Saved")
-    assert captured_requests[-1]["path"] == "/api/config"
-    assert captured_requests[-1]["json"]["pages"][0]["page_id"] == "home"
+    assert config_writes()[-1]["path"] == "/api/config"
+    assert config_writes()[-1]["json"]["pages"][0]["page_id"] == "home"
 
 
 @pytest.mark.browser
@@ -41,22 +41,22 @@ def test_tree_arrow_keys_change_selection(page, app_url):
 
 
 @pytest.mark.browser
-def test_drag_reorders_siblings_and_reparents_inside(page, app_url, captured_requests):
+def test_drag_reorders_siblings_and_reparents_inside(page, app_url, captured_requests, config_writes):
     page.goto(app_url)
     page.locator('[data-page-id="kitchen"]').drag_to(page.locator('[data-page-node-id="living-room"] [data-drop-position="before"]'))
     page.locator('[data-page-id="upstairs"]').drag_to(page.locator('[data-page-node-id="living-room"] [data-drop-position="inside"]'))
     expect(page.locator("#save-status")).to_have_text("Saved")
-    saved = captured_requests[-1]["json"]
+    saved = config_writes()[-1]["json"]
     ids = [entry["page_id"] for entry in saved["pages"]]
     assert ids.index("kitchen") < ids.index("living-room")
     assert next(entry for entry in saved["pages"] if entry["page_id"] == "upstairs")["parent"] == "living-room"
 
 
-def test_drag_rejects_descendant_cycle_and_home_move(page, app_url, captured_requests):
+def test_drag_rejects_descendant_cycle_and_home_move(page, app_url, captured_requests, config_writes):
     page.goto(app_url)
-    before = len(captured_requests)
+    before = len(config_writes())
     page.locator('[data-page-id="living-room"]').drag_to(page.locator('[data-page-node-id="upstairs"] [data-drop-position="inside"]'))
     expect(page.locator("#app-status")).to_contain_text("cannot be moved")
     page.locator('[data-page-id="home"]').drag_to(page.locator('[data-page-node-id="kitchen"] [data-drop-position="inside"]'))
     expect(page.locator("#app-status")).to_contain_text("Home cannot be moved")
-    assert len(captured_requests) == before
+    assert len(config_writes()) == before

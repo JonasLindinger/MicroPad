@@ -17,7 +17,7 @@ KEY_IDS = [f"r{row}c{col}" for row in range(3) for col in range(4)] + ["enc_up",
 
 
 @pytest.mark.browser
-def test_all_fourteen_inputs_are_unique_selectable_and_rebindable(page, app_url, captured_requests):
+def test_all_fourteen_inputs_are_unique_selectable_and_rebindable(page, app_url, captured_requests, config_writes):
     page.goto(app_url)
     controls = page.locator("[data-key-id]")
     assert controls.count() == 14
@@ -27,13 +27,13 @@ def test_all_fourteen_inputs_are_unique_selectable_and_rebindable(page, app_url,
         expect(page.locator(f'[data-key-id="{key_id}"]')).to_have_attribute("aria-pressed", "true")
         page.locator(PANEL).get_by_role("button", name="No action").click()
     expect(page.locator("#save-status")).to_have_text("Saved")
-    saved = captured_requests[-1]["json"]["global_keymap"]
+    saved = config_writes()[-1]["json"]["global_keymap"]
     assert len(saved) == 14
     assert all(saved[key_id]["action"] == "none" for key_id in KEY_IDS)
 
 
 @pytest.mark.browser
-def test_action_groups_show_only_contextual_target(page, app_url, captured_requests):
+def test_action_groups_show_only_contextual_target(page, app_url, captured_requests, config_writes):
     page.goto(app_url)
     for group in ("Navigation", "Scrolling", "Device", "Media", "System"):
         expect(page.get_by_role("group", name=group)).to_be_visible()
@@ -46,7 +46,7 @@ def test_action_groups_show_only_contextual_target(page, app_url, captured_reque
     expect(entity).to_be_hidden()
     page.get_by_label("Target page for binding").select_option("living-room")
     expect(page.locator("#save-status")).to_have_text("Saved")
-    binding = captured_requests[-1]["json"]["global_keymap"]["r0c0"]
+    binding = config_writes()[-1]["json"]["global_keymap"]["r0c0"]
     assert binding == {"action": "navigate", "entity": "", "target_page": "living-room"}
 
 
@@ -84,7 +84,7 @@ def test_entity_listbox_is_not_inside_the_label(page, app_url):
 
 
 @pytest.mark.browser
-def test_page_scope_shows_ancestor_source_and_clears_override(page, app_url, captured_requests):
+def test_page_scope_shows_ancestor_source_and_clears_override(page, app_url, captured_requests, config_writes):
     page.goto(app_url)
     page.get_by_label("Keymap scope").select_option("upstairs")
     page.locator('[data-key-id="r1c0"]').click()
@@ -96,13 +96,13 @@ def test_page_scope_shows_ancestor_source_and_clears_override(page, app_url, cap
     page.get_by_role("button", name="Clear override").click()
     expect(page.get_by_text("Inherited from Living room")).to_be_visible()
     expect(page.locator("#save-status")).to_have_text("Saved")
-    saved = captured_requests[-1]["json"]
+    saved = config_writes()[-1]["json"]
     upstairs = next(page_data for page_data in saved["pages"] if page_data["page_id"] == "upstairs")
     assert "r1c0" not in upstairs.get("keymap", {})
 
 
 @pytest.mark.browser
-def test_page_override_writes_into_canonical_pages_keymap_and_validates(page, app_url, captured_requests):
+def test_page_override_writes_into_canonical_pages_keymap_and_validates(page, app_url, captured_requests, config_writes):
     # The canonical backend shape stores per-page key overrides as pages[].keymap
     # (models.py Page.keymap), NOT a top-level page_overrides container. AppConfig is
     # StrictModel with extra="forbid", so a payload carrying a stray page_overrides key
@@ -116,7 +116,7 @@ def test_page_override_writes_into_canonical_pages_keymap_and_validates(page, ap
     page.get_by_role("option", name="Desk Lamp — light.desk_lamp").click()
     expect(page.get_by_text("Override on Upstairs")).to_be_visible()
     expect(page.locator("#save-status")).to_have_text("Saved")
-    payload = captured_requests[-1]["json"]
+    payload = config_writes()[-1]["json"]
     assert "page_overrides" not in payload
     upstairs = next(page_data for page_data in payload["pages"] if page_data["page_id"] == "upstairs")
     assert upstairs.get("keymap", {}).get("r1c0") == {
@@ -131,22 +131,22 @@ def test_page_override_writes_into_canonical_pages_keymap_and_validates(page, ap
 
 
 @pytest.mark.browser
-def test_restore_defaults_requires_confirmation_and_clears_all_overrides(page, app_url, captured_requests):
+def test_restore_defaults_requires_confirmation_and_clears_all_overrides(page, app_url, captured_requests, config_writes):
     # Restoring defaults must be a guarded, two-step action: opening the dialog alone
     # must not write anything, and cancel must not either. Confirming persists exactly
     # one write that restores the global keymap to the fourteen canonical defaults and
     # clears every page-local key override.
     from micropad.models import parse_config
     page.goto(app_url)
-    before = len(captured_requests)
+    before = len(config_writes())
     page.get_by_role("button", name="Restore keymap defaults").click()
     expect(page.get_by_role("dialog", name="Restore keymap defaults")).to_be_visible()
     page.get_by_role("button", name="Cancel restore").click()
-    assert len(captured_requests) == before
+    assert len(config_writes()) == before
     page.get_by_role("button", name="Restore keymap defaults").click()
     page.get_by_role("button", name="Restore defaults now").click()
     expect(page.locator("#save-status")).to_have_text("Saved")
-    saved = captured_requests[-1]["json"]
+    saved = config_writes()[-1]["json"]
     # Canonical AppConfig shape: page-local key overrides live in pages[].keymap and the
     # backend is StrictModel with extra="forbid", so there is NO top-level page_overrides
     # field. Restore returns the global keymap to defaults and empties every page map.

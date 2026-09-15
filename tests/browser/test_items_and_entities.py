@@ -8,7 +8,7 @@ from playwright.sync_api import expect
 
 
 @pytest.mark.browser
-def test_item_editor_persists_every_field(page, app_url, captured_requests):
+def test_item_editor_persists_every_field(page, app_url, captured_requests, config_writes):
     page.goto(app_url)
     # P1.8: a new item is created as a draft and only becomes a card once its
     # required fields are set and "Save item" is pressed.
@@ -30,12 +30,12 @@ def test_item_editor_persists_every_field(page, app_url, captured_requests):
     card.get_by_label("Target page").select_option("living-room")
     card.get_by_label("Move item down").click()
     expect(page.locator("#save-status")).to_have_text("Saved")
-    saved_item = captured_requests[-1]["json"]["pages"][0]["items"][1]
+    saved_item = config_writes()[-1]["json"]["pages"][0]["items"][1]
     assert saved_item == {"name":"Desk brightness","type":"number","entity":"number.desk_brightness","state":"42","value":42,"min":0,"max":100,"step":5,"unit":"%","editable":True,"target_page":"living-room"}
 
 
 @pytest.mark.browser
-def test_item_editor_removes_item(page, app_url, captured_requests):
+def test_item_editor_removes_item(page, app_url, captured_requests, config_writes):
     page.goto(app_url)
     page.get_by_role("button", name="Add item").click()
     draft = page.locator("fieldset.item-draft")
@@ -46,12 +46,12 @@ def test_item_editor_removes_item(page, app_url, captured_requests):
     expect(page.locator('[data-item-index="0"]')).to_be_visible()
     page.locator('[data-item-index="0"]').get_by_label("Remove item").click()
     expect(page.locator("#save-status")).to_have_text("Saved")
-    saved_items = captured_requests[-1]["json"]["pages"][0]["items"]
+    saved_items = config_writes()[-1]["json"]["pages"][0]["items"]
     assert len(saved_items) == 1
 
 
 @pytest.mark.browser
-def test_item_editor_rejects_non_finite_number(page, app_url, captured_requests):
+def test_item_editor_rejects_non_finite_number(page, app_url, captured_requests, config_writes):
     page.goto(app_url)
     page.get_by_role("button", name="Add item").click()
     card = page.locator('[data-item-index="0"]')
@@ -59,26 +59,26 @@ def test_item_editor_rejects_non_finite_number(page, app_url, captured_requests)
     expect(page.locator("#save-status")).to_have_text("Saved")
     card.get_by_label("Value").fill("Infinity")
     expect(page.locator("#app-status")).to_contain_text("Enter a finite number.")
-    saved_item = captured_requests[-1]["json"]["pages"][0]["items"][0]
+    saved_item = config_writes()[-1]["json"]["pages"][0]["items"][0]
     assert saved_item["value"] == 42
 
 
 @pytest.mark.browser
-def test_template_cards_create_editable_child_page(page, app_url, captured_requests):
+def test_template_cards_create_editable_child_page(page, app_url, captured_requests, config_writes):
     page.goto(app_url)
     for label in ("Spotify", "Discord", "Lights", "Generic media"):
         expect(page.get_by_role("button", name=f"Create {label} page")).to_be_visible()
     page.get_by_role("button", name="Create Spotify page").click()
     expect(page.get_by_role("treeitem", name="Spotify")).to_have_attribute("aria-current", "page")
     expect(page.locator("#save-status")).to_have_text("Saved")
-    saved = captured_requests[-1]["json"]
+    saved = config_writes()[-1]["json"]
     spotify = next(entry for entry in saved["pages"] if entry["title"] == "Spotify")
     assert spotify["parent"] == "home"
     assert {item["name"] for item in spotify["items"]} >= {"Play/Pause", "Next", "Previous"}
 
 
 @pytest.mark.browser
-def test_item_editor_accepts_char_by_char_negative_decimal(page, app_url, captured_requests):
+def test_item_editor_accepts_char_by_char_negative_decimal(page, app_url, captured_requests, config_writes):
     # A keyboard user types a negative decimal character-by-character. The transient
     # first keystroke ("-") and mid-way prefixes ("-20.") are not finite, so the field
     # must neither hard-revert nor announce an error until the value forms a finite
@@ -94,12 +94,12 @@ def test_item_editor_accepts_char_by_char_negative_decimal(page, app_url, captur
     expect(page.locator("#app-status")).not_to_contain_text("Enter a finite number.")
     card.get_by_label("Target page").focus()
     expect(page.locator("#save-status")).to_have_text("Saved")
-    saved_item = captured_requests[-1]["json"]["pages"][0]["items"][0]
+    saved_item = config_writes()[-1]["json"]["pages"][0]["items"][0]
     assert saved_item["value"] == -20.5
 
 
 @pytest.mark.browser
-def test_entity_autocomplete_matches_friendly_name_and_writes_id(page, app_url, captured_requests):
+def test_entity_autocomplete_matches_friendly_name_and_writes_id(page, app_url, captured_requests, config_writes):
     page.goto(app_url)
     input_ = page.locator('[data-item-index="0"]').get_by_label("Entity ID")
     input_.fill("Desk Lamp")
@@ -108,7 +108,7 @@ def test_entity_autocomplete_matches_friendly_name_and_writes_id(page, app_url, 
     option.click()
     expect(input_).to_have_value("light.desk_lamp")
     expect(page.locator("#save-status")).to_have_text("Saved")
-    assert captured_requests[-1]["json"]["pages"][0]["items"][0]["entity"] == "light.desk_lamp"
+    assert config_writes()[-1]["json"]["pages"][0]["items"][0]["entity"] == "light.desk_lamp"
 
 
 @pytest.mark.browser
