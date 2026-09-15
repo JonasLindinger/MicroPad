@@ -1,0 +1,155 @@
+{
+  "pages": [
+    {
+      "page_id": "home",
+      "title": "Home",
+      "parent": "",
+      "items": [
+        {
+          "name": "Living Lights",
+          "type": "light",
+          "entity": "light.living",
+          "state": "",
+          "value": 0.0,
+          "min": 0.0,
+          "max": 100.0,
+          "step": 1.0,
+          "unit": "",
+          "editable": false,
+          "target_page": ""
+        },
+        {
+          "name": "Bedroom",
+          "type": "category",
+          "entity": "",
+          "state": "",
+          "value": 0.0,
+          "min": 0.0,
+          "max": 100.0,
+          "step": 1.0,
+          "unit": "",
+          "editable": false,
+          "target_page": "bedroom"
+        },
+        {
+          "name": "Office",
+          "type": "category",
+          "entity": "",
+          "state": "",
+          "value": 0.0,
+          "min": 0.0,
+          "max": 100.0,
+          "step": 1.0,
+          "unit": "",
+          "editable": false,
+          "target_page": "office"
+        },
+        {
+          "name": "To bedroom",
+          "type": "category",
+          "entity": "",
+          "state": "",
+          "value": 0.0,
+          "min": 0.0,
+          "max": 100.0,
+          "step": 1.0,
+          "unit": "",
+          "editable": false,
+          "target_page": "bedroom"
+        }
+      ]
+    },
+    {
+      "page_id": "bedroom",
+      "title": "Bedroom",
+      "parent": "home",
+      "items": [
+        {
+          "name": "Bedroom Light",
+          "type": "light",
+          "entity": "light.bedroom",
+          "state": "",
+          "value": 0.0,
+          "min": 0.0,
+          "max": 100.0,
+          "step": 1.0,
+          "unit": "",
+          "editable": false,
+          "target_page": ""
+        },
+        {
+          "name": "Fan",
+          "type": "switch",
+          "entity": "switch.fan",
+          "state": "",
+          "value": 0.0,
+          "min": 0.0,
+          "max": 100.0,
+          "step": 1.0,
+          "unit": "",
+          "editable": false,
+          "target_page": ""
+        },
+        {
+          "name": "Bedside level",
+          "type": "number",
+          "entity": "number.bedside",
+          "state": "40",
+          "value": 40.0,
+          "min": 0.0,
+          "max": 100.0,
+          "step": 5.0,
+          "unit": "%",
+          "editable": true,
+          "target_page": ""
+        }
+      ]
+    },
+    {
+      "page_id": "office",
+      "title": "Office",
+      "parent": "home",
+      "items": [
+        {
+          "name": "AC",
+          "type": "number",
+          "entity": "number.ac",
+          "state": "",
+          "value": 21.0,
+          "min": 16.0,
+          "max": 30.0,
+          "step": 0.5,
+          "unit": "°C",
+          "editable": true,
+          "target_page": ""
+        },
+        {
+          "name": "Temp",
+          "type": "sensor",
+          "entity": "sensor.office_temp",
+          "state": "",
+          "value": 0.0,
+          "min": 0.0,
+          "max": 100.0,
+          "step": 1.0,
+          "unit": "°C",
+          "editable": false,
+          "target_page": ""
+        },
+        {
+          "name": "Evening",
+          "type": "scene",
+          "entity": "scene.evening",
+          "state": "",
+          "value": 0.0,
+          "min": 0.0,
+          "max": 100.0,
+          "step": 1.0,
+          "unit": "",
+          "editable": false,
+          "target_page": ""
+        }
+      ]
+    }
+  ]
+}

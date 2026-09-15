@@ -25,7 +25,7 @@ def _is_generated_or_hidden(path: Path) -> bool:
     return any(
         part == "__pycache__" or part.endswith(".egg-info") or part.startswith(".")
         for part in path.parts
-    )
+    ) or path.parts[:3] == ("tests", "fixtures", "golden")
 
 
 def tracked_project_text_paths() -> list[Path]:

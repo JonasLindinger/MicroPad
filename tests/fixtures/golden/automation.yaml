@@ -1,0 +1,622 @@
+# AI-assisted development — firmware, HA automation, config generator and docs were created with AI (LLM) help, reviewed and tested by the author. Provided as-is, without warranty; verify on your own hardware, don't use for safety-critical applications.
+id: micropad_controller
+alias: MicroPad Controller
+mode: queued
+max: 20
+triggers:
+- trigger: mqtt
+  topic: micropad/event
+  id: micropad_event
+- trigger: homeassistant
+  event: start
+  id: ha_start
+conditions: []
+actions:
+- choose:
+  - conditions:
+    - condition: trigger
+      id: ha_start
+    sequence:
+    - action: mqtt.publish
+      data:
+        topic: micropad/pages/all
+        payload: '{"pages":[{"page_id":"home","title":"Home","parent":"","items":[{"name":"Living
+          Lights","type":"light","entity":"light.living","state":{{ states(''light.living'')
+          | to_json }},"value":0.0,"min":0.0,"max":100.0,"step":1.0,"unit":"","editable":false,"target_page":""},{"name":"Bedroom","type":"category","entity":"","state":"","value":0.0,"min":0.0,"max":100.0,"step":1.0,"unit":"","editable":false,"target_page":"bedroom"},{"name":"Office","type":"category","entity":"","state":"","value":0.0,"min":0.0,"max":100.0,"step":1.0,"unit":"","editable":false,"target_page":"office"},{"name":"To
+          bedroom","type":"category","entity":"","state":"","value":0.0,"min":0.0,"max":100.0,"step":1.0,"unit":"","editable":false,"target_page":"bedroom"}]},{"page_id":"bedroom","title":"Bedroom","parent":"home","items":[{"name":"Bedroom
+          Light","type":"light","entity":"light.bedroom","state":{{ states(''light.bedroom'')
+          | to_json }},"value":0.0,"min":0.0,"max":100.0,"step":1.0,"unit":"","editable":false,"target_page":""},{"name":"Fan","type":"switch","entity":"switch.fan","state":{{
+          states(''switch.fan'') | to_json }},"value":0.0,"min":0.0,"max":100.0,"step":1.0,"unit":"","editable":false,"target_page":""},{"name":"Bedside
+          level","type":"number","entity":"number.bedside","state":{{ states(''number.bedside'')
+          | to_json }},"value":{{ states(''number.bedside'') | float(default=40.0)
+          }},"min":0.0,"max":100.0,"step":5.0,"unit":"%","editable":true,"target_page":""}]},{"page_id":"office","title":"Office","parent":"home","items":[{"name":"AC","type":"number","entity":"number.ac","state":{{
+          states(''number.ac'') | to_json }},"value":{{ states(''number.ac'') | float(default=21.0)
+          }},"min":16.0,"max":30.0,"step":0.5,"unit":"°C","editable":true,"target_page":""},{"name":"Temp","type":"sensor","entity":"sensor.office_temp","state":{{
+          states(''sensor.office_temp'') | to_json }},"value":0.0,"min":0.0,"max":100.0,"step":1.0,"unit":"°C","editable":false,"target_page":""},{"name":"Evening","type":"scene","entity":"scene.evening","state":{{
+          states(''scene.evening'') | to_json }},"value":0.0,"min":0.0,"max":100.0,"step":1.0,"unit":"","editable":false,"target_page":""}]}]}'
+        retain: true
+        qos: 0
+    - action: mqtt.publish
+      data:
+        topic: micropad/page/current
+        payload: '{"page_id":"home","title":"Home","parent":"","items":[{"name":"Living
+          Lights","type":"light","entity":"light.living","state":{{ states(''light.living'')
+          | to_json }},"value":0.0,"min":0.0,"max":100.0,"step":1.0,"unit":"","editable":false,"target_page":""},{"name":"Bedroom","type":"category","entity":"","state":"","value":0.0,"min":0.0,"max":100.0,"step":1.0,"unit":"","editable":false,"target_page":"bedroom"},{"name":"Office","type":"category","entity":"","state":"","value":0.0,"min":0.0,"max":100.0,"step":1.0,"unit":"","editable":false,"target_page":"office"},{"name":"To
+          bedroom","type":"category","entity":"","state":"","value":0.0,"min":0.0,"max":100.0,"step":1.0,"unit":"","editable":false,"target_page":"bedroom"}]}'
+        retain: true
+        qos: 0
+    - action: mqtt.publish
+      data:
+        topic: micropad/keymap
+        payload: '{"r0c0":{"action":"none","entity":"","target_page":""},"r0c1":{"action":"none","entity":"","target_page":""},"r0c2":{"action":"none","entity":"","target_page":""},"r0c3":{"action":"none","entity":"","target_page":""},"r1c0":{"action":"none","entity":"","target_page":""},"r1c1":{"action":"none","entity":"","target_page":""},"r1c2":{"action":"none","entity":"","target_page":""},"r1c3":{"action":"none","entity":"","target_page":""},"r2c0":{"action":"none","entity":"","target_page":""},"r2c1":{"action":"none","entity":"","target_page":""},"r2c2":{"action":"none","entity":"","target_page":""},"r2c3":{"action":"none","entity":"","target_page":""},"enc_up":{"action":"none","entity":"","target_page":""},"enc_down":{"action":"none","entity":"","target_page":""}}'
+        retain: true
+        qos: 0
+  - conditions:
+    - condition: trigger
+      id: micropad_event
+    sequence:
+    - variables:
+        event: '{{ trigger.payload_json }}'
+    - choose:
+      - conditions:
+        - condition: template
+          value_template: '{{ event.action == "toggle" and event.entity == "light.living"
+            and event.page_id == "home" }}'
+        sequence:
+        - action: light.toggle
+          target:
+            entity_id: light.living
+        - action: mqtt.publish
+          data:
+            topic: micropad/page/current
+            payload: '{"page_id":"home","title":"Home","parent":"","items":[{"name":"Living
+              Lights","type":"light","entity":"light.living","state":{{ states(''light.living'')
+              | to_json }},"value":0.0,"min":0.0,"max":100.0,"step":1.0,"unit":"","editable":false,"target_page":""},{"name":"Bedroom","type":"category","entity":"","state":"","value":0.0,"min":0.0,"max":100.0,"step":1.0,"unit":"","editable":false,"target_page":"bedroom"},{"name":"Office","type":"category","entity":"","state":"","value":0.0,"min":0.0,"max":100.0,"step":1.0,"unit":"","editable":false,"target_page":"office"},{"name":"To
+              bedroom","type":"category","entity":"","state":"","value":0.0,"min":0.0,"max":100.0,"step":1.0,"unit":"","editable":false,"target_page":"bedroom"}]}'
+            retain: true
+            qos: 0
+        - action: mqtt.publish
+          data:
+            topic: micropad/keymap
+            payload: '{"r0c0":{"action":"none","entity":"","target_page":""},"r0c1":{"action":"none","entity":"","target_page":""},"r0c2":{"action":"none","entity":"","target_page":""},"r0c3":{"action":"none","entity":"","target_page":""},"r1c0":{"action":"none","entity":"","target_page":""},"r1c1":{"action":"none","entity":"","target_page":""},"r1c2":{"action":"none","entity":"","target_page":""},"r1c3":{"action":"none","entity":"","target_page":""},"r2c0":{"action":"none","entity":"","target_page":""},"r2c1":{"action":"none","entity":"","target_page":""},"r2c2":{"action":"none","entity":"","target_page":""},"r2c3":{"action":"none","entity":"","target_page":""},"enc_up":{"action":"none","entity":"","target_page":""},"enc_down":{"action":"none","entity":"","target_page":""}}'
+            retain: true
+            qos: 0
+      - conditions:
+        - condition: template
+          value_template: '{{ event.action == "on" and event.entity == "light.living"
+            and event.page_id == "home" }}'
+        sequence:
+        - action: light.turn_on
+          target:
+            entity_id: light.living
+        - action: mqtt.publish
+          data:
+            topic: micropad/page/current
+            payload: '{"page_id":"home","title":"Home","parent":"","items":[{"name":"Living
+              Lights","type":"light","entity":"light.living","state":{{ states(''light.living'')
+              | to_json }},"value":0.0,"min":0.0,"max":100.0,"step":1.0,"unit":"","editable":false,"target_page":""},{"name":"Bedroom","type":"category","entity":"","state":"","value":0.0,"min":0.0,"max":100.0,"step":1.0,"unit":"","editable":false,"target_page":"bedroom"},{"name":"Office","type":"category","entity":"","state":"","value":0.0,"min":0.0,"max":100.0,"step":1.0,"unit":"","editable":false,"target_page":"office"},{"name":"To
+              bedroom","type":"category","entity":"","state":"","value":0.0,"min":0.0,"max":100.0,"step":1.0,"unit":"","editable":false,"target_page":"bedroom"}]}'
+            retain: true
+            qos: 0
+        - action: mqtt.publish
+          data:
+            topic: micropad/keymap
+            payload: '{"r0c0":{"action":"none","entity":"","target_page":""},"r0c1":{"action":"none","entity":"","target_page":""},"r0c2":{"action":"none","entity":"","target_page":""},"r0c3":{"action":"none","entity":"","target_page":""},"r1c0":{"action":"none","entity":"","target_page":""},"r1c1":{"action":"none","entity":"","target_page":""},"r1c2":{"action":"none","entity":"","target_page":""},"r1c3":{"action":"none","entity":"","target_page":""},"r2c0":{"action":"none","entity":"","target_page":""},"r2c1":{"action":"none","entity":"","target_page":""},"r2c2":{"action":"none","entity":"","target_page":""},"r2c3":{"action":"none","entity":"","target_page":""},"enc_up":{"action":"none","entity":"","target_page":""},"enc_down":{"action":"none","entity":"","target_page":""}}'
+            retain: true
+            qos: 0
+      - conditions:
+        - condition: template
+          value_template: '{{ event.action == "off" and event.entity == "light.living"
+            and event.page_id == "home" }}'
+        sequence:
+        - action: light.turn_off
+          target:
+            entity_id: light.living
+        - action: mqtt.publish
+          data:
+            topic: micropad/page/current
+            payload: '{"page_id":"home","title":"Home","parent":"","items":[{"name":"Living
+              Lights","type":"light","entity":"light.living","state":{{ states(''light.living'')
+              | to_json }},"value":0.0,"min":0.0,"max":100.0,"step":1.0,"unit":"","editable":false,"target_page":""},{"name":"Bedroom","type":"category","entity":"","state":"","value":0.0,"min":0.0,"max":100.0,"step":1.0,"unit":"","editable":false,"target_page":"bedroom"},{"name":"Office","type":"category","entity":"","state":"","value":0.0,"min":0.0,"max":100.0,"step":1.0,"unit":"","editable":false,"target_page":"office"},{"name":"To
+              bedroom","type":"category","entity":"","state":"","value":0.0,"min":0.0,"max":100.0,"step":1.0,"unit":"","editable":false,"target_page":"bedroom"}]}'
+            retain: true
+            qos: 0
+        - action: mqtt.publish
+          data:
+            topic: micropad/keymap
+            payload: '{"r0c0":{"action":"none","entity":"","target_page":""},"r0c1":{"action":"none","entity":"","target_page":""},"r0c2":{"action":"none","entity":"","target_page":""},"r0c3":{"action":"none","entity":"","target_page":""},"r1c0":{"action":"none","entity":"","target_page":""},"r1c1":{"action":"none","entity":"","target_page":""},"r1c2":{"action":"none","entity":"","target_page":""},"r1c3":{"action":"none","entity":"","target_page":""},"r2c0":{"action":"none","entity":"","target_page":""},"r2c1":{"action":"none","entity":"","target_page":""},"r2c2":{"action":"none","entity":"","target_page":""},"r2c3":{"action":"none","entity":"","target_page":""},"enc_up":{"action":"none","entity":"","target_page":""},"enc_down":{"action":"none","entity":"","target_page":""}}'
+            retain: true
+            qos: 0
+      - conditions:
+        - condition: template
+          value_template: '{{ event.action == "toggle" and event.entity == "light.bedroom"
+            and event.page_id == "bedroom" }}'
+        sequence:
+        - action: light.toggle
+          target:
+            entity_id: light.bedroom
+        - action: mqtt.publish
+          data:
+            topic: micropad/page/current
+            payload: '{"page_id":"bedroom","title":"Bedroom","parent":"home","items":[{"name":"Bedroom
+              Light","type":"light","entity":"light.bedroom","state":{{ states(''light.bedroom'')
+              | to_json }},"value":0.0,"min":0.0,"max":100.0,"step":1.0,"unit":"","editable":false,"target_page":""},{"name":"Fan","type":"switch","entity":"switch.fan","state":{{
+              states(''switch.fan'') | to_json }},"value":0.0,"min":0.0,"max":100.0,"step":1.0,"unit":"","editable":false,"target_page":""},{"name":"Bedside
+              level","type":"number","entity":"number.bedside","state":{{ states(''number.bedside'')
+              | to_json }},"value":{{ states(''number.bedside'') | float(default=40.0)
+              }},"min":0.0,"max":100.0,"step":5.0,"unit":"%","editable":true,"target_page":""}]}'
+            retain: true
+            qos: 0
+        - action: mqtt.publish
+          data:
+            topic: micropad/keymap
+            payload: '{"r0c0":{"action":"none","entity":"","target_page":""},"r0c1":{"action":"none","entity":"","target_page":""},"r0c2":{"action":"none","entity":"","target_page":""},"r0c3":{"action":"none","entity":"","target_page":""},"r1c0":{"action":"none","entity":"","target_page":""},"r1c1":{"action":"none","entity":"","target_page":""},"r1c2":{"action":"none","entity":"","target_page":""},"r1c3":{"action":"none","entity":"","target_page":""},"r2c0":{"action":"navigate","entity":"","target_page":"office"},"r2c1":{"action":"none","entity":"","target_page":""},"r2c2":{"action":"none","entity":"","target_page":""},"r2c3":{"action":"none","entity":"","target_page":""},"enc_up":{"action":"none","entity":"","target_page":""},"enc_down":{"action":"none","entity":"","target_page":""}}'
+            retain: true
+            qos: 0
+      - conditions:
+        - condition: template
+          value_template: '{{ event.action == "on" and event.entity == "light.bedroom"
+            and event.page_id == "bedroom" }}'
+        sequence:
+        - action: light.turn_on
+          target:
+            entity_id: light.bedroom
+        - action: mqtt.publish
+          data:
+            topic: micropad/page/current
+            payload: '{"page_id":"bedroom","title":"Bedroom","parent":"home","items":[{"name":"Bedroom
+              Light","type":"light","entity":"light.bedroom","state":{{ states(''light.bedroom'')
+              | to_json }},"value":0.0,"min":0.0,"max":100.0,"step":1.0,"unit":"","editable":false,"target_page":""},{"name":"Fan","type":"switch","entity":"switch.fan","state":{{
+              states(''switch.fan'') | to_json }},"value":0.0,"min":0.0,"max":100.0,"step":1.0,"unit":"","editable":false,"target_page":""},{"name":"Bedside
+              level","type":"number","entity":"number.bedside","state":{{ states(''number.bedside'')
+              | to_json }},"value":{{ states(''number.bedside'') | float(default=40.0)
+              }},"min":0.0,"max":100.0,"step":5.0,"unit":"%","editable":true,"target_page":""}]}'
+            retain: true
+            qos: 0
+        - action: mqtt.publish
+          data:
+            topic: micropad/keymap
+            payload: '{"r0c0":{"action":"none","entity":"","target_page":""},"r0c1":{"action":"none","entity":"","target_page":""},"r0c2":{"action":"none","entity":"","target_page":""},"r0c3":{"action":"none","entity":"","target_page":""},"r1c0":{"action":"none","entity":"","target_page":""},"r1c1":{"action":"none","entity":"","target_page":""},"r1c2":{"action":"none","entity":"","target_page":""},"r1c3":{"action":"none","entity":"","target_page":""},"r2c0":{"action":"navigate","entity":"","target_page":"office"},"r2c1":{"action":"none","entity":"","target_page":""},"r2c2":{"action":"none","entity":"","target_page":""},"r2c3":{"action":"none","entity":"","target_page":""},"enc_up":{"action":"none","entity":"","target_page":""},"enc_down":{"action":"none","entity":"","target_page":""}}'
+            retain: true
+            qos: 0
+      - conditions:
+        - condition: template
+          value_template: '{{ event.action == "off" and event.entity == "light.bedroom"
+            and event.page_id == "bedroom" }}'
+        sequence:
+        - action: light.turn_off
+          target:
+            entity_id: light.bedroom
+        - action: mqtt.publish
+          data:
+            topic: micropad/page/current
+            payload: '{"page_id":"bedroom","title":"Bedroom","parent":"home","items":[{"name":"Bedroom
+              Light","type":"light","entity":"light.bedroom","state":{{ states(''light.bedroom'')
+              | to_json }},"value":0.0,"min":0.0,"max":100.0,"step":1.0,"unit":"","editable":false,"target_page":""},{"name":"Fan","type":"switch","entity":"switch.fan","state":{{
+              states(''switch.fan'') | to_json }},"value":0.0,"min":0.0,"max":100.0,"step":1.0,"unit":"","editable":false,"target_page":""},{"name":"Bedside
+              level","type":"number","entity":"number.bedside","state":{{ states(''number.bedside'')
+              | to_json }},"value":{{ states(''number.bedside'') | float(default=40.0)
+              }},"min":0.0,"max":100.0,"step":5.0,"unit":"%","editable":true,"target_page":""}]}'
+            retain: true
+            qos: 0
+        - action: mqtt.publish
+          data:
+            topic: micropad/keymap
+            payload: '{"r0c0":{"action":"none","entity":"","target_page":""},"r0c1":{"action":"none","entity":"","target_page":""},"r0c2":{"action":"none","entity":"","target_page":""},"r0c3":{"action":"none","entity":"","target_page":""},"r1c0":{"action":"none","entity":"","target_page":""},"r1c1":{"action":"none","entity":"","target_page":""},"r1c2":{"action":"none","entity":"","target_page":""},"r1c3":{"action":"none","entity":"","target_page":""},"r2c0":{"action":"navigate","entity":"","target_page":"office"},"r2c1":{"action":"none","entity":"","target_page":""},"r2c2":{"action":"none","entity":"","target_page":""},"r2c3":{"action":"none","entity":"","target_page":""},"enc_up":{"action":"none","entity":"","target_page":""},"enc_down":{"action":"none","entity":"","target_page":""}}'
+            retain: true
+            qos: 0
+      - conditions:
+        - condition: template
+          value_template: '{{ event.action == "toggle" and event.entity == "switch.fan"
+            and event.page_id == "bedroom" }}'
+        sequence:
+        - action: switch.toggle
+          target:
+            entity_id: switch.fan
+        - action: mqtt.publish
+          data:
+            topic: micropad/page/current
+            payload: '{"page_id":"bedroom","title":"Bedroom","parent":"home","items":[{"name":"Bedroom
+              Light","type":"light","entity":"light.bedroom","state":{{ states(''light.bedroom'')
+              | to_json }},"value":0.0,"min":0.0,"max":100.0,"step":1.0,"unit":"","editable":false,"target_page":""},{"name":"Fan","type":"switch","entity":"switch.fan","state":{{
+              states(''switch.fan'') | to_json }},"value":0.0,"min":0.0,"max":100.0,"step":1.0,"unit":"","editable":false,"target_page":""},{"name":"Bedside
+              level","type":"number","entity":"number.bedside","state":{{ states(''number.bedside'')
+              | to_json }},"value":{{ states(''number.bedside'') | float(default=40.0)
+              }},"min":0.0,"max":100.0,"step":5.0,"unit":"%","editable":true,"target_page":""}]}'
+            retain: true
+            qos: 0
+        - action: mqtt.publish
+          data:
+            topic: micropad/keymap
+            payload: '{"r0c0":{"action":"none","entity":"","target_page":""},"r0c1":{"action":"none","entity":"","target_page":""},"r0c2":{"action":"none","entity":"","target_page":""},"r0c3":{"action":"none","entity":"","target_page":""},"r1c0":{"action":"none","entity":"","target_page":""},"r1c1":{"action":"none","entity":"","target_page":""},"r1c2":{"action":"none","entity":"","target_page":""},"r1c3":{"action":"none","entity":"","target_page":""},"r2c0":{"action":"navigate","entity":"","target_page":"office"},"r2c1":{"action":"none","entity":"","target_page":""},"r2c2":{"action":"none","entity":"","target_page":""},"r2c3":{"action":"none","entity":"","target_page":""},"enc_up":{"action":"none","entity":"","target_page":""},"enc_down":{"action":"none","entity":"","target_page":""}}'
+            retain: true
+            qos: 0
+      - conditions:
+        - condition: template
+          value_template: '{{ event.action == "on" and event.entity == "switch.fan"
+            and event.page_id == "bedroom" }}'
+        sequence:
+        - action: switch.turn_on
+          target:
+            entity_id: switch.fan
+        - action: mqtt.publish
+          data:
+            topic: micropad/page/current
+            payload: '{"page_id":"bedroom","title":"Bedroom","parent":"home","items":[{"name":"Bedroom
+              Light","type":"light","entity":"light.bedroom","state":{{ states(''light.bedroom'')
+              | to_json }},"value":0.0,"min":0.0,"max":100.0,"step":1.0,"unit":"","editable":false,"target_page":""},{"name":"Fan","type":"switch","entity":"switch.fan","state":{{
+              states(''switch.fan'') | to_json }},"value":0.0,"min":0.0,"max":100.0,"step":1.0,"unit":"","editable":false,"target_page":""},{"name":"Bedside
+              level","type":"number","entity":"number.bedside","state":{{ states(''number.bedside'')
+              | to_json }},"value":{{ states(''number.bedside'') | float(default=40.0)
+              }},"min":0.0,"max":100.0,"step":5.0,"unit":"%","editable":true,"target_page":""}]}'
+            retain: true
+            qos: 0
+        - action: mqtt.publish
+          data:
+            topic: micropad/keymap
+            payload: '{"r0c0":{"action":"none","entity":"","target_page":""},"r0c1":{"action":"none","entity":"","target_page":""},"r0c2":{"action":"none","entity":"","target_page":""},"r0c3":{"action":"none","entity":"","target_page":""},"r1c0":{"action":"none","entity":"","target_page":""},"r1c1":{"action":"none","entity":"","target_page":""},"r1c2":{"action":"none","entity":"","target_page":""},"r1c3":{"action":"none","entity":"","target_page":""},"r2c0":{"action":"navigate","entity":"","target_page":"office"},"r2c1":{"action":"none","entity":"","target_page":""},"r2c2":{"action":"none","entity":"","target_page":""},"r2c3":{"action":"none","entity":"","target_page":""},"enc_up":{"action":"none","entity":"","target_page":""},"enc_down":{"action":"none","entity":"","target_page":""}}'
+            retain: true
+            qos: 0
+      - conditions:
+        - condition: template
+          value_template: '{{ event.action == "off" and event.entity == "switch.fan"
+            and event.page_id == "bedroom" }}'
+        sequence:
+        - action: switch.turn_off
+          target:
+            entity_id: switch.fan
+        - action: mqtt.publish
+          data:
+            topic: micropad/page/current
+            payload: '{"page_id":"bedroom","title":"Bedroom","parent":"home","items":[{"name":"Bedroom
+              Light","type":"light","entity":"light.bedroom","state":{{ states(''light.bedroom'')
+              | to_json }},"value":0.0,"min":0.0,"max":100.0,"step":1.0,"unit":"","editable":false,"target_page":""},{"name":"Fan","type":"switch","entity":"switch.fan","state":{{
+              states(''switch.fan'') | to_json }},"value":0.0,"min":0.0,"max":100.0,"step":1.0,"unit":"","editable":false,"target_page":""},{"name":"Bedside
+              level","type":"number","entity":"number.bedside","state":{{ states(''number.bedside'')
+              | to_json }},"value":{{ states(''number.bedside'') | float(default=40.0)
+              }},"min":0.0,"max":100.0,"step":5.0,"unit":"%","editable":true,"target_page":""}]}'
+            retain: true
+            qos: 0
+        - action: mqtt.publish
+          data:
+            topic: micropad/keymap
+            payload: '{"r0c0":{"action":"none","entity":"","target_page":""},"r0c1":{"action":"none","entity":"","target_page":""},"r0c2":{"action":"none","entity":"","target_page":""},"r0c3":{"action":"none","entity":"","target_page":""},"r1c0":{"action":"none","entity":"","target_page":""},"r1c1":{"action":"none","entity":"","target_page":""},"r1c2":{"action":"none","entity":"","target_page":""},"r1c3":{"action":"none","entity":"","target_page":""},"r2c0":{"action":"navigate","entity":"","target_page":"office"},"r2c1":{"action":"none","entity":"","target_page":""},"r2c2":{"action":"none","entity":"","target_page":""},"r2c3":{"action":"none","entity":"","target_page":""},"enc_up":{"action":"none","entity":"","target_page":""},"enc_down":{"action":"none","entity":"","target_page":""}}'
+            retain: true
+            qos: 0
+      - conditions:
+        - condition: template
+          value_template: '{{ event.action == "edit" and event.entity == "number.bedside"
+            and event.page_id == "bedroom" }}'
+        - condition: template
+          value_template: '{{ event.value is number and event.value >= 0.0 and event.value
+            <= 100.0 and ((((event.value - 0.0) / 5.0) | round(9)) == (((event.value
+            - 0.0) / 5.0) | round(0))) }}'
+        sequence:
+        - action: number.set_value
+          target:
+            entity_id: number.bedside
+          data:
+            value: '{{ event.value }}'
+        - action: mqtt.publish
+          data:
+            topic: micropad/page/current
+            payload: '{"page_id":"bedroom","title":"Bedroom","parent":"home","items":[{"name":"Bedroom
+              Light","type":"light","entity":"light.bedroom","state":{{ states(''light.bedroom'')
+              | to_json }},"value":0.0,"min":0.0,"max":100.0,"step":1.0,"unit":"","editable":false,"target_page":""},{"name":"Fan","type":"switch","entity":"switch.fan","state":{{
+              states(''switch.fan'') | to_json }},"value":0.0,"min":0.0,"max":100.0,"step":1.0,"unit":"","editable":false,"target_page":""},{"name":"Bedside
+              level","type":"number","entity":"number.bedside","state":{{ states(''number.bedside'')
+              | to_json }},"value":{{ states(''number.bedside'') | float(default=40.0)
+              }},"min":0.0,"max":100.0,"step":5.0,"unit":"%","editable":true,"target_page":""}]}'
+            retain: true
+            qos: 0
+        - action: mqtt.publish
+          data:
+            topic: micropad/keymap
+            payload: '{"r0c0":{"action":"none","entity":"","target_page":""},"r0c1":{"action":"none","entity":"","target_page":""},"r0c2":{"action":"none","entity":"","target_page":""},"r0c3":{"action":"none","entity":"","target_page":""},"r1c0":{"action":"none","entity":"","target_page":""},"r1c1":{"action":"none","entity":"","target_page":""},"r1c2":{"action":"none","entity":"","target_page":""},"r1c3":{"action":"none","entity":"","target_page":""},"r2c0":{"action":"navigate","entity":"","target_page":"office"},"r2c1":{"action":"none","entity":"","target_page":""},"r2c2":{"action":"none","entity":"","target_page":""},"r2c3":{"action":"none","entity":"","target_page":""},"enc_up":{"action":"none","entity":"","target_page":""},"enc_down":{"action":"none","entity":"","target_page":""}}'
+            retain: true
+            qos: 0
+      - conditions:
+        - condition: template
+          value_template: '{{ event.action == "confirm" and event.entity == "number.bedside"
+            and event.page_id == "bedroom" }}'
+        - condition: template
+          value_template: '{{ event.value is number and event.value >= 0.0 and event.value
+            <= 100.0 and ((((event.value - 0.0) / 5.0) | round(9)) == (((event.value
+            - 0.0) / 5.0) | round(0))) }}'
+        sequence:
+        - action: number.set_value
+          target:
+            entity_id: number.bedside
+          data:
+            value: '{{ event.value }}'
+        - action: mqtt.publish
+          data:
+            topic: micropad/page/current
+            payload: '{"page_id":"bedroom","title":"Bedroom","parent":"home","items":[{"name":"Bedroom
+              Light","type":"light","entity":"light.bedroom","state":{{ states(''light.bedroom'')
+              | to_json }},"value":0.0,"min":0.0,"max":100.0,"step":1.0,"unit":"","editable":false,"target_page":""},{"name":"Fan","type":"switch","entity":"switch.fan","state":{{
+              states(''switch.fan'') | to_json }},"value":0.0,"min":0.0,"max":100.0,"step":1.0,"unit":"","editable":false,"target_page":""},{"name":"Bedside
+              level","type":"number","entity":"number.bedside","state":{{ states(''number.bedside'')
+              | to_json }},"value":{{ states(''number.bedside'') | float(default=40.0)
+              }},"min":0.0,"max":100.0,"step":5.0,"unit":"%","editable":true,"target_page":""}]}'
+            retain: true
+            qos: 0
+        - action: mqtt.publish
+          data:
+            topic: micropad/keymap
+            payload: '{"r0c0":{"action":"none","entity":"","target_page":""},"r0c1":{"action":"none","entity":"","target_page":""},"r0c2":{"action":"none","entity":"","target_page":""},"r0c3":{"action":"none","entity":"","target_page":""},"r1c0":{"action":"none","entity":"","target_page":""},"r1c1":{"action":"none","entity":"","target_page":""},"r1c2":{"action":"none","entity":"","target_page":""},"r1c3":{"action":"none","entity":"","target_page":""},"r2c0":{"action":"navigate","entity":"","target_page":"office"},"r2c1":{"action":"none","entity":"","target_page":""},"r2c2":{"action":"none","entity":"","target_page":""},"r2c3":{"action":"none","entity":"","target_page":""},"enc_up":{"action":"none","entity":"","target_page":""},"enc_down":{"action":"none","entity":"","target_page":""}}'
+            retain: true
+            qos: 0
+      - conditions:
+        - condition: template
+          value_template: '{{ event.action == "edit" and event.entity == "number.ac"
+            and event.page_id == "office" }}'
+        - condition: template
+          value_template: '{{ event.value is number and event.value >= 16.0 and event.value
+            <= 30.0 and ((((event.value - 16.0) / 0.5) | round(9)) == (((event.value
+            - 16.0) / 0.5) | round(0))) }}'
+        sequence:
+        - action: number.set_value
+          target:
+            entity_id: number.ac
+          data:
+            value: '{{ event.value }}'
+        - action: mqtt.publish
+          data:
+            topic: micropad/page/current
+            payload: '{"page_id":"office","title":"Office","parent":"home","items":[{"name":"AC","type":"number","entity":"number.ac","state":{{
+              states(''number.ac'') | to_json }},"value":{{ states(''number.ac'')
+              | float(default=21.0) }},"min":16.0,"max":30.0,"step":0.5,"unit":"°C","editable":true,"target_page":""},{"name":"Temp","type":"sensor","entity":"sensor.office_temp","state":{{
+              states(''sensor.office_temp'') | to_json }},"value":0.0,"min":0.0,"max":100.0,"step":1.0,"unit":"°C","editable":false,"target_page":""},{"name":"Evening","type":"scene","entity":"scene.evening","state":{{
+              states(''scene.evening'') | to_json }},"value":0.0,"min":0.0,"max":100.0,"step":1.0,"unit":"","editable":false,"target_page":""}]}'
+            retain: true
+            qos: 0
+        - action: mqtt.publish
+          data:
+            topic: micropad/keymap
+            payload: '{"r0c0":{"action":"none","entity":"","target_page":""},"r0c1":{"action":"none","entity":"","target_page":""},"r0c2":{"action":"none","entity":"","target_page":""},"r0c3":{"action":"none","entity":"","target_page":""},"r1c0":{"action":"none","entity":"","target_page":""},"r1c1":{"action":"none","entity":"","target_page":""},"r1c2":{"action":"none","entity":"","target_page":""},"r1c3":{"action":"none","entity":"","target_page":""},"r2c0":{"action":"none","entity":"","target_page":""},"r2c1":{"action":"none","entity":"","target_page":""},"r2c2":{"action":"none","entity":"","target_page":""},"r2c3":{"action":"none","entity":"","target_page":""},"enc_up":{"action":"none","entity":"","target_page":""},"enc_down":{"action":"none","entity":"","target_page":""}}'
+            retain: true
+            qos: 0
+      - conditions:
+        - condition: template
+          value_template: '{{ event.action == "confirm" and event.entity == "number.ac"
+            and event.page_id == "office" }}'
+        - condition: template
+          value_template: '{{ event.value is number and event.value >= 16.0 and event.value
+            <= 30.0 and ((((event.value - 16.0) / 0.5) | round(9)) == (((event.value
+            - 16.0) / 0.5) | round(0))) }}'
+        sequence:
+        - action: number.set_value
+          target:
+            entity_id: number.ac
+          data:
+            value: '{{ event.value }}'
+        - action: mqtt.publish
+          data:
+            topic: micropad/page/current
+            payload: '{"page_id":"office","title":"Office","parent":"home","items":[{"name":"AC","type":"number","entity":"number.ac","state":{{
+              states(''number.ac'') | to_json }},"value":{{ states(''number.ac'')
+              | float(default=21.0) }},"min":16.0,"max":30.0,"step":0.5,"unit":"°C","editable":true,"target_page":""},{"name":"Temp","type":"sensor","entity":"sensor.office_temp","state":{{
+              states(''sensor.office_temp'') | to_json }},"value":0.0,"min":0.0,"max":100.0,"step":1.0,"unit":"°C","editable":false,"target_page":""},{"name":"Evening","type":"scene","entity":"scene.evening","state":{{
+              states(''scene.evening'') | to_json }},"value":0.0,"min":0.0,"max":100.0,"step":1.0,"unit":"","editable":false,"target_page":""}]}'
+            retain: true
+            qos: 0
+        - action: mqtt.publish
+          data:
+            topic: micropad/keymap
+            payload: '{"r0c0":{"action":"none","entity":"","target_page":""},"r0c1":{"action":"none","entity":"","target_page":""},"r0c2":{"action":"none","entity":"","target_page":""},"r0c3":{"action":"none","entity":"","target_page":""},"r1c0":{"action":"none","entity":"","target_page":""},"r1c1":{"action":"none","entity":"","target_page":""},"r1c2":{"action":"none","entity":"","target_page":""},"r1c3":{"action":"none","entity":"","target_page":""},"r2c0":{"action":"none","entity":"","target_page":""},"r2c1":{"action":"none","entity":"","target_page":""},"r2c2":{"action":"none","entity":"","target_page":""},"r2c3":{"action":"none","entity":"","target_page":""},"enc_up":{"action":"none","entity":"","target_page":""},"enc_down":{"action":"none","entity":"","target_page":""}}'
+            retain: true
+            qos: 0
+      - conditions:
+        - condition: template
+          value_template: '{{ event.action == "press" and event.entity == "scene.evening"
+            and event.page_id == "office" }}'
+        sequence:
+        - action: scene.turn_on
+          target:
+            entity_id: scene.evening
+        - action: mqtt.publish
+          data:
+            topic: micropad/page/current
+            payload: '{"page_id":"office","title":"Office","parent":"home","items":[{"name":"AC","type":"number","entity":"number.ac","state":{{
+              states(''number.ac'') | to_json }},"value":{{ states(''number.ac'')
+              | float(default=21.0) }},"min":16.0,"max":30.0,"step":0.5,"unit":"°C","editable":true,"target_page":""},{"name":"Temp","type":"sensor","entity":"sensor.office_temp","state":{{
+              states(''sensor.office_temp'') | to_json }},"value":0.0,"min":0.0,"max":100.0,"step":1.0,"unit":"°C","editable":false,"target_page":""},{"name":"Evening","type":"scene","entity":"scene.evening","state":{{
+              states(''scene.evening'') | to_json }},"value":0.0,"min":0.0,"max":100.0,"step":1.0,"unit":"","editable":false,"target_page":""}]}'
+            retain: true
+            qos: 0
+        - action: mqtt.publish
+          data:
+            topic: micropad/keymap
+            payload: '{"r0c0":{"action":"none","entity":"","target_page":""},"r0c1":{"action":"none","entity":"","target_page":""},"r0c2":{"action":"none","entity":"","target_page":""},"r0c3":{"action":"none","entity":"","target_page":""},"r1c0":{"action":"none","entity":"","target_page":""},"r1c1":{"action":"none","entity":"","target_page":""},"r1c2":{"action":"none","entity":"","target_page":""},"r1c3":{"action":"none","entity":"","target_page":""},"r2c0":{"action":"none","entity":"","target_page":""},"r2c1":{"action":"none","entity":"","target_page":""},"r2c2":{"action":"none","entity":"","target_page":""},"r2c3":{"action":"none","entity":"","target_page":""},"enc_up":{"action":"none","entity":"","target_page":""},"enc_down":{"action":"none","entity":"","target_page":""}}'
+            retain: true
+            qos: 0
+      - conditions:
+        - condition: template
+          value_template: '{{ event.action == "navigate" and event.target_page ==
+            "home" }}'
+        sequence:
+        - action: mqtt.publish
+          data:
+            topic: micropad/page/current
+            payload: '{"page_id":"home","title":"Home","parent":"","items":[{"name":"Living
+              Lights","type":"light","entity":"light.living","state":{{ states(''light.living'')
+              | to_json }},"value":0.0,"min":0.0,"max":100.0,"step":1.0,"unit":"","editable":false,"target_page":""},{"name":"Bedroom","type":"category","entity":"","state":"","value":0.0,"min":0.0,"max":100.0,"step":1.0,"unit":"","editable":false,"target_page":"bedroom"},{"name":"Office","type":"category","entity":"","state":"","value":0.0,"min":0.0,"max":100.0,"step":1.0,"unit":"","editable":false,"target_page":"office"},{"name":"To
+              bedroom","type":"category","entity":"","state":"","value":0.0,"min":0.0,"max":100.0,"step":1.0,"unit":"","editable":false,"target_page":"bedroom"}]}'
+            retain: true
+            qos: 0
+        - action: mqtt.publish
+          data:
+            topic: micropad/keymap
+            payload: '{"r0c0":{"action":"none","entity":"","target_page":""},"r0c1":{"action":"none","entity":"","target_page":""},"r0c2":{"action":"none","entity":"","target_page":""},"r0c3":{"action":"none","entity":"","target_page":""},"r1c0":{"action":"none","entity":"","target_page":""},"r1c1":{"action":"none","entity":"","target_page":""},"r1c2":{"action":"none","entity":"","target_page":""},"r1c3":{"action":"none","entity":"","target_page":""},"r2c0":{"action":"none","entity":"","target_page":""},"r2c1":{"action":"none","entity":"","target_page":""},"r2c2":{"action":"none","entity":"","target_page":""},"r2c3":{"action":"none","entity":"","target_page":""},"enc_up":{"action":"none","entity":"","target_page":""},"enc_down":{"action":"none","entity":"","target_page":""}}'
+            retain: true
+            qos: 0
+      - conditions:
+        - condition: template
+          value_template: '{{ event.action == "keymap" and event.target_page == "home"
+            }}'
+        sequence:
+        - action: mqtt.publish
+          data:
+            topic: micropad/keymap
+            payload: '{"r0c0":{"action":"none","entity":"","target_page":""},"r0c1":{"action":"none","entity":"","target_page":""},"r0c2":{"action":"none","entity":"","target_page":""},"r0c3":{"action":"none","entity":"","target_page":""},"r1c0":{"action":"none","entity":"","target_page":""},"r1c1":{"action":"none","entity":"","target_page":""},"r1c2":{"action":"none","entity":"","target_page":""},"r1c3":{"action":"none","entity":"","target_page":""},"r2c0":{"action":"none","entity":"","target_page":""},"r2c1":{"action":"none","entity":"","target_page":""},"r2c2":{"action":"none","entity":"","target_page":""},"r2c3":{"action":"none","entity":"","target_page":""},"enc_up":{"action":"none","entity":"","target_page":""},"enc_down":{"action":"none","entity":"","target_page":""}}'
+            retain: true
+            qos: 0
+      - conditions:
+        - condition: template
+          value_template: '{{ event.action == "keymap" and event.page_id == "home"
+            and event.target_page | default('''') == '''' }}'
+        sequence:
+        - action: mqtt.publish
+          data:
+            topic: micropad/keymap
+            payload: '{"r0c0":{"action":"none","entity":"","target_page":""},"r0c1":{"action":"none","entity":"","target_page":""},"r0c2":{"action":"none","entity":"","target_page":""},"r0c3":{"action":"none","entity":"","target_page":""},"r1c0":{"action":"none","entity":"","target_page":""},"r1c1":{"action":"none","entity":"","target_page":""},"r1c2":{"action":"none","entity":"","target_page":""},"r1c3":{"action":"none","entity":"","target_page":""},"r2c0":{"action":"none","entity":"","target_page":""},"r2c1":{"action":"none","entity":"","target_page":""},"r2c2":{"action":"none","entity":"","target_page":""},"r2c3":{"action":"none","entity":"","target_page":""},"enc_up":{"action":"none","entity":"","target_page":""},"enc_down":{"action":"none","entity":"","target_page":""}}'
+            retain: true
+            qos: 0
+      - conditions:
+        - condition: template
+          value_template: '{{ event.action == "navigate" and event.target_page ==
+            "bedroom" }}'
+        sequence:
+        - action: mqtt.publish
+          data:
+            topic: micropad/page/current
+            payload: '{"page_id":"bedroom","title":"Bedroom","parent":"home","items":[{"name":"Bedroom
+              Light","type":"light","entity":"light.bedroom","state":{{ states(''light.bedroom'')
+              | to_json }},"value":0.0,"min":0.0,"max":100.0,"step":1.0,"unit":"","editable":false,"target_page":""},{"name":"Fan","type":"switch","entity":"switch.fan","state":{{
+              states(''switch.fan'') | to_json }},"value":0.0,"min":0.0,"max":100.0,"step":1.0,"unit":"","editable":false,"target_page":""},{"name":"Bedside
+              level","type":"number","entity":"number.bedside","state":{{ states(''number.bedside'')
+              | to_json }},"value":{{ states(''number.bedside'') | float(default=40.0)
+              }},"min":0.0,"max":100.0,"step":5.0,"unit":"%","editable":true,"target_page":""}]}'
+            retain: true
+            qos: 0
+        - action: mqtt.publish
+          data:
+            topic: micropad/keymap
+            payload: '{"r0c0":{"action":"none","entity":"","target_page":""},"r0c1":{"action":"none","entity":"","target_page":""},"r0c2":{"action":"none","entity":"","target_page":""},"r0c3":{"action":"none","entity":"","target_page":""},"r1c0":{"action":"none","entity":"","target_page":""},"r1c1":{"action":"none","entity":"","target_page":""},"r1c2":{"action":"none","entity":"","target_page":""},"r1c3":{"action":"none","entity":"","target_page":""},"r2c0":{"action":"navigate","entity":"","target_page":"office"},"r2c1":{"action":"none","entity":"","target_page":""},"r2c2":{"action":"none","entity":"","target_page":""},"r2c3":{"action":"none","entity":"","target_page":""},"enc_up":{"action":"none","entity":"","target_page":""},"enc_down":{"action":"none","entity":"","target_page":""}}'
+            retain: true
+            qos: 0
+      - conditions:
+        - condition: template
+          value_template: '{{ event.action == "keymap" and event.target_page == "bedroom"
+            }}'
+        sequence:
+        - action: mqtt.publish
+          data:
+            topic: micropad/keymap
+            payload: '{"r0c0":{"action":"none","entity":"","target_page":""},"r0c1":{"action":"none","entity":"","target_page":""},"r0c2":{"action":"none","entity":"","target_page":""},"r0c3":{"action":"none","entity":"","target_page":""},"r1c0":{"action":"none","entity":"","target_page":""},"r1c1":{"action":"none","entity":"","target_page":""},"r1c2":{"action":"none","entity":"","target_page":""},"r1c3":{"action":"none","entity":"","target_page":""},"r2c0":{"action":"navigate","entity":"","target_page":"office"},"r2c1":{"action":"none","entity":"","target_page":""},"r2c2":{"action":"none","entity":"","target_page":""},"r2c3":{"action":"none","entity":"","target_page":""},"enc_up":{"action":"none","entity":"","target_page":""},"enc_down":{"action":"none","entity":"","target_page":""}}'
+            retain: true
+            qos: 0
+      - conditions:
+        - condition: template
+          value_template: '{{ event.action == "keymap" and event.page_id == "bedroom"
+            and event.target_page | default('''') == '''' }}'
+        sequence:
+        - action: mqtt.publish
+          data:
+            topic: micropad/keymap
+            payload: '{"r0c0":{"action":"none","entity":"","target_page":""},"r0c1":{"action":"none","entity":"","target_page":""},"r0c2":{"action":"none","entity":"","target_page":""},"r0c3":{"action":"none","entity":"","target_page":""},"r1c0":{"action":"none","entity":"","target_page":""},"r1c1":{"action":"none","entity":"","target_page":""},"r1c2":{"action":"none","entity":"","target_page":""},"r1c3":{"action":"none","entity":"","target_page":""},"r2c0":{"action":"navigate","entity":"","target_page":"office"},"r2c1":{"action":"none","entity":"","target_page":""},"r2c2":{"action":"none","entity":"","target_page":""},"r2c3":{"action":"none","entity":"","target_page":""},"enc_up":{"action":"none","entity":"","target_page":""},"enc_down":{"action":"none","entity":"","target_page":""}}'
+            retain: true
+            qos: 0
+      - conditions:
+        - condition: template
+          value_template: '{{ event.action == "navigate" and event.target_page ==
+            "office" }}'
+        sequence:
+        - action: mqtt.publish
+          data:
+            topic: micropad/page/current
+            payload: '{"page_id":"office","title":"Office","parent":"home","items":[{"name":"AC","type":"number","entity":"number.ac","state":{{
+              states(''number.ac'') | to_json }},"value":{{ states(''number.ac'')
+              | float(default=21.0) }},"min":16.0,"max":30.0,"step":0.5,"unit":"°C","editable":true,"target_page":""},{"name":"Temp","type":"sensor","entity":"sensor.office_temp","state":{{
+              states(''sensor.office_temp'') | to_json }},"value":0.0,"min":0.0,"max":100.0,"step":1.0,"unit":"°C","editable":false,"target_page":""},{"name":"Evening","type":"scene","entity":"scene.evening","state":{{
+              states(''scene.evening'') | to_json }},"value":0.0,"min":0.0,"max":100.0,"step":1.0,"unit":"","editable":false,"target_page":""}]}'
+            retain: true
+            qos: 0
+        - action: mqtt.publish
+          data:
+            topic: micropad/keymap
+            payload: '{"r0c0":{"action":"none","entity":"","target_page":""},"r0c1":{"action":"none","entity":"","target_page":""},"r0c2":{"action":"none","entity":"","target_page":""},"r0c3":{"action":"none","entity":"","target_page":""},"r1c0":{"action":"none","entity":"","target_page":""},"r1c1":{"action":"none","entity":"","target_page":""},"r1c2":{"action":"none","entity":"","target_page":""},"r1c3":{"action":"none","entity":"","target_page":""},"r2c0":{"action":"none","entity":"","target_page":""},"r2c1":{"action":"none","entity":"","target_page":""},"r2c2":{"action":"none","entity":"","target_page":""},"r2c3":{"action":"none","entity":"","target_page":""},"enc_up":{"action":"none","entity":"","target_page":""},"enc_down":{"action":"none","entity":"","target_page":""}}'
+            retain: true
+            qos: 0
+      - conditions:
+        - condition: template
+          value_template: '{{ event.action == "keymap" and event.target_page == "office"
+            }}'
+        sequence:
+        - action: mqtt.publish
+          data:
+            topic: micropad/keymap
+            payload: '{"r0c0":{"action":"none","entity":"","target_page":""},"r0c1":{"action":"none","entity":"","target_page":""},"r0c2":{"action":"none","entity":"","target_page":""},"r0c3":{"action":"none","entity":"","target_page":""},"r1c0":{"action":"none","entity":"","target_page":""},"r1c1":{"action":"none","entity":"","target_page":""},"r1c2":{"action":"none","entity":"","target_page":""},"r1c3":{"action":"none","entity":"","target_page":""},"r2c0":{"action":"none","entity":"","target_page":""},"r2c1":{"action":"none","entity":"","target_page":""},"r2c2":{"action":"none","entity":"","target_page":""},"r2c3":{"action":"none","entity":"","target_page":""},"enc_up":{"action":"none","entity":"","target_page":""},"enc_down":{"action":"none","entity":"","target_page":""}}'
+            retain: true
+            qos: 0
+      - conditions:
+        - condition: template
+          value_template: '{{ event.action == "keymap" and event.page_id == "office"
+            and event.target_page | default('''') == '''' }}'
+        sequence:
+        - action: mqtt.publish
+          data:
+            topic: micropad/keymap
+            payload: '{"r0c0":{"action":"none","entity":"","target_page":""},"r0c1":{"action":"none","entity":"","target_page":""},"r0c2":{"action":"none","entity":"","target_page":""},"r0c3":{"action":"none","entity":"","target_page":""},"r1c0":{"action":"none","entity":"","target_page":""},"r1c1":{"action":"none","entity":"","target_page":""},"r1c2":{"action":"none","entity":"","target_page":""},"r1c3":{"action":"none","entity":"","target_page":""},"r2c0":{"action":"none","entity":"","target_page":""},"r2c1":{"action":"none","entity":"","target_page":""},"r2c2":{"action":"none","entity":"","target_page":""},"r2c3":{"action":"none","entity":"","target_page":""},"enc_up":{"action":"none","entity":"","target_page":""},"enc_down":{"action":"none","entity":"","target_page":""}}'
+            retain: true
+            qos: 0
+      - conditions:
+        - condition: template
+          value_template: '{{ event.action == "home" }}'
+        sequence:
+        - action: mqtt.publish
+          data:
+            topic: micropad/page/current
+            payload: '{"page_id":"home","title":"Home","parent":"","items":[{"name":"Living
+              Lights","type":"light","entity":"light.living","state":{{ states(''light.living'')
+              | to_json }},"value":0.0,"min":0.0,"max":100.0,"step":1.0,"unit":"","editable":false,"target_page":""},{"name":"Bedroom","type":"category","entity":"","state":"","value":0.0,"min":0.0,"max":100.0,"step":1.0,"unit":"","editable":false,"target_page":"bedroom"},{"name":"Office","type":"category","entity":"","state":"","value":0.0,"min":0.0,"max":100.0,"step":1.0,"unit":"","editable":false,"target_page":"office"},{"name":"To
+              bedroom","type":"category","entity":"","state":"","value":0.0,"min":0.0,"max":100.0,"step":1.0,"unit":"","editable":false,"target_page":"bedroom"}]}'
+            retain: true
+            qos: 0
+        - action: mqtt.publish
+          data:
+            topic: micropad/keymap
+            payload: '{"r0c0":{"action":"none","entity":"","target_page":""},"r0c1":{"action":"none","entity":"","target_page":""},"r0c2":{"action":"none","entity":"","target_page":""},"r0c3":{"action":"none","entity":"","target_page":""},"r1c0":{"action":"none","entity":"","target_page":""},"r1c1":{"action":"none","entity":"","target_page":""},"r1c2":{"action":"none","entity":"","target_page":""},"r1c3":{"action":"none","entity":"","target_page":""},"r2c0":{"action":"none","entity":"","target_page":""},"r2c1":{"action":"none","entity":"","target_page":""},"r2c2":{"action":"none","entity":"","target_page":""},"r2c3":{"action":"none","entity":"","target_page":""},"enc_up":{"action":"none","entity":"","target_page":""},"enc_down":{"action":"none","entity":"","target_page":""}}'
+            retain: true
+            qos: 0
+      - conditions:
+        - condition: template
+          value_template: '{{ event.action == "get_all_pages" }}'
+        sequence:
+        - action: mqtt.publish
+          data:
+            topic: micropad/pages/all
+            payload: '{"pages":[{"page_id":"home","title":"Home","parent":"","items":[{"name":"Living
+              Lights","type":"light","entity":"light.living","state":{{ states(''light.living'')
+              | to_json }},"value":0.0,"min":0.0,"max":100.0,"step":1.0,"unit":"","editable":false,"target_page":""},{"name":"Bedroom","type":"category","entity":"","state":"","value":0.0,"min":0.0,"max":100.0,"step":1.0,"unit":"","editable":false,"target_page":"bedroom"},{"name":"Office","type":"category","entity":"","state":"","value":0.0,"min":0.0,"max":100.0,"step":1.0,"unit":"","editable":false,"target_page":"office"},{"name":"To
+              bedroom","type":"category","entity":"","state":"","value":0.0,"min":0.0,"max":100.0,"step":1.0,"unit":"","editable":false,"target_page":"bedroom"}]},{"page_id":"bedroom","title":"Bedroom","parent":"home","items":[{"name":"Bedroom
+              Light","type":"light","entity":"light.bedroom","state":{{ states(''light.bedroom'')
+              | to_json }},"value":0.0,"min":0.0,"max":100.0,"step":1.0,"unit":"","editable":false,"target_page":""},{"name":"Fan","type":"switch","entity":"switch.fan","state":{{
+              states(''switch.fan'') | to_json }},"value":0.0,"min":0.0,"max":100.0,"step":1.0,"unit":"","editable":false,"target_page":""},{"name":"Bedside
+              level","type":"number","entity":"number.bedside","state":{{ states(''number.bedside'')
+              | to_json }},"value":{{ states(''number.bedside'') | float(default=40.0)
+              }},"min":0.0,"max":100.0,"step":5.0,"unit":"%","editable":true,"target_page":""}]},{"page_id":"office","title":"Office","parent":"home","items":[{"name":"AC","type":"number","entity":"number.ac","state":{{
+              states(''number.ac'') | to_json }},"value":{{ states(''number.ac'')
+              | float(default=21.0) }},"min":16.0,"max":30.0,"step":0.5,"unit":"°C","editable":true,"target_page":""},{"name":"Temp","type":"sensor","entity":"sensor.office_temp","state":{{
+              states(''sensor.office_temp'') | to_json }},"value":0.0,"min":0.0,"max":100.0,"step":1.0,"unit":"°C","editable":false,"target_page":""},{"name":"Evening","type":"scene","entity":"scene.evening","state":{{
+              states(''scene.evening'') | to_json }},"value":0.0,"min":0.0,"max":100.0,"step":1.0,"unit":"","editable":false,"target_page":""}]}]}'
+            retain: true
+            qos: 0
+        - action: mqtt.publish
+          data:
+            topic: micropad/page/current
+            payload: '{"page_id":"home","title":"Home","parent":"","items":[{"name":"Living
+              Lights","type":"light","entity":"light.living","state":{{ states(''light.living'')
+              | to_json }},"value":0.0,"min":0.0,"max":100.0,"step":1.0,"unit":"","editable":false,"target_page":""},{"name":"Bedroom","type":"category","entity":"","state":"","value":0.0,"min":0.0,"max":100.0,"step":1.0,"unit":"","editable":false,"target_page":"bedroom"},{"name":"Office","type":"category","entity":"","state":"","value":0.0,"min":0.0,"max":100.0,"step":1.0,"unit":"","editable":false,"target_page":"office"},{"name":"To
+              bedroom","type":"category","entity":"","state":"","value":0.0,"min":0.0,"max":100.0,"step":1.0,"unit":"","editable":false,"target_page":"bedroom"}]}'
+            retain: true
+            qos: 0
+        - action: mqtt.publish
+          data:
+            topic: micropad/keymap
+            payload: '{"r0c0":{"action":"none","entity":"","target_page":""},"r0c1":{"action":"none","entity":"","target_page":""},"r0c2":{"action":"none","entity":"","target_page":""},"r0c3":{"action":"none","entity":"","target_page":""},"r1c0":{"action":"none","entity":"","target_page":""},"r1c1":{"action":"none","entity":"","target_page":""},"r1c2":{"action":"none","entity":"","target_page":""},"r1c3":{"action":"none","entity":"","target_page":""},"r2c0":{"action":"none","entity":"","target_page":""},"r2c1":{"action":"none","entity":"","target_page":""},"r2c2":{"action":"none","entity":"","target_page":""},"r2c3":{"action":"none","entity":"","target_page":""},"enc_up":{"action":"none","entity":"","target_page":""},"enc_down":{"action":"none","entity":"","target_page":""}}'
+            retain: true
+            qos: 0
+      default: []
+  default: []

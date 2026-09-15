@@ -1,3 +1,4 @@
+.githooks/pre-commit
 .github/workflows/ci.yml
 .github/workflows/firmware.yml
 .gitignore
@@ -38,6 +39,7 @@ contracts/page.schema.json
 deploy/micropad.service
 docs/configurator.md
 docs/deployment.md
+docs/developer.md
 docs/firmware-hardware-validation.md
 docs/firmware.md
 docs/hardware-acceptance.md
@@ -131,6 +133,11 @@ tests/firmware/test_firmware_static.py
 tests/fixtures/frontend_config.json
 tests/fixtures/frontend_meta.json
 tests/fixtures/frontend_panel.json
+tests/fixtures/golden/automation.yaml
+tests/fixtures/golden/catalog.json
+tests/fixtures/golden/keymap_home.json
+tests/fixtures/golden/page_home.json
+tests/fixtures/golden_config.json
 tests/integration/test_fake_ha_roundtrip.py
 tests/integration/test_mqtt_contract.py
 tests/release/conftest.py
@@ -149,6 +156,7 @@ tests/test_fake_ha_round_trip.py
 tests/test_foundation.py
 tests/test_frontend_delivery.py
 tests/test_generator.py
+tests/test_golden_output.py
 tests/test_ha_client.py
 tests/test_ha_deploy.py
 tests/test_keymaps.py

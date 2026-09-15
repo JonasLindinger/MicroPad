@@ -1,0 +1,59 @@
+{
+  "page_id": "home",
+  "title": "Home",
+  "parent": "",
+  "items": [
+    {
+      "name": "Living Lights",
+      "type": "light",
+      "entity": "light.living",
+      "state": "",
+      "value": 0.0,
+      "min": 0.0,
+      "max": 100.0,
+      "step": 1.0,
+      "unit": "",
+      "editable": false,
+      "target_page": ""
+    },
+    {
+      "name": "Bedroom",
+      "type": "category",
+      "entity": "",
+      "state": "",
+      "value": 0.0,
+      "min": 0.0,
+      "max": 100.0,
+      "step": 1.0,
+      "unit": "",
+      "editable": false,
+      "target_page": "bedroom"
+    },
+    {
+      "name": "Office",
+      "type": "category",
+      "entity": "",
+      "state": "",
+      "value": 0.0,
+      "min": 0.0,
+      "max": 100.0,
+      "step": 1.0,
+      "unit": "",
+      "editable": false,
+      "target_page": "office"
+    },
+    {
+      "name": "To bedroom",
+      "type": "category",
+      "entity": "",
+      "state": "",
+      "value": 0.0,
+      "min": 0.0,
+      "max": 100.0,
+      "step": 1.0,
+      "unit": "",
+      "editable": false,
+      "target_page": "bedroom"
+    }
+  ]
+}
