@@ -1502,10 +1502,6 @@ class FirmwareReleaseAssertionTest(FirmwareStaticContractTest):
             self.assertIn("> " + self.NOTICE, text, rel)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class FirmwareRobustnessFindingsTest(FirmwareStaticContractTest):
     """P1.3 (partial spacing), P1.4 (MQTT buffer allocation), P1.5 (NVS reads).
 
@@ -1816,3 +1812,41 @@ class FirmwareOptimisationContractTest(FirmwareStaticContractTest):
         body = self.function_body(self.ino(), "String portalPage()")
         self.assertIn("page.reserve(", body)
         self.assertLess(body.index("page.reserve("), body.index("page = F("))
+
+
+class FirmwareTestHarnessTest(FirmwareStaticContractTest):
+    """The module's own entry point has to come last.
+
+    A ``unittest.main()`` call placed above a class definition silently skips every class
+    below it: ``python3 tests/firmware/test_firmware_static.py`` exits 0 and prints a green
+    summary while those tests never execute. That is how the four newest classes
+    (robustness findings, strict JSON, sleep interlock, and the optimisation checks for the
+    silent-failure fixes) stayed invisible to the ``firmware-host`` CI stage - pytest ran
+    them, the stage did not. Pinned statically so it cannot come back.
+    """
+
+    def test_entry_point_is_the_last_statement(self):
+        text = self.source("tests/firmware/test_firmware_static.py")
+        guard = text.index('if __name__ == "__main__":')
+        self.assertGreater(
+            guard,
+            text.rindex("\nclass "),
+            "a class is defined below the entry point, so the script runner never sees it",
+        )
+
+    def test_every_contract_class_is_reachable_from_the_entry_point(self):
+        text = self.source("tests/firmware/test_firmware_static.py")
+        guard = text.index('if __name__ == "__main__":')
+        defined = [
+            line.split("class ")[1].split("(")[0]
+            for line in text.splitlines()
+            if line.startswith("class ")
+        ]
+        self.assertGreater(len(defined), 10, "the contract classes went missing")
+        for name in defined:
+            offset = text.index(f"class {name}(")
+            self.assertLess(offset, guard, f"class {name} sits below the entry point")
+
+
+if __name__ == "__main__":
+    unittest.main()
