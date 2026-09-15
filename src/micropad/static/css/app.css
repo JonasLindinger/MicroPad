@@ -1,633 +1,1170 @@
 /* AI-assisted development — firmware, HA automation, config generator and docs were created with AI (LLM) help, reviewed and tested by the author. Provided as-is, without warranty; verify on your own hardware, don't use for safety-critical applications. */
-/* ---- Responsive workspace grid ----
-   Three columns on desktop, two on tablet (keymap full-width underneath),
-   one column below 768px. Every track and grid item can shrink (minmax 0) so
-   long entity IDs or status text never force horizontal document scroll. */
-.workspace {
-  display: grid;
-  grid-template-columns: minmax(14rem, 0.8fr) minmax(20rem, 1.4fr) minmax(22rem, 1fr);
-  gap: 1rem;
-  align-items: start;
+/* ==========================================================================
+   MicroPad Configurator — "Papier" design language
+   --------------------------------------------------------------------------
+   The pad is an e-paper device, so the tool that configures it reads like the
+   thing it configures: paper surfaces, ink type, hairline rules, no shadows,
+   no gradients, no decorative colour. One ink accent, two status colours.
+   Everything is tokenised at the top; nothing below hard-codes a colour.
+
+   Layout: pages rail | item editor over the panel preview | workbench column
+   (keymap, history, generator, templates, publish).
+   ========================================================================== */
+
+:root {
+  /* Type: serif display for headings (editorial, "printed manual"), a plain
+     system sans for controls, mono only for identifiers and byte counts. */
+  --font-display: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia,
+    "Times New Roman", serif;
+  --font-ui: ui-sans-serif, system-ui, "Segoe UI", Roboto, "Helvetica Neue",
+    Arial, sans-serif;
+  --font-mono: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, Consolas,
+    "Liberation Mono", monospace;
+
+  /* Paper (light) */
+  --bg: #faf8f3;
+  --surface: #fdfcf9;
+  --surface-2: #f4f1e9;
+  --surface-3: #eae6da;
+  --border: #ddd8c8;
+  --border-strong: #bdb69f;
+  --text: #1b1a16;
+  --text-2: #55523f;
+  --text-3: #837e66;
+  --input-bg: #fffefb;
+  --accent: #1c1a16;
+  --accent-ink: #fbfaf7;
+  --accent-soft: #eee9dc;
+  --ok: #2f6b46;
+  --ok-soft: #e7efe4;
+  --warn: #8a5f0c;
+  --warn-soft: #f6efdd;
+  --danger: #9c2f28;
+  --danger-soft: #f7e8e5;
+  --selection: #e6e1d2;
+
+  --radius: 2px;
+  --gutter: 1rem;
+  --field-h: 2.75rem; /* 44px: the tool is also used on a tablet next to the pad */
+  --dur: 0.12s;
 }
 
-.workspace > *,
-.side-panel > * {
+/* Ink (dark): the same paper logic inverted, never a blue-grey "dashboard". */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #15140f;
+    --surface: #1b1a14;
+    --surface-2: #201f18;
+    --surface-3: #262419;
+    --border: #35321f;
+    --border-strong: #55503a;
+    --text: #f0ece0;
+    --text-2: #c0baa4;
+    --text-3: #8f8a72;
+    --input-bg: #191811;
+    --accent: #ece7d8;
+    --accent-ink: #1b1a14;
+    --accent-soft: #2a2820;
+    --ok: #8fc3a3;
+    --ok-soft: #1f2a22;
+    --warn: #d9b46a;
+    --warn-soft: #2b2617;
+    --danger: #e0948d;
+    --danger-soft: #2e1e1c;
+    --selection: #2c2a20;
+  }
+}
+
+/* ---------------------------------------------------------------- base --- */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 400 15px/1.5 var(--font-ui);
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: 0.005em;
+  text-wrap: pretty;
+}
+
+h1 {
+  margin: 0;
+  padding: 0.7rem 1.15rem;
+  font-size: 1.05rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  position: sticky;
+  top: 0;
+  z-index: 20;
+}
+
+h1::before {
+  content: "◆";
+  font-size: 0.7em;
+  margin-inline-end: 0.5rem;
+  color: var(--accent);
+}
+
+h2 {
+  margin: 0 0 0.6rem;
+  font-size: 0.98rem;
+}
+
+h3 {
+  margin: 0 0 0.4rem;
+  font-size: 0.82rem;
+  font-family: var(--font-ui);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-3);
+}
+
+p {
+  margin: 0 0 0.5rem;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Controls: 44px minimum on the primary surfaces (the tool is also used on a
+   tablet next to the pad). Dense secondary chips in the binding groups and the
+   generator keep 34px so a 14-key panel plus five action groups still fits a
+   column without becoming a scroll hunt. */
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+  min-height: var(--field-h);
+  max-width: 100%;
+}
+
+input,
+select,
+textarea {
+  background: var(--input-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0 0.55rem;
+}
+
+input:hover,
+select:hover,
+textarea:hover {
+  border-color: var(--border-strong);
+}
+
+button {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0 0.7rem;
+  cursor: pointer;
+  transition: border-color var(--dur), background var(--dur), color var(--dur);
+}
+
+button:hover:not(:disabled) {
+  border-color: var(--border-strong);
+}
+
+button:disabled {
+  color: var(--text-3);
+  background: var(--surface-2);
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+a {
+  color: var(--accent);
+  text-underline-offset: 3px;
+}
+
+fieldset {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin: 0;
+  padding: 0.6rem 0.7rem;
+}
+
+legend {
+  padding: 0 0.35rem;
+  font-size: 0.74rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-3);
+}
+
+::selection {
+  background: var(--selection);
+}
+
+/* Long entity IDs and status text wrap instead of forcing a scrollbar. */
+#operation-status,
+.binding-origin,
+.binding-hint,
+.binding-target,
+.entity-listbox li,
+.finding,
+.history-row {
+  overflow-wrap: anywhere;
+}
+
+/* ------------------------------------------------------------- layout --- */
+
+.workspace {
+  display: grid;
+  grid-template-columns:
+    minmax(14rem, 0.62fr)
+    minmax(26rem, 1.5fr)
+    minmax(21rem, 1fr);
+  gap: var(--gutter) calc(var(--gutter) * 1.4);
+  align-items: start;
+  padding: 1.15rem;
+}
+
+.workspace > * {
+  min-width: 0;
+}
+
+/* Pages rail and workbench column run the full height; the preview sits under
+   the item editor because it explains what the edited page looks like. */
+#page-tree {
+  grid-column: 1;
+  grid-row: 1 / span 2;
+}
+
+#item-editor {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+/* Older builds ship the workspace without the preview column; let the item editor
+   take the full column height instead of leaving a hole under it. */
+.workspace:not(:has(.preview-panel)) #item-editor {
+  grid-row: 1 / span 2;
+}
+
+.preview-panel {
+  grid-column: 2;
+  grid-row: 2;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gutter);
   min-width: 0;
 }
 
 .side-panel {
+  grid-column: 3;
+  grid-row: 1 / span 2;
   display: flex;
   flex-direction: column;
-  gap: 1.5rem;
+  gap: var(--gutter);
+  min-width: 0;
 }
 
-/* 44px touch-target minimum for every interactive control plus intrinsic
-   sizing so long labels cannot overflow their column. */
-button,
-input,
-select {
-  min-height: 44px;
-  max-width: 100%;
+/* One panel treatment for every section: paper sheet with a hairline. */
+#page-tree,
+#item-editor,
+#panel-preview,
+#analysis-panel,
+#keymap-editor,
+#history-panel,
+#page-generator,
+#template-picker,
+#operations {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.95rem 1rem 1.05rem;
 }
 
-/* Long entity IDs / status text wrap rather than overflowing the column. */
-#operation-status,
-#app-status,
-.binding-origin,
-.binding-hint,
-ul.entity-listbox li {
-  overflow-wrap: anywhere;
+/* Secondary sheets (inside the side panel / preview column) sit one step back
+   so the primary surfaces keep the eye. */
+.side-panel > section,
+.preview-panel > section {
+  background: var(--surface);
 }
 
-/* Keyboard-only focus ring, visible on buttons/links/inputs/tree items. */
-:focus-visible {
-  outline: 3px solid #2457d6;
-  outline-offset: 2px;
-}
+/* --------------------------------------------------------- pages rail --- */
 
-/* Tablet: two columns; the keymap (with its full-width side panel) spans both. */
-@media (max-width: 1099px) and (min-width: 768px) {
-  .workspace {
-    grid-template-columns: minmax(14rem, 0.8fr) minmax(0, 1.2fr);
-  }
-  .side-panel {
-    grid-column: 1 / -1;
-  }
-}
-
-@media (max-width: 767px) {
-  .workspace {
-    grid-template-columns: minmax(0, 1fr);
-  }
-  .side-panel {
-    grid-column: auto;
-  }
-}
-#page-tree ul {
-  list-style: none;
-  margin: 0;
-  padding-left: 1.25rem;
-}
-
-#page-tree > ul {
-  padding-left: 0;
-}
-
-#page-tree [role="treeitem"] {
-  display: block;
-  width: 100%;
-  text-align: left;
-  margin: 0.125rem 0;
-  padding: 0.25rem 0.5rem;
-  cursor: grab;
-}
-
-#page-tree [role="treeitem"]:active {
-  cursor: grabbing;
-}
-
-#page-tree [role="treeitem"][aria-grabbed="true"] {
-  opacity: 0.5;
-}
-
-/* Drop zones are always present (Playwright/native DnD needs a real hit target)
-   but render as invisible hairline strips when idle; they highlight during a drag. */
-.drop-zone {
-  display: block;
-  width: 100%;
-  height: 8px;
-  /* Invisible drag target: exempt from the global 44px button min-height. */
-  min-height: 0;
-  margin: 0;
-  padding: 0;
-  border: none;
-  background: transparent;
-  font-size: 0;
-  overflow: hidden;
-  cursor: pointer;
-}
-
-.drop-zone:hover {
-  background: rgba(51, 102, 204, 0.1);
-}
-
-.drop-zone.drop-target {
-  background: rgba(51, 102, 204, 0.25);
-  border-radius: 3px;
-}
-
-#app-status:not(:empty) {
-  margin-top: 0.5rem;
-  padding: 0.35rem 0.6rem;
-  color: #a11;
-  background: #fdecea;
-  border: 1px solid #ecc;
-  border-radius: 4px;
+#page-tree h2 {
+  display: inline-block;
 }
 
 .page-commands {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  align-items: center;
-  margin-bottom: 0.75rem;
-}
-
-.page-commands button,
-.page-commands input {
-  padding: 0.25rem 0.5rem;
-}
-
-dialog {
-  border: 1px solid #999;
-  border-radius: 6px;
-  padding: 1rem;
-}
-
-dialog::backdrop {
-  background: rgba(0, 0, 0, 0.4);
-}
-
-#item-editor fieldset {
-  border: 1px solid #ddd;
-  border-radius: 6px;
-  margin: 0.5rem 0;
-  padding: 0.75rem;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem 1rem;
-  align-items: center;
-}
-
-#item-editor label {
-  display: inline-flex;
-  gap: 0.25rem;
-  align-items: center;
-}
-
-#item-editor input[type="text"],
-#item-editor select {
-  padding: 0.25rem 0.35rem;
-}
-
-#item-editor button {
-  padding: 0.25rem 0.5rem;
-}
-
-/* ---- Keymap editor ---- */
-.keypad {
   display: grid;
-  grid-template-columns: repeat(4, minmax(4.5rem, 6rem));
-  grid-auto-rows: minmax(3rem, auto);
-  gap: 0.5rem;
-  align-items: stretch;
-  margin: 0.75rem 0 1rem;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.4rem;
+  margin: 0.5rem 0 0.75rem;
 }
 
-.keypad button,
-.binding-panel fieldset button {
-  padding: 0.5rem 0.25rem;
-  /* Harmonised to the global 44px touch-target min-height so this (more
-     specific) rule cannot re-shrink key rows below the 44px gate. */
-  min-height: 44px;
+.page-commands input {
+  grid-column: 1 / -1;
 }
 
-.keypad button[aria-pressed="true"] {
-  outline: 3px solid #3366cc;
-  background: #e8f0fb;
+.page-commands button {
+  min-height: 2.2rem;
+  font-size: 0.85rem;
 }
 
-.binding-panel {
-  border: 1px solid #ddd;
-  border-radius: 6px;
-  padding: 0.75rem;
-}
-
-.binding-panel fieldset {
-  border: none;
-  margin: 0 0 0.75rem;
+#page-tree ul {
+  list-style: none;
+  margin: 0;
   padding: 0;
 }
 
-.binding-panel legend {
-  font-weight: 600;
-  padding: 0;
+#page-tree ul ul {
+  margin-inline-start: 0.8rem;
+  padding-inline-start: 0.35rem;
+  border-inline-start: 1px solid var(--border);
 }
 
-.binding-panel fieldset button[aria-pressed="true"] {
-  outline: 3px solid #3366cc;
-  background: #e8f0fb;
-}
-
-.binding-target {
-  display: inline-flex;
-  gap: 0.5rem;
-  align-items: center;
-  margin-top: 0.5rem;
-}
-
-.binding-target .binding-hint {
-  color: #555;
-  font-style: italic;
-}
-
-.keymap-scope {
+.page-node {
   display: flex;
-  gap: 0.5rem;
   align-items: center;
-  margin-bottom: 0.75rem;
+  gap: 2px;
 }
 
-.keymap-scope-label {
-  font-weight: 600;
-}
-
-.binding-origin {
-  margin: 0 0 0.75rem;
+.page-node > button:not(.drop-zone) {
+  flex: 1;
+  text-align: start;
+  padding: 0 0.5rem;
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-2);
   font-size: 0.9rem;
 }
 
-.binding-panel[data-binding-origin="global"] .binding-origin {
-  color: #444;
+.page-node > button:not(.drop-zone):hover {
+  background: var(--surface-2);
+  color: var(--text);
 }
 
-.binding-panel[data-binding-origin="ancestor"] {
-  border-left: 4px solid #b5a25a;
-}
-
-.binding-panel[data-binding-origin="ancestor"] .binding-origin {
-  color: #7a6a33;
-  font-style: italic;
-}
-
-.binding-panel[data-binding-origin="override"] {
-  border-left: 4px solid #3366cc;
-}
-
-.binding-panel[data-binding-origin="override"] .binding-origin {
-  color: #1f4a9c;
+.page-node > button[aria-selected="true"] {
+  background: var(--surface-3);
+  color: var(--text);
   font-weight: 600;
 }
 
-.binding-panel .clear-override {
-  margin-top: 0.75rem;
-  padding: 0.35rem 0.7rem;
+.page-node > button[aria-selected="true"]::after {
+  content: "‹";
+  float: inline-end;
+  color: var(--text-3);
 }
 
-ul.entity-listbox {
-  list-style: none;
-  margin: 0.25rem 0 0;
+/* Drop targets stay invisible until the pointer is in the row: three of them
+   per page must not turn the tree into a field of buttons. */
+.drop-zone {
+  width: 10px;
+  min-height: 1.6rem;
   padding: 0;
-  max-height: 12rem;
-  overflow-y: auto;
-  border: 1px solid #999;
-  border-radius: 4px;
-  background: #fff;
+  border: 0;
+  background: transparent;
+  opacity: 0;
 }
 
-ul.entity-listbox li {
-  padding: 0.35rem 0.5rem;
+.page-node:hover .drop-zone,
+.drop-zone:focus-visible {
+  opacity: 1;
+}
+
+.drop-zone:hover,
+.drop-target {
+  background: var(--accent);
+}
+
+/* -------------------------------------------------------- item editor --- */
+
+#item-editor fieldset {
+  background: var(--surface-2);
+  border-color: var(--border);
+  margin-bottom: 0.65rem;
+  padding: 0.7rem 0.8rem 0.75rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem 0.8rem;
+  align-items: flex-end;
+}
+
+#item-editor fieldset:last-of-type {
+  margin-bottom: 0.9rem;
+}
+
+#item-editor fieldset > label {
+  display: inline-flex;
+  /* The app appends the caption after the control (`<label><input>Name</label>`),
+     so column-reverse is what puts the caption above the field while keeping the
+     DOM order the accessibility layer already relies on. */
+  flex-direction: column-reverse;
+  gap: 0.15rem;
+  margin: 0;
+  font-size: 0.76rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-3);
+}
+
+#item-editor fieldset > label:has(> input[type="checkbox"]) {
+  flex-direction: row;
+  align-items: center;
+  padding-bottom: 0.55rem;
+}
+
+#item-editor fieldset > label input,
+#item-editor fieldset > label select {
+  font-size: 0.9rem;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text);
+}
+
+#item-editor fieldset > label input[type="checkbox"] {
+  min-height: 1.1rem;
+  width: 1.1rem;
+}
+
+#item-editor fieldset > button {
+  min-height: 2.1rem;
+  margin-inline-end: 0.3rem;
+  font-size: 0.84rem;
+  background: transparent;
+}
+
+#item-editor fieldset > button:last-of-type:hover {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.item-draft {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  color: var(--text-3);
+}
+
+.draft-errors,
+.binding-error,
+.error {
+  color: var(--danger);
+  font-size: 0.82rem;
+  margin: 0.3rem 0 0;
+}
+
+.entity-listbox {
+  list-style: none;
+  margin: 0.3rem 0 0;
+  padding: 0.25rem;
+  max-height: 11rem;
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+}
+
+.entity-listbox li {
+  padding: 0.2rem 0.35rem;
   cursor: pointer;
 }
 
-ul.entity-listbox li[aria-selected="true"],
-ul.entity-listbox li:hover {
-  background: #e8f0fb;
+.entity-listbox li:hover,
+.entity-listbox li[aria-selected="true"] {
+  background: var(--surface-3);
 }
 
-/* ---- Template picker ---- */
-#template-picker {
-  margin-top: 1rem;
-}
-
-#template-picker .template-cards {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(13rem, 1fr));
-  gap: 0.75rem;
-}
-
-#template-picker .template-card {
-  border: 1px solid #ddd;
-  border-radius: 6px;
-  padding: 0.75rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-
-#template-picker .template-title {
-  margin: 0;
-  font-size: 1.05rem;
-}
-
-#template-picker .template-description {
-  margin: 0;
-  color: #555;
-  font-size: 0.9rem;
-  flex: 1;
-}
-
-#template-picker .template-card button {
-  align-self: flex-start;
-  padding: 0.3rem 0.6rem;
-}
-
-#template-picker .template-notice {
-  margin: 0 0 0.5rem;
-  min-height: 1rem;
-}
-
-/* ---- Operations ---- */
-#operations {
-  margin-top: 1rem;
-}
-
-#operations .operation-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  align-items: center;
-}
-
-#operations button,
-#operations a {
-  padding: 0.35rem 0.7rem;
-  border: 1px solid #999;
-  border-radius: 4px;
-  font: inherit;
-}
-
-#operations button:disabled {
-  opacity: 0.5;
-}
-
-#operations a[aria-disabled="true"] {
-  opacity: 0.5;
-  pointer-events: none;
-}
-
-#operation-status:not(:empty) {
-  margin-top: 0.5rem;
-  padding: 0.35rem 0.6rem;
-  border-radius: 4px;
-}
-
-#operation-status[data-kind="error"] {
-  color: #a11;
-  background: #fdecea;
-  border: 1px solid #ecc;
-}
-
-#operation-status[data-kind="success"] {
-  color: #176b3a;
-  background: #e8f6ee;
-  border: 1px solid #c3e6d1;
-}
-/* --- Panel preview and budget meters -------------------------------------- */
-/* The preview is the firmware's own prim model: SVG at the hardware resolution
-   (296x128), monochrome, unscaled by CSS pixels so 1 SVG unit stays 1 panel
-   pixel. FreeMono matches the panel font, so text width in the preview is the
-   text width on the device. */
-.preview-panel {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-}
-
-.panel-host {
-  background: #ffffff;
-  border: 1px solid #d0d0d0;
-  border-radius: 4px;
-  display: inline-block;
-  line-height: 0;
-  padding: 4px;
-}
-
-.panel-svg {
-  font-family: 'FreeMono', 'Courier New', monospace;
-  font-size: 9px;
-  shape-rendering: crispEdges;
-  text-rendering: geometricPrecision;
-}
+/* ------------------------------------------------- panel preview (ink) --- */
 
 .preview-note,
 .preview-status,
+.history-hint,
+.history-notice,
+.generator-hint,
+.generator-notice,
+.template-notice,
 .analysis-status {
-  color: #555;
-  font-size: 0.85rem;
-  margin: 0.25rem 0;
+  font-size: 0.84rem;
+  color: var(--text-3);
 }
 
 .preview-toggle {
+  display: flex;
   align-items: center;
-  display: inline-flex;
-  font-size: 0.85rem;
-  gap: 0.35rem;
-  margin-bottom: 0.5rem;
+  gap: 0.45rem;
+  margin: 0.5rem 0;
+  font-size: 0.84rem;
+  color: var(--text-2);
 }
 
+/* The pad is e-paper: its preview stays paper-white in both themes. */
+.panel-host {
+  display: inline-block;
+  padding: 0.6rem;
+  background: #f2f1ec;
+  border: 1px solid #c9c7bb;
+  border-radius: 3px;
+  box-shadow: inset 0 0 0 1px #dcdad0;
+  max-width: 100%;
+}
+
+.panel-svg {
+  display: block;
+  width: 100%;
+  max-width: 22rem;
+  height: auto;
+}
+
+.preview-findings,
+.findings,
+.generator-notes {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.84rem;
+}
+
+.preview-findings li::before,
+.finding::before {
+  margin-inline-end: 0.4rem;
+}
+
+.finding-ok,
+.preview-findings .finding-ok {
+  color: var(--ok);
+}
+
+.finding-warning {
+  color: var(--warn);
+}
+
+.finding-error {
+  color: var(--danger);
+}
+
+.finding-ok::before {
+  content: "✓";
+}
+
+.finding-warning::before {
+  content: "▲";
+}
+
+.finding-error::before {
+  content: "■";
+}
+
+/* ------------------------------------------------------------ analysis --- */
+
 .meters {
-  display: grid;
-  gap: 0.35rem;
-  margin: 0.5rem 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  margin-bottom: 0.6rem;
 }
 
 .meter {
   display: grid;
-  gap: 0.35rem;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: 8.5rem minmax(0, 1fr) 6.5rem;
+  gap: 0.5rem;
+  align-items: center;
+  font-size: 0.84rem;
+  color: var(--text-2);
 }
 
 .meter-label {
-  font-weight: 600;
+  color: var(--text-2);
 }
 
 .meter-value {
-  color: #444;
+  font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
+  font-size: 0.78rem;
+  color: var(--text-3);
+  text-align: end;
 }
 
 .meter-bar {
-  background: #e8e8e8;
-  border-radius: 3px;
-  grid-column: 1 / span 2;
+  display: block;
   height: 6px;
+  background: var(--surface-3);
+  border-radius: 999px;
   overflow: hidden;
 }
 
 .meter-fill {
-  background: #4c8bf5;
   display: block;
   height: 100%;
+  width: 0;
+  background: var(--accent);
 }
 
-.meter-warn .meter-fill { background: #e0a800; }
-.meter-over .meter-fill { background: #c0392b; }
+.meter-ok .meter-fill {
+  background: var(--ok);
+}
 
-.findings {
+.meter-warn .meter-fill {
+  background: var(--warn);
+}
+
+.meter-over .meter-fill {
+  background: var(--danger);
+}
+
+/* ------------------------------------------------------------- keymap --- */
+
+.keymap-scope {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.6rem;
+}
+
+.keymap-scope-label {
+  font-size: 0.8rem;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.keymap-scope select {
+  flex: 1;
+  min-width: 0;
+}
+
+.restore-defaults {
+  min-height: 2.1rem;
+  margin-inline-start: auto;
+  font-size: 0.82rem;
+  background: transparent;
+  color: var(--text-2);
+}
+
+.keyboard {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.keypad {
+  display: grid;
+  /* Keys share the width evenly; long action labels wrap inside the key instead
+     of forcing the encoder and the whole panel wider. */
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 5px;
+  width: 100%;
+}
+
+.keypad button {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.15rem;
+  min-height: 3.1rem;
+  padding: 0.35rem 0.45rem;
+  text-align: start;
+  background: var(--surface-2);
+  color: var(--text-2);
+}
+
+.keypad button:hover {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.keypad button[aria-selected="true"] {
+  border-color: var(--accent);
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.key-id {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--text-3);
+}
+
+.key-action {
+  font-size: 0.82rem;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.key-action:empty::after {
+  content: "—";
+  color: var(--text-3);
+}
+
+/* The encoder: two detents side by side under the board, labelled like the
+   hardware. It used to be a squeezed column next to a 4x3 grid, which crushed
+   the labels as soon as the keymap column got narrow. */
+.encoder {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.encoder::before {
+  content: "ENC";
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  color: var(--text-3);
+}
+
+.encoder-ring {
+  display: flex;
+  flex-direction: row;
+  gap: 0.4rem;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.encoder button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.1rem;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 2.6rem;
+  padding: 0 0.45rem;
+  text-align: start;
+  font-size: 0.74rem;
+  background: var(--surface-2);
+  color: var(--text-2);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.keyboard-legend {
+  margin: 0.7rem 0 0;
+  font-size: 0.82rem;
+  color: var(--text-3);
+}
+
+.binding-panel {
+  margin-top: 0.85rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
+}
+
+.binding-panel h3 {
+  font-family: var(--font-mono);
+  font-size: 0.86rem;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text);
+}
+
+.binding-hint,
+.binding-origin,
+.binding-target {
+  display: block;
+  margin: 0.15rem 0 0;
+  font-size: 0.8rem;
+  color: var(--text-3);
+}
+
+.binding-panel fieldset {
+  margin-top: 0.5rem;
+}
+
+.binding-panel fieldset button {
+  min-height: 2.1rem;
+  margin: 0 0.25rem 0.25rem 0;
+  font-size: 0.8rem;
+  background: var(--surface);
+  color: var(--text-2);
+}
+
+.binding-panel fieldset button[aria-pressed="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+
+/* ------------------------------------------------------------ history --- */
+
+.history-list {
   list-style: none;
   margin: 0.5rem 0 0;
   padding: 0;
 }
 
-.finding {
-  border-left: 3px solid #999;
+.history-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0;
+  border-top: 1px solid var(--border);
   font-size: 0.85rem;
-  margin-bottom: 0.35rem;
-  padding-left: 0.5rem;
 }
 
-.finding-error { border-left-color: #c0392b; }
-.finding-warning { border-left-color: #e0a800; }
-.finding-ok { border-left-color: #2e7d32; color: #2e7d32; }
-
-/* --- Page generator -------------------------------------------------------- */
-.generator-hint,
-.generator-notice {
-  color: #555;
-  font-size: 0.85rem;
-  margin: 0.25rem 0;
+.history-row:first-child {
+  border-top: 1px solid var(--border-strong);
 }
+
+.history-stamp {
+  font-family: var(--font-mono);
+  font-size: 0.76rem;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.history-counts {
+  color: var(--text-2);
+}
+
+.history-row button,
+.history-detail button {
+  min-height: 2.1rem;
+  margin-inline-start: auto;
+  font-size: 0.8rem;
+  background: transparent;
+}
+
+.history-detail {
+  margin-top: 0.6rem;
+  padding: 0.6rem 0.7rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 0.84rem;
+}
+
+/* The panel pre-creates its detail/notice slots; an empty box would read as a
+   control that failed to render. */
+.history-detail:empty,
+.history-notice:empty,
+.generator-notice:empty,
+.template-notice:empty,
+.analysis-status:empty,
+.preview-status:empty,
+#save-status:empty,
+#app-status:empty,
+#operation-status:empty,
+.draft-errors:empty,
+.binding-error:empty {
+  display: none;
+}
+
+.history-diff {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  white-space: pre-wrap;
+  color: var(--text-2);
+}
+
+dialog {
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  padding: 1rem 1.1rem;
+  max-width: 30rem;
+}
+
+dialog::backdrop {
+  background: rgba(20, 19, 15, 0.45);
+}
+
+/* ---------------------------------------------------------- generator --- */
 
 .generator-refresh {
-  margin-bottom: 0.5rem;
+  min-height: 2.2rem;
+  margin-bottom: 0.6rem;
+  font-size: 0.84rem;
 }
 
 .generator-groups {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.35rem;
+  gap: 0.3rem;
 }
 
 .generator-group {
-  background: #f4f4f4;
-  border: 1px solid #d0d0d0;
-  border-radius: 4px;
-  cursor: pointer;
-  padding: 0.35rem 0.6rem;
+  min-height: 2.1rem;
+  padding: 0 0.55rem;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  background: var(--surface-2);
+  color: var(--text-2);
 }
 
 .generator-group:hover:not(:disabled) {
-  background: #e8eef8;
-}
-
-.generator-group:disabled {
-  color: #999;
-  cursor: not-allowed;
+  border-color: var(--accent);
+  color: var(--text);
 }
 
 .generator-all {
+  font-family: var(--font-ui);
   font-weight: 600;
+  background: var(--accent-soft);
+  color: var(--text);
 }
 
 .generator-notes {
-  list-style: none;
-  margin: 0.5rem 0 0;
-  padding: 0;
+  color: var(--text-3);
 }
 
-/* --- Physical board (B4) --------------------------------------------------- */
-/* The board mirrors the hardware: three rows of four keys to the left of the
-   encoder, so the layout on screen matches the one under the operator's fingers.
-   A key face carries the key id and the effective action for the current scope. */
-.keyboard {
-  align-items: center;
-  display: flex;
-  gap: 1rem;
-  margin-bottom: 0.5rem;
-}
+/* ---------------------------------------------------------- templates --- */
 
-/* The grid, touch-target height and pressed state come from the keymap-editor
-   block above; this only stacks the two lines of a key face. */
-.keypad button {
-  align-items: center;
-  display: flex;
-  flex-direction: column;
-  gap: 0.1rem;
-  justify-content: center;
-  overflow: hidden;
-}
-
-/* Inheritance is the point of the board: an override is solid, an inherited value
-   is dimmed, and a global-scope view is neutral. */
-.keypad button[data-binding-origin="inherited"] {
-  border-style: dashed;
-  color: #6a6a6a;
-}
-
-.keypad button[data-binding-origin="override"] {
-  border-color: #2e7d32;
-}
-
-.key-id {
-  font-family: 'FreeMono', monospace;
-  font-size: 0.7rem;
-  letter-spacing: 0.02em;
-}
-
-.key-action {
-  font-size: 0.72rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 100%;
-}
-
-.encoder {
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-}
-
-.encoder-ring {
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-}
-
-.encoder-ring button {
-  min-width: 88px;
-}
-
-.keyboard-legend {
-  color: #555;
-  font-size: 0.8rem;
-  margin: 0.25rem 0 0.75rem;
-}
-
-/* --- Configuration history (B7) ------------------------------------------- */
-.history-hint,
-.history-notice {
-  color: #555;
-  font-size: 0.85rem;
-  margin: 0.25rem 0;
-}
-
-.history-list {
-  list-style: none;
-  margin: 0.5rem 0;
-  padding: 0;
-}
-
-.history-row {
-  align-items: center;
-  border-bottom: 1px solid #eee;
+.template-cards {
   display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(10.5rem, 1fr));
   gap: 0.5rem;
-  grid-template-columns: 1fr auto auto auto;
-  padding: 0.3rem 0;
 }
 
-.history-stamp {
-  font-variant-numeric: tabular-nums;
+.template-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  padding: 0.65rem 0.7rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
 }
 
-.history-counts {
-  color: #555;
-  font-size: 0.8rem;
+.template-title {
+  margin: 0;
+  font-size: 0.92rem;
 }
 
-.history-diff {
+.template-description {
+  margin: 0;
   font-size: 0.82rem;
-  margin: 0.25rem 0 0;
+  color: var(--text-3);
+}
+
+.template-card button {
+  margin-top: 0.35rem;
+  min-height: 2.1rem;
+  font-size: 0.82rem;
+  background: transparent;
+}
+
+.template-card button:hover {
+  border-color: var(--accent);
+}
+
+/* --------------------------------------------------------- publishing --- */
+
+.operation-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+.operation-actions button {
+  font-size: 0.86rem;
+}
+
+.operation-actions button[data-operation="upload-api"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+
+.operation-actions a {
+  font-size: 0.82rem;
+  color: var(--text-2);
+}
+
+#operation-status {
+  margin-top: 0.55rem;
+  font-size: 0.84rem;
+}
+
+#operation-status:not(:empty) {
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+
+#operation-status[data-kind="error"] {
+  color: var(--danger);
+  border-color: var(--danger);
+  background: var(--danger-soft);
+}
+
+#operation-status[data-kind="success"] {
+  color: var(--ok);
+  border-color: var(--ok);
+  background: var(--ok-soft);
+}
+
+#save-status,
+#app-status {
+  margin: 0;
+  padding: 0.4rem 0.15rem 0;
+  font-size: 0.82rem;
+  color: var(--text-3);
+}
+
+#save-status:not(:empty)::before {
+  content: "●";
+  margin-inline-end: 0.4rem;
+  color: var(--ok);
+  font-size: 0.7em;
+  vertical-align: middle;
+}
+
+#app-status:not(:empty) {
+  color: var(--warn);
+}
+
+/* --------------------------------------------------------- sign-in ------ */
+
+#auth-dialog:not([hidden]) {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: rgba(20, 19, 15, 0.5);
+}
+
+#auth-form {
+  width: min(26rem, 100%);
+  padding: 1.1rem 1.2rem 1.2rem;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: 0 12px 40px rgba(20, 19, 15, 0.28);
+}
+
+#auth-form h2 {
+  font-family: var(--font-display);
+}
+
+#auth-form p {
+  font-size: 0.84rem;
+  color: var(--text-3);
+}
+
+#auth-form label {
+  display: block;
+  margin: 0.7rem 0 0.25rem;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-3);
+}
+
+#auth-secret {
+  width: 100%;
+  font-family: var(--font-mono);
+}
+
+.auth-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.4rem;
+  margin-top: 0.8rem;
+}
+
+.auth-actions button[type="submit"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+
+/* ------------------------------------------------------- responsive ----- */
+
+@media (max-width: 1240px) {
+  .workspace {
+    grid-template-columns: minmax(13rem, 0.7fr) minmax(0, 1.6fr);
+  }
+
+  #page-tree {
+    grid-column: 1;
+    grid-row: 1 / span 2;
+  }
+
+  #item-editor {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .preview-panel {
+    grid-column: 2;
+    grid-row: 2;
+  }
+
+  .side-panel {
+    grid-column: 1 / -1;
+    grid-row: 3;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr));
+    align-items: start;
+  }
+}
+
+@media (max-width: 860px) {
+  .workspace {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.85rem;
+    padding: 0.85rem;
+  }
+
+  #page-tree,
+  #item-editor,
+  .preview-panel,
+  .side-panel {
+    grid-column: 1;
+    grid-row: auto;
+  }
+
+  .side-panel {
+    display: flex;
+    flex-direction: column;
+  }
+
+  h1 {
+    padding: 0.6rem 0.85rem;
+  }
+
+  #item-editor fieldset > label {
+    display: flex;
+    width: 100%;
+    margin-inline-end: 0;
+  }
+
+  .meter {
+    grid-template-columns: 7rem minmax(0, 1fr) 5.5rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+    animation: none !important;
+  }
 }
