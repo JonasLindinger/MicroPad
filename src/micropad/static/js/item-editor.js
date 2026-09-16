@@ -94,6 +94,12 @@ export function mountItemEditor(element, store) {
   // P1.12) always forces a full rebuild from the confirmed server state.
   let structureSignature = null;
   let autocompletes = [];
+  // Reorder counter: the DOM signature below is built from item *types* only
+  // (so live value edits never tear down the inputs being typed in). Swapping
+  // two items of the same type therefore leaves the signature unchanged and
+  // the move would be invisible. Each Move click bumps this counter so the
+  // rebuild happens exactly when the order changed.
+  let reorderCounter = 0;
 
   function render(state) {
     const page = state.config.pages.find(p => p.page_id === state.selectedPageId);
@@ -106,7 +112,7 @@ export function mountItemEditor(element, store) {
     }
     const itemSig = page.items.map((item, i) => `${i}:${item.type}`).join(',');
     const draftSig = state.drafts.map((draft, i) => `${i}:${draft.type}`).join(',');
-    const signature = `${state.selectedPageId}|${itemSig}|drafts:${draftSig}`;
+    const signature = `${state.selectedPageId}|${itemSig}|drafts:${draftSig}|reorder:${reorderCounter}`;
     const forceRebuild = state.saveState === 'error';
     if (structureSignature === signature && !forceRebuild) return;
     structureSignature = signature;
@@ -200,6 +206,7 @@ export function mountItemEditor(element, store) {
       moveUp.setAttribute('aria-label', 'Move item up');
       moveUp.addEventListener('click', () => {
         const current = store.getState();
+        reorderCounter += 1;  // same-type swaps keep the type signature unchanged
         store.replaceConfig(moveItem(current.config, page.page_id, index, -1));
       });
       fieldset.appendChild(moveUp);
@@ -210,6 +217,7 @@ export function mountItemEditor(element, store) {
       moveDown.setAttribute('aria-label', 'Move item down');
       moveDown.addEventListener('click', () => {
         const current = store.getState();
+        reorderCounter += 1;  // see moveUp: force the DOM rebuild on reorder
         store.replaceConfig(moveItem(current.config, page.page_id, index, 1));
       });
       fieldset.appendChild(moveDown);

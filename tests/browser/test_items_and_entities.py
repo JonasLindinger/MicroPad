@@ -143,3 +143,33 @@ def test_entity_autocomplete_keyboard_and_empty_result(page, app_url):
     expect(input_).to_have_value("light.living_room")
     input_.fill("entity that does not exist")
     expect(page.get_by_text("No matching Home Assistant entities.")).to_be_visible()
+
+
+@pytest.mark.browser
+def test_move_swap_same_type_items_rerenders(page, app_url, config_writes):
+    # Two items of the SAME type must still visibly reorder: the DOM signature
+    # is type-based, so a swap of two switches leaves it unchanged and the move
+    # used to be invisible until reload. The reorder counter forces the rebuild.
+    page.goto(app_url)
+    page.get_by_role("button", name="Add item").click()
+    draft = page.locator("fieldset.item-draft")
+    draft.get_by_label("Draft name").fill("Outlet")
+    draft.get_by_label("Draft type").select_option("switch")
+    draft.get_by_label("Draft entity ID").fill("switch.outlet")
+    draft.locator("button:has-text('Save item')").click()
+    page.get_by_role("button", name="Add item").click()
+    draft = page.locator("fieldset.item-draft")
+    draft.get_by_label("Draft name").fill("Fan")
+    draft.get_by_label("Draft type").select_option("switch")
+    draft.get_by_label("Draft entity ID").fill("switch.fan")
+    draft.locator("button:has-text('Save item')").click()
+
+    expect(page.locator('[data-item-index="0"] input[aria-label="Name"]')).to_have_value("Fan")
+    expect(page.locator('[data-item-index="1"] input[aria-label="Name"]')).to_have_value("Outlet")
+    # Move Fan (index 0) down past Outlet: the card order must swap on screen.
+    page.locator('[data-item-index="0"]').get_by_label("Move item down").click()
+    expect(page.locator('[data-item-index="0"] input[aria-label="Name"]')).to_have_value("Outlet")
+    expect(page.locator('[data-item-index="1"] input[aria-label="Name"]')).to_have_value("Fan")
+    expect(page.locator("#save-status")).to_have_text("Saved")
+    names = [item["name"] for item in config_writes()[-1]["json"]["pages"][0]["items"]]
+    assert names == ["Outlet", "Fan", "Living room"]
