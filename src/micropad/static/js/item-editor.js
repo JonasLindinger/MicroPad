@@ -271,6 +271,14 @@ export function mountItemEditor(element, store) {
         refreshDraft();
       });
       appendLabeledControl(fieldset, 'Entity ID', entityInput);
+      autocompletes.push(attachEntityAutocomplete(entityInput, {
+        getEntities: () => loadEntities(),
+        onSelect: entityId => {
+          store.dispatch({ type: 'draft-update', index: dIndex, patch: { entity: entityId } });
+          refreshDraft();
+        },
+        onError: error => store.dispatch({ type: 'status', status: { kind: 'error', message: error.message } })
+      }));
 
       const targetSelect = document.createElement('select');
       targetSelect.setAttribute('aria-label', 'Draft target page');

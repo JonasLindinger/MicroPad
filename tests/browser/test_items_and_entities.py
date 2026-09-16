@@ -112,6 +112,28 @@ def test_entity_autocomplete_matches_friendly_name_and_writes_id(page, app_url, 
 
 
 @pytest.mark.browser
+def test_draft_entity_autocomplete_offers_entities(page, app_url, config_writes):
+    # A brand-new item (draft) must get the same entity suggestions as an
+    # existing item card: the Entity ID field in the draft area needs the
+    # autocomplete wiring, not just a plain text input.
+    page.goto(app_url)
+    page.get_by_role("button", name="Add item").click()
+    draft = page.locator("fieldset.item-draft")
+    entity_input = draft.get_by_label("Draft entity ID")
+    entity_input.fill("Desk Lamp")
+    option = page.get_by_role("option", name="Desk Lamp — light.desk_lamp")
+    expect(option).to_be_visible()
+    option.click()
+    expect(entity_input).to_have_value("light.desk_lamp")
+    draft.get_by_label("Draft name").fill("Desk Lamp")
+    draft.get_by_label("Draft type").select_option("light")
+    draft.locator("button:has-text('Save item')").click()
+    expect(page.locator("fieldset[data-item-index='0']")).to_be_visible()
+    expect(page.locator("#save-status")).to_have_text("Saved")
+    assert config_writes()[-1]["json"]["pages"][0]["items"][0]["entity"] == "light.desk_lamp"
+
+
+@pytest.mark.browser
 def test_entity_autocomplete_keyboard_and_empty_result(page, app_url):
     page.goto(app_url)
     input_ = page.locator('[data-item-index="0"]').get_by_label("Entity ID")
