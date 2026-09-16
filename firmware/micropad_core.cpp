@@ -980,6 +980,32 @@ size_t clipText(char (&dst)[RENDER_TEXT_CAP], const char *src,
   return length;
 }
 
+size_t clipTextEllipsis(char (&dst)[RENDER_TEXT_CAP], const char *src,
+                        size_t maxChars) {
+  if (src == nullptr) {
+    dst[0] = '\0';
+    return 0;
+  }
+  size_t length = std::strlen(src);
+  if (length > RENDER_TEXT_CAP - 1) length = RENDER_TEXT_CAP - 1;
+  if (length <= maxChars) {
+    // Fits unchanged: the plain copy also covers a zero-length source.
+    std::memcpy(dst, src, length);
+    dst[length] = '\0';
+    return length;
+  }
+  // Leave room for the three-dot ellipsis; a budget that cannot hold the
+  // dots degrades to a plain truncation so the limit is never exceeded.
+  size_t keep = maxChars > 3 ? maxChars - 3 : maxChars;
+  std::memcpy(dst, src, keep);
+  if (maxChars > 3) {
+    std::memcpy(dst + keep, "...", 3);
+    keep += 3;
+  }
+  dst[keep] = '\0';
+  return keep;
+}
+
 void formatRowValue(char (&dst)[RENDER_TEXT_CAP], const RenderRow &row) {
   char value[16];
   if (row.state[0] != '\0') {
@@ -1083,11 +1109,21 @@ void layoutNormalUi(const RenderSnapshot &snap, RenderModel &model) {
       addFillTriangle(model, 2, cursorCy - 4, 8, cursorCy, 2, cursorCy + 4);
     }
     char name[RENDER_TEXT_CAP];
-    clipText(name, row.name,
-             static_cast<size_t>((ROW_NAME_CLIP_X - ROW_TEXT_X) / MONO_CHAR_W));
-    addText(model, name, ROW_TEXT_X, rowTop, ROW_HEIGHT, TextAlign::Left);
+    // The name spans everything left of the value span (plus one character
+    // of breathing room): a short value leaves the whole row to the name, a
+    // long value shrinks it. Overflow is marked with a trailing ellipsis so
+    // a clipped name reads as truncated instead of ending mid-word.
     char value[RENDER_TEXT_CAP];
     formatRowValue(value, row);
+    const int16_t valueWidth =
+        static_cast<int16_t>(std::strlen(value)) * MONO_CHAR_W;
+    const int16_t namePx = ROW_VALUE_RIGHT_X - ROW_TEXT_X - valueWidth -
+                           MONO_CHAR_W;
+    const size_t nameChars = namePx > 0
+                                 ? static_cast<size_t>(namePx / MONO_CHAR_W)
+                                 : 1;
+    clipTextEllipsis(name, row.name, nameChars);
+    addText(model, name, ROW_TEXT_X, rowTop, ROW_HEIGHT, TextAlign::Left);
     addText(model, value, ROW_VALUE_RIGHT_X, rowTop, ROW_HEIGHT,
             TextAlign::Right);
   }

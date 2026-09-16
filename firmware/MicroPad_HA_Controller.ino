@@ -1794,14 +1794,14 @@ void initDisplay() {
 // keep replacing the still-published slot so the eventual claim receives the
 // newest snapshot. vTaskDelay blocks only this task; nothing prints.
 void waitForRefreshSpacing() {
-  // P1.3: MAX_PARTIAL_REFRESHES == 0 means "never force a periodic full
-  // refresh" — it must NOT disable the 100 ms spacing. Every normal partial
-  // refresh is spaced; only a forced-full start may lag.
+  // P1.3: every normal partial refresh is spaced against
+  // MIN_REFRESH_SPACING_MS; only a forced-full start may lag. Once the
+  // partial counter reaches MAX_PARTIAL_REFRESHES the next refresh is
+  // forced full (anti-ghosting clear), so nothing waits on it either.
   const bool forcedFull = pendingForceFull.load(std::memory_order_acquire);
   const bool partialImminent =
       !forcedFull &&
-      (micropad::MAX_PARTIAL_REFRESHES == 0 ||
-       refreshPolicy.partialCount() < micropad::MAX_PARTIAL_REFRESHES);
+      refreshPolicy.partialCount() < micropad::MAX_PARTIAL_REFRESHES;
   if (!partialImminent) return;
   const uint32_t remaining = refreshPolicy.remainingSpacingMs(millis());
   if (remaining > 0) vTaskDelay(pdMS_TO_TICKS(remaining));

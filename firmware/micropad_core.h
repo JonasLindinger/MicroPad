@@ -642,6 +642,13 @@ void addText(RenderModel &model, const char *text, int16_t x, int16_t y,
 size_t clipText(char (&dst)[RENDER_TEXT_CAP], const char *src,
                 size_t maxChars);
 
+// Copy src truncated to maxChars, appending a trailing ellipsis ("...")
+// whenever the source did not fit, so a clipped row name reads as truncated
+// instead of ending mid-word. The ellipsis consumes up to three of the
+// maxChars budget; a source that fits is copied unchanged.
+size_t clipTextEllipsis(char (&dst)[RENDER_TEXT_CAP], const char *src,
+                        size_t maxChars);
+
 // Right-aligned value span for one item row: integral values print without a
 // decimal, others with one decimal, then the unit; editing wraps the span in
 // angle brackets without changing the row layout.

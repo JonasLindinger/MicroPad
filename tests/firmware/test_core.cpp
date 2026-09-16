@@ -1324,19 +1324,29 @@ void testLayoutNormalUiModel() {
     assert(compact.prims[i].x0 != SCROLLBAR_X);
   }
 
-  // Long names are clipped to the name column.
+  // Long names are clipped to the row: the name spans everything left of
+  // the right-aligned value span (value "0" + one char breathing room),
+  // and a clipped name carries a trailing ellipsis.
   safeCopy(snap.rows[0].name, "ExtraLongCeilingLampNameForClipping");
   RenderModel clipped;
   layoutNormalUi(snap, clipped);
+  bool sawName = false;
   for (uint16_t i = 0; i < clipped.count; ++i) {
     const RenderPrim &p = clipped.prims[i];
     if (p.kind == PrimKind::Text && p.y0 == ROW_AREA_Y &&
         p.align == static_cast<uint8_t>(TextAlign::Left) &&
         p.text[0] != '\0') {
+      sawName = true;
       assert(std::strlen(p.text) <=
-             static_cast<size_t>((ROW_NAME_CLIP_X - ROW_TEXT_X) / MONO_CHAR_W));
+             static_cast<size_t>((ROW_VALUE_RIGHT_X - ROW_TEXT_X - MONO_CHAR_W) /
+                                 MONO_CHAR_W));
+      // The fit test above uses a zero-length value, so the name may take
+      // nearly the full row; verify the truncation marker appears when the
+      // source cannot fit.
+      assert(std::strstr(p.text, "...") != nullptr);
     }
   }
+  assert(sawName);
 }
 
 void testLayoutPortalUiModel() {
@@ -1493,6 +1503,27 @@ void testClipTextSpan() {
   assert(clipText(dst, "short", 22) == 5);
   assert(std::strcmp(dst, "short") == 0);
   assert(clipText(dst, nullptr, 5) == 0);
+  assert(dst[0] == '\0');
+}
+
+void testClipTextEllipsisSpan() {
+  char dst[RENDER_TEXT_CAP];
+  // A string that fits is copied unchanged, no ellipsis.
+  assert(clipTextEllipsis(dst, "short", 22) == 5);
+  assert(std::strcmp(dst, "short") == 0);
+  assert(clipTextEllipsis(dst, "", 22) == 0);
+  assert(dst[0] == '\0');
+  // A string that does not fit keeps maxChars-3 chars plus "...".
+  assert(clipTextEllipsis(dst, "abcdefghijklmnopqrstuvwxyz", 10) == 10);
+  assert(std::strcmp(dst, "abcdefg...") == 0);
+  // Exactly at the limit: fits, no ellipsis.
+  assert(clipTextEllipsis(dst, "abcdefghij", 10) == 10);
+  assert(std::strcmp(dst, "abcdefghij") == 0);
+  // A degenerate tiny budget still terminates and never exceeds the limit:
+  // no room for the dots, so it degrades to a plain truncation.
+  assert(clipTextEllipsis(dst, "abcdef", 2) == 2);
+  assert(std::strcmp(dst, "ab") == 0);
+  assert(clipTextEllipsis(dst, nullptr, 5) == 0);
   assert(dst[0] == '\0');
 }
 
@@ -2565,6 +2596,7 @@ int main() {
   testPowerIconPrims();
   testFormatRowValue();
   testClipTextSpan();
+  testClipTextEllipsisSpan();
   testRefreshMustBeFullReasons();
   testRefreshPolicyModeAndCount();
   testRefreshPolicySpacingWrapSafe();

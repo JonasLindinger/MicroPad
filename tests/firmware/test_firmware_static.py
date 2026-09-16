@@ -743,6 +743,15 @@ class FirmwareDisplayContractTest(FirmwareStaticContractTest):
         self.assertIn("firstPage()", body)
         self.assertIn("nextPage()", body)
 
+    def test_row_name_uses_full_row_and_ellipsis(self):
+        # Row names span everything left of the value span instead of a fixed
+        # narrow column, and a name that does not fit ends with "..." so the
+        # truncation is visible instead of a mid-word cut.
+        core = self.core_header()
+        self.assertIn("clipTextEllipsis", core)
+        body = self.function_body(self.ino(), "void drawSnapshot(")
+        self.assertIn("display.hibernate()", body)
+
     def test_panel_hibernates_after_successful_refresh(self):
         # A completed refresh puts the SSD1680 into deep sleep so the bistable
         # image keeps its charge (black pixels stay black instead of slowly
@@ -1564,9 +1573,10 @@ class FirmwareRobustnessFindingsTest(FirmwareStaticContractTest):
 
     # --- P1.3 -----------------------------------------------------------------
 
-    def test_partial_spacing_is_not_disabled_by_zero_partial_limit(self):
+    def test_partial_spacing_is_applied_below_partial_limit(self):
         body = self.function_body(self.ino(), "void waitForRefreshSpacing()")
-        self.assertIn("micropad::MAX_PARTIAL_REFRESHES == 0", body)
+        self.assertIn("refreshPolicy.partialCount() < "
+                      "micropad::MAX_PARTIAL_REFRESHES", body)
         self.assertIn("remainingSpacingMs(", body)
         # The spacing must still be applied for every normal partial refresh.
         self.assertIn("vTaskDelay(", body)
