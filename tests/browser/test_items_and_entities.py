@@ -31,7 +31,9 @@ def test_item_editor_persists_every_field(page, app_url, captured_requests, conf
     card.get_by_label("Move item down").click()
     expect(page.locator("#save-status")).to_have_text("Saved")
     saved_item = config_writes()[-1]["json"]["pages"][0]["items"][1]
-    assert saved_item == {"name":"Desk brightness","type":"number","entity":"number.desk_brightness","state":"42","value":42,"min":0,"max":100,"step":5,"unit":"%","editable":True,"target_page":"living-room"}
+    # control defaults to "button" and is written explicitly, so the pad never has
+    # to guess how to drive a row.
+    assert saved_item == {"name":"Desk brightness","type":"number","entity":"number.desk_brightness","state":"42","value":42,"min":0,"max":100,"step":5,"unit":"%","editable":True,"control":"button","target_page":"living-room"}
 
 
 @pytest.mark.browser
@@ -68,13 +70,23 @@ def test_template_cards_create_editable_child_page(page, app_url, captured_reque
     page.goto(app_url)
     for label in ("Spotify", "Discord", "Lights", "Generic media"):
         expect(page.get_by_role("button", name=f"Create {label} page")).to_be_visible()
+    # Compare against the template /api/meta serves (the list the card itself is built
+    # from) instead of hard-coded item names: the names were renamed in the
+    # descriptor-table commit and this assertion kept asserting the old ones, which is
+    # exactly the drift a fixed literal cannot notice.
+    templates = page.evaluate(
+        "async () => (await (await fetch('/api/meta')).json()).templates"
+    )
+    spotify_template = next(entry for entry in templates if entry["label"] == "Spotify")
     page.get_by_role("button", name="Create Spotify page").click()
     expect(page.get_by_role("treeitem", name="Spotify")).to_have_attribute("aria-current", "page")
     expect(page.locator("#save-status")).to_have_text("Saved")
     saved = config_writes()[-1]["json"]
     spotify = next(entry for entry in saved["pages"] if entry["title"] == "Spotify")
     assert spotify["parent"] == "home"
-    assert {item["name"] for item in spotify["items"]} >= {"Play/Pause", "Next", "Previous"}
+    expected = [item["name"] for item in spotify_template["page"]["items"]]
+    assert expected, "the template must carry items for this test to mean anything"
+    assert [item["name"] for item in spotify["items"]] == expected
 
 
 @pytest.mark.browser

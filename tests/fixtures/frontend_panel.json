@@ -15,6 +15,9 @@
         "state": "",
         "unit": "",
         "value": 0,
+        "min": 0,
+        "max": 100,
+        "style": "text",
         "selected": true,
         "editing": false
       }
@@ -78,6 +81,7 @@
     "findings": [],
     "press": {
       "key": "r0c3",
+      "gesture": "tap",
       "binding_action": "",
       "item_action": "navigate",
       "entity": "",

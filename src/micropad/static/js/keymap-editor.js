@@ -7,6 +7,7 @@
 import {loadEntities} from './api.js';
 import {attachEntityAutocomplete} from './entity-autocomplete.js';
 import {
+  bindingsEqual,
   clearPageOverride,
   effectiveKeymapComplete,
   keymapMetadataComplete,
@@ -73,9 +74,24 @@ function keyFace(keyId, state, actionLabels, store, selectedKeyId, suffix) {
   actionSpan.textContent = actionLabel;
   button.dataset.bindingOrigin = origin;
   button.dataset.action = binding ? binding.action : 'none';
-  button.title = binding && binding.entity
-    ? `${actionLabel} — ${binding.entity}`
-    : actionLabel;
+  // The gestures of this key, as a badge and in the tooltip: the board is the
+  // only place that shows all fourteen keys at once, so "this key also has a
+  // hold" has to be readable without clicking it.
+  const gestures = [];
+  if (binding && binding.hold && binding.hold.action !== 'none') gestures.push('hold');
+  if (binding && binding.double && binding.double.action !== 'none') gestures.push('double');
+  if (gestures.length) {
+    const badge = document.createElement('span');
+    badge.className = 'key-gestures';
+    badge.textContent = gestures.map(name => (name === 'hold' ? 'H' : 'D')).join('+');
+    badge.title = gestures
+      .map(name => `${name}: ${actionLabels.get(binding[name].action) || binding[name].action}`)
+      .join(' · ');
+    button.appendChild(badge);
+  }
+  button.dataset.gestures = gestures.join(',');
+  const detail = binding && binding.entity ? `${actionLabel} — ${binding.entity}` : actionLabel;
+  button.title = gestures.length ? `${detail} (+ ${gestures.join(' + ')})` : detail;
 
   button.appendChild(idSpan);
   button.appendChild(actionSpan);
@@ -153,7 +169,11 @@ export function mountKeymapEditor(element, store) {
     const pagesSignature = (state.config.pages || []).map(
         page => `${page.page_id}:${page.parent}:${page.title}`
       ).join('|');
-    const signature = `${complete}|${scopeComplete}|${state.keyScope}|${selectedKeyId}|${effective.action}|${effective.target_page}|${pagesSignature}|${resolved.inherited}|${resolved.sourceScopeId}`;
+    // The gesture *actions* belong in the signature (a select change rebuilds the
+    // panel so the matching target field appears); free-text gesture entities do
+    // not, for the same reason the tap entity does not: rebuilding would destroy
+    // the input being typed in.
+    const signature = `${complete}|${scopeComplete}|${state.keyScope}|${selectedKeyId}|${effective.action}|${effective.target_page}|${effective.hold.action}|${effective.double.action}|${pagesSignature}|${resolved.inherited}|${resolved.sourceScopeId}`;
     if (lastSignature === signature && state.saveState !== 'error') return;
     lastSignature = signature;
     if (autocomplete) { autocomplete.destroy(); autocomplete = null; }
@@ -256,17 +276,29 @@ export function mountKeymapEditor(element, store) {
     const selectedBinding = resolved.binding;
     const origin = state.keyScope === 'global' ? 'global' : resolved.inherited ? 'ancestor' : 'override';
 
+    // The binding as it is stored *right now*.
+    //
+    // Free-text typing deliberately does not re-render the panel (a rebuild would
+    // destroy the field mid-keystroke), so a handler captured at render time can
+    // hold a stale binding: "type the entity, then pick a hold action" would write
+    // the binding back with the empty entity and silently undo the typing. Every
+    // partial update therefore re-reads the live value instead of closing over the
+    // render-time snapshot.
+    const liveBinding = () => {
+      const current = store.getState();
+      const source = current.keyScope === 'global'
+        ? current.config.global_keymap?.[selectedKeyId]
+        : resolveBinding(current.config, current.keyScope, selectedKeyId).binding;
+      return normalizeBinding(source);
+    };
+
     // A mutation in global scope rewrites the shared default; in page scope it writes a
     // page-local override (which then overrides the inherited value in this scope). In page
     // scope, re-picking the effective (inherited) value is a no-op: writing a redundant
     // override would push a pointless pages[].keymap entry onto the wire.
     const writeBinding = binding => {
       const normalized = normalizeBinding(binding);
-      const effective = normalizeBinding(resolved.binding);
-      if (state.keyScope !== 'global'
-          && normalized.action === effective.action
-          && normalized.entity === effective.entity
-          && normalized.target_page === effective.target_page) return;
+      if (state.keyScope !== 'global' && bindingsEqual(normalized, liveBinding())) return;
       const current = store.getState();
       store.replaceConfig(state.keyScope === 'global'
         ? setGlobalBinding(current.config, selectedKeyId, binding)
@@ -306,7 +338,12 @@ export function mountKeymapEditor(element, store) {
         chip.setAttribute('aria-pressed', String(selectedBinding.action === action.id));
         chip.textContent = action.label;
         chip.addEventListener('click', () => {
-          writeBinding({action: action.id, entity: '', target_page: ''});
+          // Re-picking the tap action must not silently drop the key's gestures:
+          // they are a separate part of the same binding.
+          writeBinding({
+            ...liveBinding(),
+            action: action.id, entity: '', target_page: '',
+          });
         });
         fieldset.appendChild(chip);
       });
@@ -342,7 +379,7 @@ export function mountKeymapEditor(element, store) {
       const commitEntity = () => {
         const value = input.value.trim();
         if (isValidEntity(value)) {
-          writeBinding({...normalizeBinding(selectedBinding), entity: value});
+          writeBinding({...liveBinding(), entity: value});
         }
         // Invalid text stays local (and visible with the hint) and never reaches
         // the server, so typing never triggers a per-keystroke rollback.
@@ -354,7 +391,7 @@ export function mountKeymapEditor(element, store) {
       bindingPanel.appendChild(label);
       autocomplete = attachEntityAutocomplete(input, {
         getEntities: () => loadEntities(),
-        onSelect: entityId => writeBinding({...normalizeBinding(selectedBinding), entity: entityId}),
+        onSelect: entityId => writeBinding({...liveBinding(), entity: entityId}),
         onError: error => store.dispatch({type:'status', status:{kind:'error', message:error.message}})
       });
     } else if (argument === 'target_page') {
@@ -375,7 +412,7 @@ export function mountKeymapEditor(element, store) {
         select.appendChild(option);
       });
       select.value = selectedBinding.target_page;
-      select.addEventListener('change', () => writeBinding({...normalizeBinding(selectedBinding), target_page: select.value}));
+      select.addEventListener('change', () => writeBinding({...liveBinding(), target_page: select.value}));
       label.appendChild(text);
       label.appendChild(select);
       if (!selectedBinding.target_page) {
@@ -398,6 +435,146 @@ export function mountKeymapEditor(element, store) {
     }
 
     element.appendChild(bindingPanel);
+
+    // --- gestures: hold and double press on the same key -----------------
+    // Each gesture is a full target of its own (action, entity, target page), so
+    // a hold can turn a different device than the tap. Unset means "no gesture":
+    // the key then behaves exactly as it did before gestures existed, which is
+    // why the panel says so explicitly instead of hiding the block.
+    const gestureMeta = new Map(
+      (Array.isArray(state.meta.gesture_meta) ? state.meta.gesture_meta : [])
+        .map(entry => [entry.id, entry])
+    );
+    const caps = state.meta.caps || {};
+    const writeGesture = (gestureId, patch) => {
+      const current = liveBinding();
+      const next = {...current[gestureId], ...patch};
+      // An unset gesture carries nothing: clearing the action clears the fields
+      // that belonged to the action before it, so no stale entity is published.
+      if (next.action === 'none') {
+        next.entity = '';
+        next.target_page = '';
+      }
+      writeBinding({...current, [gestureId]: next});
+    };
+
+    const gesturePanel = document.createElement('div');
+    gesturePanel.className = 'gesture-panel';
+    const gestureHeading = document.createElement('h3');
+    gestureHeading.textContent = 'Gestures on this key';
+    gesturePanel.appendChild(gestureHeading);
+
+    for (const gestureId of ['hold', 'double']) {
+      const definition = gestureMeta.get(gestureId);
+      const label = definition ? definition.label : gestureId;
+      const threshold = gestureId === 'hold' ? caps.hold_ms : caps.double_press_ms;
+      const gesture = liveBinding()[gestureId];
+      const bound = gesture.action !== 'none';
+
+      const block = document.createElement('div');
+      block.className = 'gesture-block';
+      block.dataset.gesture = gestureId;
+
+      const blockLabel = document.createElement('span');
+      blockLabel.className = 'gesture-label';
+      blockLabel.textContent = threshold ? `${label} (${threshold} ms)` : label;
+      if (definition && definition.description) blockLabel.title = definition.description;
+      block.appendChild(blockLabel);
+
+      // Action picker, grouped the same way the tap chips are. A plain select
+      // (not fourteen chips per gesture) keeps the panel readable at 768 px.
+      const select = document.createElement('select');
+      select.setAttribute('aria-label', `${label} action`);
+      const noneOption = document.createElement('option');
+      noneOption.value = 'none';
+      noneOption.textContent = 'No action';
+      select.appendChild(noneOption);
+      for (const groupName of GROUPS) {
+        const groupActions = actionsMeta.filter(action => action.group === groupName);
+        if (!groupActions.length) continue;
+        const group = document.createElement('optgroup');
+        group.label = groupName;
+        groupActions.forEach(action => {
+          const option = document.createElement('option');
+          option.value = action.id;
+          option.textContent = action.label;
+          group.appendChild(option);
+        });
+        select.appendChild(group);
+      }
+      select.value = gesture.action;
+      select.addEventListener('change', () => writeGesture(gestureId, {action: select.value}));
+      block.appendChild(select);
+
+      const gestureArgument = (actionsMeta.find(action => action.id === gesture.action) || {}).argument;
+      if (gestureArgument === 'entity') {
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.setAttribute('aria-label', `${label} entity ID`);
+        input.value = gesture.entity;
+        const hint = document.createElement('span');
+        hint.className = 'binding-hint';
+        const refreshHint = () => {
+          const value = input.value.trim();
+          if (!value) { hint.textContent = 'Choose an entity.'; hint.classList.remove('binding-error'); return; }
+          if (isValidEntity(value)) { hint.textContent = ''; hint.classList.remove('binding-error'); }
+          else { hint.textContent = 'Invalid entity id (use domain.entity).'; hint.classList.add('binding-error'); }
+        };
+        refreshHint();
+        const commit = () => {
+          const value = input.value.trim();
+          // Invalid free text stays local (visible with its hint) instead of
+          // provoking a server rejection per keystroke.
+          if (isValidEntity(value)) writeGesture(gestureId, {entity: value});
+          refreshHint();
+        };
+        input.addEventListener('input', commit);
+        input.addEventListener('change', commit);
+        input.addEventListener('blur', commit);
+        block.appendChild(input);
+        block.appendChild(hint);
+      } else if (gestureArgument === 'target_page') {
+        const selectPage = document.createElement('select');
+        selectPage.setAttribute('aria-label', `${label} target page`);
+        const emptyOption = document.createElement('option');
+        emptyOption.value = '';
+        emptyOption.textContent = '';
+        selectPage.appendChild(emptyOption);
+        (state.config.pages || []).forEach(page => {
+          const option = document.createElement('option');
+          option.value = page.page_id;
+          option.textContent = page.title;
+          selectPage.appendChild(option);
+        });
+        selectPage.value = gesture.target_page;
+        selectPage.addEventListener('change', () => writeGesture(gestureId, {target_page: selectPage.value}));
+        block.appendChild(selectPage);
+      }
+
+      const state_ = document.createElement('span');
+      state_.className = 'gesture-state';
+      state_.textContent = bound ? 'Bound' : 'Not used';
+      block.appendChild(state_);
+
+      if (bound) {
+        const clearGesture = document.createElement('button');
+        clearGesture.type = 'button';
+        clearGesture.textContent = `Clear ${label.toLowerCase()}`;
+        clearGesture.setAttribute('aria-label', `Clear ${label} gesture`);
+        clearGesture.addEventListener('click', () => writeGesture(gestureId, {action: 'none'}));
+        block.appendChild(clearGesture);
+      }
+
+      gesturePanel.appendChild(block);
+    }
+
+    const gestureNote = document.createElement('p');
+    gestureNote.className = 'gesture-note';
+    gestureNote.textContent = state.keyScope === 'global'
+      ? 'Gestures are part of the binding. A key without a gesture keeps its single-press behaviour.'
+      : 'Gestures are part of the binding and follow the same override/inherit rule as the tap action.';
+    gesturePanel.appendChild(gestureNote);
+    element.appendChild(gesturePanel);
   }
 
   return {render};

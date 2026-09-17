@@ -20,7 +20,9 @@ KEY_IDS = [f"r{row}c{col}" for row in range(3) for col in range(4)] + ["enc_up",
 def test_all_fourteen_inputs_are_unique_selectable_and_rebindable(page, app_url, captured_requests, config_writes):
     page.goto(app_url)
     controls = page.locator("[data-key-id]")
-    assert controls.count() == 14
+    # `expect` retries: the board renders from /api/config + /api/meta after the load
+    # event, so a bare `count()` here raced the first render (it failed once under load).
+    expect(controls).to_have_count(14)
     assert sorted(controls.evaluate_all("nodes => nodes.map(node => node.dataset.keyId)")) == sorted(KEY_IDS)
     for key_id in KEY_IDS:
         page.locator(f'[data-key-id="{key_id}"]').click()
@@ -47,7 +49,14 @@ def test_action_groups_show_only_contextual_target(page, app_url, captured_reque
     page.get_by_label("Target page for binding").select_option("living-room")
     expect(page.locator("#save-status")).to_have_text("Saved")
     binding = config_writes()[-1]["json"]["global_keymap"]["r0c0"]
-    assert binding == {"action": "navigate", "entity": "", "target_page": "living-room"}
+    # An unbound gesture is normalized to "none" rather than omitted: the stored
+    # binding always carries both gesture slots (the generator drops an unset
+    # gesture from the published payload, but the configurator keeps the shape).
+    assert binding == {
+        "action": "navigate", "entity": "", "target_page": "living-room",
+        "hold": {"action": "none", "entity": "", "target_page": ""},
+        "double": {"action": "none", "entity": "", "target_page": ""},
+    }
 
 
 @pytest.mark.browser
@@ -120,7 +129,9 @@ def test_page_override_writes_into_canonical_pages_keymap_and_validates(page, ap
     assert "page_overrides" not in payload
     upstairs = next(page_data for page_data in payload["pages"] if page_data["page_id"] == "upstairs")
     assert upstairs.get("keymap", {}).get("r1c0") == {
-        "action": "toggle", "entity": "light.desk_lamp", "target_page": ""
+        "action": "toggle", "entity": "light.desk_lamp", "target_page": "",
+        "hold": {"action": "none", "entity": "", "target_page": ""},
+        "double": {"action": "none", "entity": "", "target_page": ""},
     }
     # parse_config is the real backend write path used by POST /api/config
     # (parse_config -> AppConfig.model_validate). It normalizes the global_keymap key
@@ -155,7 +166,9 @@ def test_restore_defaults_requires_confirmation_and_clears_all_overrides(page, a
         "r0c0": "home", "r0c1": "none", "r0c2": "none", "r0c3": "enter",
         "r1c0": "none", "r1c1": "none", "r1c2": "none", "r1c3": "enter",
         "r2c0": "none", "r2c1": "none", "r2c2": "none", "r2c3": "back",
-        "enc_up": "scroll_up", "enc_down": "scroll_down",
+        # The encoder default is adjust: it steps the selected slider row and
+        # scrolls the cursor everywhere else.
+        "enc_up": "adjust", "enc_down": "adjust",
     }
     # Every page-local override is cleared (the fixture starts living-room with an r1c0
     # override) while the rest of the configuration is left intact.
@@ -181,9 +194,9 @@ def test_board_shows_each_keys_effective_action_and_origin(page, app_url):
     # action is this page's override or inherited from global/ancestors.
     page.goto(app_url)
     faces = page.locator(".keypad button, .encoder button")
-    assert faces.count() == 14
+    expect(faces).to_have_count(14)
     expect(page.locator("[data-key-id='r0c0'] .key-action")).to_have_text("Home")
-    expect(page.locator("[data-key-id='enc_up'] .key-action")).to_have_text("Scroll up")
+    expect(page.locator("[data-key-id='enc_up'] .key-action")).to_have_text("Adjust slider")
     expect(page.locator("[data-key-id='enc_up'] .key-id")).to_have_text("ENC Left")
     # Global scope: everything is the shared default.
     expect(page.locator("[data-key-id='r0c0']")).to_have_attribute("data-binding-origin", "global")

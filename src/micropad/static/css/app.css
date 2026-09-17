@@ -427,6 +427,13 @@ legend {
   padding-bottom: 0.55rem;
 }
 
+/* A field the editor hides for this item (the state switch, which applies only
+   to a two-valued state). `display: inline-flex` above would otherwise win over
+   the hidden attribute, leaving an empty caption row behind. */
+#item-editor fieldset > label[hidden] {
+  display: none;
+}
+
 #item-editor fieldset > label input,
 #item-editor fieldset > label select {
   font-size: 0.9rem;
@@ -803,6 +810,79 @@ legend {
   border-color: var(--accent);
   color: var(--accent-ink);
   font-weight: 600;
+}
+
+/* ----------------------------------------------------------- gestures --- */
+/* Hold and double press on the selected key. One block per gesture: the action
+   picker plus the field that action needs, stacked so the panel stays readable
+   in the narrow keymap column at tablet width. */
+.gesture-panel {
+  margin-top: 0.85rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.gesture-panel h3 {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 0.86rem;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.gesture-block {
+  display: grid;
+  gap: 0.3rem;
+  padding: 0.45rem 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+
+.gesture-label {
+  font-size: 0.78rem;
+  letter-spacing: 0.02em;
+  color: var(--text-2);
+}
+
+.gesture-block select,
+.gesture-block input,
+.gesture-block button {
+  width: 100%;
+  /* The 44px touch floor applies to gesture controls too: this panel is used on
+     a tablet next to the pad. */
+  min-height: var(--field-h);
+}
+
+.gesture-state {
+  font-size: 0.75rem;
+  color: var(--text-3);
+}
+
+.gesture-block button {
+  background: var(--surface);
+  color: var(--text-2);
+  font-size: 0.82rem;
+}
+
+.gesture-note {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--text-3);
+}
+
+/* Key-face badge: this key also carries a hold and/or a double press. */
+.key-gestures {
+  align-self: flex-end;
+  padding: 0 0.25rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  color: var(--text-2);
 }
 
 /* ------------------------------------------------------------ history --- */

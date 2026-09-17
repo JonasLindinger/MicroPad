@@ -1,12 +1,46 @@
 // AI-assisted development — firmware, HA automation, config generator and docs were created with AI (LLM) help, reviewed and tested by the author. Provided as-is, without warranty; verify on your own hardware, don't use for safety-critical applications.
 // Immutable keymap operations for the clean-room MicroPad frontend. ES module; window-free.
 
+// One gesture target (hold or double): its own action, entity and target page.
+// Absent means unbound, which is exactly what a keymap written before gestures
+// existed carries — such a key keeps its single-press behaviour.
+export function normalizeGesture(gesture = {}) {
+  const source = gesture && typeof gesture === 'object' ? gesture : {};
+  return {
+    action: typeof source.action === 'string' ? source.action : 'none',
+    entity: typeof source.entity === 'string' ? source.entity : '',
+    target_page: typeof source.target_page === 'string' ? source.target_page : ''
+  };
+}
+
 export function normalizeBinding(binding = {}) {
   return {
     action: typeof binding.action === 'string' ? binding.action : 'none',
     entity: typeof binding.entity === 'string' ? binding.entity : '',
-    target_page: typeof binding.target_page === 'string' ? binding.target_page : ''
+    target_page: typeof binding.target_page === 'string' ? binding.target_page : '',
+    hold: normalizeGesture(binding.hold),
+    double: normalizeGesture(binding.double)
   };
+}
+
+// True when both bindings address exactly the same thing, gestures included.
+// The page-scope writer uses this to skip a redundant override: writing one
+// would push a pointless pages[].keymap entry onto the wire.
+const TARGET_FIELDS = ['action', 'entity', 'target_page'];
+
+export function bindingsEqual(a, b) {
+  const left = normalizeBinding(a);
+  const right = normalizeBinding(b);
+  return TARGET_FIELDS.every(field => left[field] === right[field])
+    && ['hold', 'double'].every(gesture =>
+      TARGET_FIELDS.every(field => left[gesture][field] === right[gesture][field]));
+}
+
+// True when at least one gesture is bound on this key (used for the key face
+// badge, so the board shows at a glance where a hold or double press exists).
+export function hasGestures(binding) {
+  const normalized = normalizeBinding(binding);
+  return normalized.hold.action !== 'none' || normalized.double.action !== 'none';
 }
 
 export function setGlobalBinding(config, keyId, binding) {

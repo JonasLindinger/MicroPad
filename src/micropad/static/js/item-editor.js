@@ -30,11 +30,21 @@ function itemRules(meta) {
     targetPageTypes: new Set(
       descriptors.filter((row) => row.needs_target_page).map((row) => row.id)
     ),
+    // Which types may be a slider row (the contract's `adjustable` flag): a type
+    // without an adjustable value would give the operator a slider that cannot
+    // move, so the editor does not offer one there.
+    adjustableTypes: new Set(
+      descriptors.filter((row) => row.adjustable).map((row) => row.id)
+    ),
+    // The controls the backend knows, with the contract's own labels.
+    controlOptions: Array.isArray(meta?.control_meta) && meta.control_meta.length
+      ? meta.control_meta
+      : [{ id: 'button', label: 'Button', description: '' }],
   };
 }
 
 function draftErrors(draft, meta) {
-  const { entityTypes, targetPageTypes } = itemRules(meta);
+  const { entityTypes, targetPageTypes, adjustableTypes } = itemRules(meta);
   const errors = [];
   if (!draft.name || !String(draft.name).trim()) errors.push('Name is required.');
   if (entityTypes.has(draft.type) && !draft.entity.trim()) {
@@ -43,7 +53,21 @@ function draftErrors(draft, meta) {
   if (targetPageTypes.has(draft.type) && !draft.target_page) {
     errors.push(`Target page is required for type "${draft.type}".`);
   }
+  if (draft.control === 'slider' && !adjustableTypes.has(draft.type)) {
+    errors.push(`A "${draft.type}" row has no adjustable value, so it cannot be a slider.`);
+  }
   return errors;
+}
+
+// Two-valued Home Assistant states render as a checkbox on the pad instead of
+// the word; the editor offers the matching switch for exactly those values (and
+// for an empty state), so toggling can never overwrite a real reading like 23.4.
+const BOOLEAN_STATES = new Set(['on', 'off', 'true', 'false']);
+
+function booleanStateOf(state) {
+  const value = String(state == null ? '' : state).trim().toLowerCase();
+  if (!value) return null;  // empty: nothing to overwrite, the switch starts off
+  return BOOLEAN_STATES.has(value) ? value : undefined;
 }
 
 // A string that could still grow into a finite number after more keystrokes — a
@@ -123,6 +147,30 @@ export function mountItemEditor(element, store) {
 
     const typeOptions = Array.isArray(state.meta.item_types) ? state.meta.item_types : [];
     const pageOptions = state.config.pages.map(p => p.page_id);
+    const rules = itemRules(state.meta);
+
+    // How a row is driven: a button (a press runs its action) or a slider (the
+    // encoder additionally turns the value while the cursor rests on it). Only
+    // the types with an adjustable value offer the slider option, so the editor
+    // can never build a row the pad would not move.
+    const appendControlSelect = (fieldset, item, commit, label) => {
+      const options = rules.adjustableTypes.has(item.type)
+        ? rules.controlOptions
+        : rules.controlOptions.filter((option) => option.id === 'button');
+      const select = document.createElement('select');
+      select.setAttribute('aria-label', label);
+      options.forEach((option) => {
+        const element = document.createElement('option');
+        element.value = option.id;
+        element.textContent = option.label;
+        if (option.description) element.title = option.description;
+        select.appendChild(element);
+      });
+      select.value = options.some((option) => option.id === item.control) ? item.control : 'button';
+      select.disabled = options.length < 2;
+      select.addEventListener('change', () => commit(select.value));
+      appendLabeledControl(fieldset, label, select);
+    };
 
     page.items.forEach((item, index) => {
       const fieldset = document.createElement('fieldset');
@@ -140,8 +188,22 @@ export function mountItemEditor(element, store) {
         typeSelect.appendChild(option);
       });
       typeSelect.value = item.type;
-      typeSelect.addEventListener('change', () => commitChange(store, page.page_id, index, { type: typeSelect.value }));
+      typeSelect.addEventListener('change', () => {
+        // A control the new type cannot carry would be refused by the backend, so
+        // the type switch resets it instead of persisting a contradictory row.
+        const patch = rules.adjustableTypes.has(typeSelect.value)
+          ? { type: typeSelect.value }
+          : { type: typeSelect.value, control: 'button' };
+        commitChange(store, page.page_id, index, patch);
+      });
       appendLabeledControl(fieldset, 'Type', typeSelect);
+
+      appendControlSelect(
+        fieldset,
+        item,
+        (control) => commitChange(store, page.page_id, index, { control }),
+        'Control'
+      );
 
       const entityInput = makeTextInput('Entity ID', item.entity, value => commitChange(store, page.page_id, index, { entity: value }));
       appendLabeledControl(fieldset, 'Entity ID', entityInput);
@@ -153,6 +215,34 @@ export function mountItemEditor(element, store) {
 
       const stateInput = makeTextInput('State', item.state, value => commitChange(store, page.page_id, index, { state: value }));
       appendLabeledControl(fieldset, 'State', stateInput);
+
+      // The same two-valued state the pad draws as a checkbox: offered as a
+      // switch for exactly on/off/true/false (and an empty state), so it can
+      // never overwrite a reading like 23.4 with a boolean.
+      const stateCheckLabel = document.createElement('label');
+      const stateCheck = document.createElement('input');
+      stateCheck.type = 'checkbox';
+      stateCheck.setAttribute('aria-label', 'On');
+      stateCheckLabel.appendChild(stateCheck);
+      stateCheckLabel.appendChild(document.createTextNode('On'));
+      fieldset.appendChild(stateCheckLabel);
+      // The switch is shown/hidden in place instead of forcing a rebuild: a
+      // rebuild would destroy the State input while it is being typed in.
+      const syncStateCheck = (value) => {
+        const boolean = booleanStateOf(value);
+        stateCheckLabel.hidden = boolean === undefined;
+        stateCheck.checked = boolean === 'on' || boolean === 'true';
+      };
+      syncStateCheck(item.state);
+      stateInput.addEventListener('input', () => syncStateCheck(stateInput.value));
+      stateCheck.addEventListener('change', () => {
+        const next = stateCheck.checked ? 'on' : 'off';
+        // Keep the text field in step with the switch (and let it re-sync the
+        // switch's own state, so the two controls can never disagree).
+        stateInput.value = next;
+        syncStateCheck(next);
+        commitChange(store, page.page_id, index, { state: next });
+      });
 
       const numeric = (label, field) => {
         const input = document.createElement('input');
@@ -269,10 +359,27 @@ export function mountItemEditor(element, store) {
       });
       typeSelect.value = draft.type;
       typeSelect.addEventListener('change', () => {
-        store.dispatch({ type: 'draft-update', index: dIndex, patch: { type: typeSelect.value } });
+        // As in the saved-item editor: a control the chosen type cannot carry is
+        // reset, so the draft can never become unsaveable.
+        store.dispatch({
+          type: 'draft-update', index: dIndex,
+          patch: rules.adjustableTypes.has(typeSelect.value)
+            ? { type: typeSelect.value }
+            : { type: typeSelect.value, control: 'button' },
+        });
         refreshDraft();
       });
       appendLabeledControl(fieldset, 'Type', typeSelect);
+
+      appendControlSelect(
+        fieldset,
+        draft,
+        (control) => {
+          store.dispatch({ type: 'draft-update', index: dIndex, patch: { control } });
+          refreshDraft();
+        },
+        'Draft control'
+      );
 
       const entityInput = makeTextInput('Draft entity ID', draft.entity, value => {
         store.dispatch({ type: 'draft-update', index: dIndex, patch: { entity: value } });

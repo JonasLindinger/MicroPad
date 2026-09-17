@@ -6,7 +6,8 @@
 export function makeDraftItem() {
   return {
     name: '', type: 'sensor', entity: '', state: '',
-    value: 0, min: 0, max: 100, step: 1, unit: '', editable: false, target_page: '',
+    value: 0, min: 0, max: 100, step: 1, unit: '', editable: false,
+    control: 'button', target_page: '',
   };
 }
 
