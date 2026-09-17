@@ -23,8 +23,12 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from micropad.constants import (
+    ACTION_META,
+    CONTROLS,
     FIELD_CAPS,
     HOME_PAGE_ID,
+    ITEM_TYPE_META,
+    KEY_IDS,
     MAX_CATALOG_PAYLOAD_BYTES,
     MAX_ITEMS_PER_PAGE,
     MAX_MQTT_PAYLOAD_BYTES,
@@ -47,6 +51,23 @@ STRICT_FIELDS: tuple[tuple[str, str], ...] = (
     ("entity", "entity"),
     ("target_page", "page_id"),
 )
+
+#: Types a slider row may use (contract flag `adjustable`): the ones whose value
+#: an encoder turn can move.
+ADJUSTABLE_TYPES: frozenset[str] = frozenset(
+    str(entry["id"]) for entry in ITEM_TYPE_META if entry.get("adjustable")
+)
+#: Actions that need a value *direction*: `adjust` steps the selected slider row
+#: on an encoder turn, so on a press (or as a gesture) it has nothing to move.
+DIRECTIONAL_ACTIONS: frozenset[str] = frozenset({"adjust"})
+#: Actions that address an entity: bound without one they are a defined no-op,
+#: which is worth saying out loud before it is published.
+ENTITY_ARGUMENT_ACTIONS: frozenset[str] = frozenset(
+    str(entry["id"]) for entry in ACTION_META if entry["argument"] == "entity"
+)
+#: The two turns of the rotary encoder. It has no press (no push button on this
+#: part), so a hold or double gesture on it can never fire.
+ENCODER_KEYS: frozenset[str] = frozenset({"enc_up", "enc_down"})
 
 
 @dataclass(frozen=True)
@@ -170,6 +191,199 @@ def _field_findings(
                 )
 
 
+def _control_findings(config: Mapping[str, Any], findings: list[Finding]) -> None:
+    """Check every item's `control` field while it is still a draft.
+
+    These rules exist in ``models.PageItem`` too (a slider row that cannot move is
+    refused on save), but a draft never reaches that model: the editor shows the
+    analysis panel for the document as it is being typed, so the same rules have
+    to answer with a `where` path here.
+    """
+    pages = config.get("pages")
+    if not isinstance(pages, Sequence):
+        return
+    for index, page in enumerate(pages):
+        if not isinstance(page, Mapping):
+            continue
+        page_id = str(page.get("page_id", f"#{index}"))
+        items = page.get("items")
+        if not isinstance(items, Sequence):
+            continue
+        for item_index, item in enumerate(items):
+            if not isinstance(item, Mapping):
+                continue
+            control = item.get("control", "button")
+            where = f"pages[{index}].items[{item_index}]"
+            name = str(item.get("name", f"#{item_index}"))
+            if control not in CONTROLS:
+                findings.append(
+                    Finding(
+                        code="unknown_control",
+                        severity="error",
+                        message=(
+                            f'Item "{name}" on page "{page_id}" has control '
+                            f"{control!r}; the pad knows {sorted(CONTROLS)}."
+                        ),
+                        where=f"{where}.control",
+                    )
+                )
+                continue
+            if control != "slider":
+                continue
+            item_type = str(item.get("type", ""))
+            if item_type not in ADJUSTABLE_TYPES:
+                findings.append(
+                    Finding(
+                        code="slider_without_adjustable_value",
+                        severity="error",
+                        message=(
+                            f'Item "{name}" on page "{page_id}" is a slider, but a '
+                            f"{item_type} row has no adjustable value "
+                            f"(sliders need one of {sorted(ADJUSTABLE_TYPES)})."
+                        ),
+                        where=f"{where}.control",
+                    )
+                )
+            minimum = item.get("min", 0)
+            maximum = item.get("max", 100)
+            step = item.get("step", 1)
+            if (
+                isinstance(minimum, (int, float))
+                and isinstance(maximum, (int, float))
+                and not isinstance(minimum, bool)
+                and not isinstance(maximum, bool)
+                and minimum >= maximum
+            ):
+                findings.append(
+                    Finding(
+                        code="slider_without_range",
+                        severity="error",
+                        message=(
+                            f'Item "{name}" on page "{page_id}" is a slider with '
+                            f"min {minimum} and max {maximum}: the encoder would "
+                            "have no range to move in."
+                        ),
+                        where=f"{where}.min",
+                    )
+                )
+            if isinstance(step, (int, float)) and not isinstance(step, bool) and step <= 0:
+                findings.append(
+                    Finding(
+                        code="slider_without_step",
+                        severity="error",
+                        message=(
+                            f'Item "{name}" on page "{page_id}" is a slider with a '
+                            f"step of {step}; one encoder turn must move the value."
+                        ),
+                        where=f"{where}.step",
+                    )
+                )
+
+
+def _keymap_findings(config: Mapping[str, Any], findings: list[Finding]) -> None:
+    """Check the keymap's gestures and directional actions.
+
+    Three ways to configure something that can never fire, all of them silent on
+    the pad: `adjust` on a key without a direction, a hold/double gesture on the
+    encoder (the part has no press), and a gesture action that needs an entity
+    without one. Each is a warning - the configuration is still publishable.
+    """
+    scopes: list[tuple[str, Mapping[str, Any]]] = []
+    global_keymap = config.get("global_keymap")
+    if isinstance(global_keymap, Mapping):
+        scopes.append(("global_keymap", global_keymap))
+    pages = config.get("pages")
+    if isinstance(pages, Sequence):
+        for index, page in enumerate(pages):
+            if not isinstance(page, Mapping):
+                continue
+            keymap = page.get("keymap")
+            if isinstance(keymap, Mapping):
+                scopes.append((f"pages[{index}].keymap", keymap))
+
+    for scope, keymap in scopes:
+        for key_id in KEY_IDS:
+            binding = keymap.get(key_id)
+            if not isinstance(binding, Mapping):
+                continue
+            action = binding.get("action", "none")
+            if action in DIRECTIONAL_ACTIONS and key_id not in ENCODER_KEYS:
+                findings.append(
+                    Finding(
+                        code="directional_action_on_a_key",
+                        severity="warning",
+                        message=(
+                            f"{scope}.{key_id} binds {action!r}, which turns the "
+                            "selected slider row when the encoder turns: a key "
+                            "press has no direction, so nothing happens. Bind it "
+                            "to enc_up/enc_down."
+                        ),
+                        where=f"{scope}.{key_id}",
+                    )
+                )
+            for gesture_name in ("hold", "double"):
+                gesture = binding.get(gesture_name)
+                if not isinstance(gesture, Mapping):
+                    continue
+                gesture_action = gesture.get("action", "none")
+                where = f"{scope}.{key_id}.{gesture_name}"
+                if gesture_action == "none":
+                    if gesture.get("entity") or gesture.get("target_page"):
+                        findings.append(
+                            Finding(
+                                code="gesture_without_action",
+                                severity="warning",
+                                message=(
+                                    f"{where} carries an entity or target page but "
+                                    "no action, so the gesture never fires."
+                                ),
+                                where=where,
+                            )
+                        )
+                    continue
+                if key_id in ENCODER_KEYS:
+                    findings.append(
+                        Finding(
+                            code="gesture_on_the_encoder",
+                            severity="warning",
+                            message=(
+                                f"{where} binds {gesture_action!r}, but the encoder "
+                                "has no press (only two turns), so a "
+                                f"{gesture_name} gesture can never fire there."
+                            ),
+                            where=where,
+                        )
+                    )
+                if gesture_action in DIRECTIONAL_ACTIONS:
+                    findings.append(
+                        Finding(
+                            code="directional_action_on_a_gesture",
+                            severity="warning",
+                            message=(
+                                f"{where} binds {gesture_action!r}, which needs an "
+                                "encoder direction; a gesture carries none."
+                            ),
+                            where=where,
+                        )
+                    )
+                if (
+                    gesture_action in ENTITY_ARGUMENT_ACTIONS
+                    and not gesture.get("entity")
+                ):
+                    findings.append(
+                        Finding(
+                            code="gesture_without_entity",
+                            severity="warning",
+                            message=(
+                                f"{where} binds {gesture_action!r} without an "
+                                "entity: the pad publishes the event, but the "
+                                "automation has nothing to address."
+                            ),
+                            where=where,
+                        )
+                    )
+
+
 def analyze(config: Mapping[str, Any]) -> Analysis:
     """Analyse a (possibly still invalid) configuration document.
 
@@ -193,6 +407,8 @@ def analyze(config: Mapping[str, Any]) -> Analysis:
     }
     analysis = Analysis(limits=limits)
     _field_findings(config, analysis.findings)
+    _control_findings(config, analysis.findings)
+    _keymap_findings(config, analysis.findings)
 
     # The document notice is a fixed constant, not user content: the stored model
     # carries it under the `_ai_assisted_notice` alias, while a dump uses the field

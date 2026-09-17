@@ -5,9 +5,14 @@
     "target_page": ""
   },
   "r0c1": {
-    "action": "none",
-    "entity": "",
-    "target_page": ""
+    "action": "toggle",
+    "entity": "light.living",
+    "target_page": "",
+    "hold": {
+      "action": "off",
+      "entity": "light.living",
+      "target_page": ""
+    }
   },
   "r0c2": {
     "action": "none",
@@ -60,12 +65,12 @@
     "target_page": ""
   },
   "enc_up": {
-    "action": "none",
+    "action": "adjust",
     "entity": "",
     "target_page": ""
   },
   "enc_down": {
-    "action": "none",
+    "action": "adjust",
     "entity": "",
     "target_page": ""
   }

@@ -74,6 +74,7 @@ def page_directives(
     portal: Mapping[str, Any] | None = None,
     keys: Sequence[Mapping[str, Any]] = (),
     press: str | None = None,
+    gesture: str | None = None,
 ) -> str:
     """Render one page (or the portal view) into the simulator's input format."""
     lines: list[str] = []
@@ -115,8 +116,11 @@ def page_directives(
         for item in items:
             if not isinstance(item, Mapping):
                 continue
+            # Range and control are what the core needs to draw a slider row and
+            # to decide whether an encoder turn would move it; both default to
+            # the pre-slider behaviour when a draft omits them.
             lines.append(
-                "item\t{}\t{}\t{}\t{}\t{}\t{}\t{}".format(
+                "item\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}".format(
                     field(item.get("name")),
                     field(item.get("state")),
                     field(item.get("unit")),
@@ -124,22 +128,37 @@ def page_directives(
                     field(item.get("type")) or "sensor",
                     field(item.get("entity")),
                     field(item.get("target_page")),
+                    _text(item.get("min", 0)),
+                    _text(item.get("max", 100)),
+                    _text(item.get("step", 1)),
+                    field(item.get("control")) or "button",
                 )
             )
 
     for binding in keys:
         if not isinstance(binding, Mapping):
             continue
+        hold = binding.get("hold") if isinstance(binding.get("hold"), Mapping) else {}
+        double = binding.get("double") if isinstance(binding.get("double"), Mapping) else {}
         lines.append(
-            "key\t{}\t{}\t{}\t{}".format(
+            "key\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}".format(
                 field(binding.get("key_id")),
                 field(binding.get("action")) or "none",
                 field(binding.get("entity")),
                 field(binding.get("target_page")),
+                field(hold.get("action")) if hold else "",
+                field(hold.get("entity")) if hold else "",
+                field(hold.get("target_page")) if hold else "",
+                field(double.get("action")) if double else "",
+                field(double.get("entity")) if double else "",
+                field(double.get("target_page")) if double else "",
             )
         )
     if press:
-        lines.append(f"press {press}")
+        # The gesture is optional: an unnamed press stays the plain tap the
+        # preview has always asked about.
+        suffix = f" {gesture}" if gesture else ""
+        lines.append(f"press {press}{suffix}")
     return "\n".join(lines) + "\n"
 
 

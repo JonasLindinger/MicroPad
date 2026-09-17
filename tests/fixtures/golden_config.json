@@ -88,9 +88,10 @@
           "value": 0.0,
           "min": 0.0,
           "max": 100.0,
-          "step": 1.0,
+          "step": 5.0,
           "unit": "",
           "editable": false,
+          "control": "slider",
           "target_page": ""
         },
         {
@@ -184,9 +185,19 @@
       "target_page": ""
     },
     "r0c1": {
-      "action": "none",
-      "entity": "",
-      "target_page": ""
+      "action": "toggle",
+      "entity": "light.living",
+      "target_page": "",
+      "hold": {
+        "action": "off",
+        "entity": "light.living",
+        "target_page": ""
+      },
+      "double": {
+        "action": "none",
+        "entity": "",
+        "target_page": ""
+      }
     },
     "r0c2": {
       "action": "none",
@@ -239,12 +250,12 @@
       "target_page": ""
     },
     "enc_up": {
-      "action": "none",
+      "action": "adjust",
       "entity": "",
       "target_page": ""
     },
     "enc_down": {
-      "action": "none",
+      "action": "adjust",
       "entity": "",
       "target_page": ""
     }

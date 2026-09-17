@@ -43,6 +43,7 @@ ACTIONS = [
     "media_prev",
     "edit",
     "confirm",
+    "adjust",
 ]
 ITEM_TYPES = [
     "category",
@@ -83,11 +84,15 @@ def test_contract_has_exact_topics_actions_and_keys():
     contract = read_json("mqtt-contract.json")
     # Pinned deliberately: a revision bump is a conscious edit that also has to teach
     # scripts/generate_contract.py (see the guard test below).
-    assert contract["version"] == 2
+    assert contract["version"] == 3
     assert contract["topics"] == EXPECTED_TOPICS
     assert contract["actions"] == ACTIONS
     assert contract["key_ids"] == KEY_IDS
     assert contract["item_types"] == ITEM_TYPES
+    # How a row is driven and which gestures a key carries: both vocabularies live
+    # in the contract so the editor, the pad and the docs cannot disagree.
+    assert contract["controls"] == ["button", "slider"]
+    assert contract["gestures"] == ["tap", "hold", "double"]
     assert contract["schemas"] == {
         "event": "event.schema.json",
         "page": "page.schema.json",
@@ -335,7 +340,7 @@ def test_load_contract_returns_the_canonical_contract():
     contract = load_contract()
     # Pinned deliberately: a revision bump is a conscious edit that also has to teach
     # scripts/generate_contract.py (see the guard test below).
-    assert contract["version"] == 2
+    assert contract["version"] == 3
     assert contract["topics"] == EXPECTED_TOPICS
     assert contract["actions"] == ACTIONS
     assert contract["key_ids"] == KEY_IDS
@@ -481,7 +486,8 @@ def test_firmware_item_type_descriptors_match_the_contract():
     """micropad_core.cpp's table and the contract's item_type_meta are one truth in two files."""
     source = (ROOT / "firmware" / "micropad_core.cpp").read_text(encoding="utf-8")
     rows = re.findall(
-        r"\{(ItemType::\w+), (Action::\w+), (Action::\w+), (true|false)\}", source
+        r"\{(ItemType::\w+), (Action::\w+), (Action::\w+), (true|false), (true|false)\}",
+        source,
     )
     assert rows, "ITEM_TYPE_DESCRIPTORS not found in firmware/micropad_core.cpp"
     firmware = {
@@ -489,12 +495,19 @@ def test_firmware_item_type_descriptors_match_the_contract():
             _snake_case(default_action.split("::")[1]),
             _snake_case(alternate.split("::")[1]),
             editable == "true",
+            adjustable == "true",
         )
-        for item_type, default_action, alternate, editable in rows
+        for item_type, default_action, alternate, editable, adjustable in rows
     }
-    # default_action = a tap, alternate_action = a hold, editable = the confirm gesture
+    # default_action = a tap, alternate_action = a hold, editable = the confirm
+    # gesture, adjustable = the type may be a slider row
     contract = {
-        entry["id"]: (entry["default_action"], entry["alternate_action"], entry["editable"])
+        entry["id"]: (
+            entry["default_action"],
+            entry["alternate_action"],
+            entry["editable"],
+            entry["adjustable"],
+        )
         for entry in (read_json("mqtt-contract.json")["item_type_meta"])
     }
     assert firmware == contract
@@ -534,5 +547,13 @@ def test_api_meta_exposes_caps_and_item_type_descriptors():
         "max_pages": contract["caps"]["max_pages"],
         "max_items_per_page": contract["caps"]["max_items_per_page"],
         "key_count": contract["caps"]["key_count"],
+        "hold_ms": contract["caps"]["hold_ms"],
+        "double_press_ms": contract["caps"]["double_press_ms"],
         "field_caps": contract["caps"]["field_caps"],
     }
+    # The editor renders these descriptors, so the gesture vocabulary and the
+    # button/slider choice are reported exactly as the contract defines them.
+    assert body["controls"] == contract["controls"]
+    assert body["control_meta"] == contract["control_meta"]
+    assert body["gestures"] == contract["gestures"]
+    assert body["gesture_meta"] == contract["gesture_meta"]

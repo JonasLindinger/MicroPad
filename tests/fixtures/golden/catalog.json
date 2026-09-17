@@ -16,6 +16,7 @@
           "step": 1.0,
           "unit": "",
           "editable": false,
+          "control": "button",
           "target_page": ""
         },
         {
@@ -29,6 +30,7 @@
           "step": 1.0,
           "unit": "",
           "editable": false,
+          "control": "button",
           "target_page": "bedroom"
         },
         {
@@ -42,6 +44,7 @@
           "step": 1.0,
           "unit": "",
           "editable": false,
+          "control": "button",
           "target_page": "office"
         },
         {
@@ -55,6 +58,7 @@
           "step": 1.0,
           "unit": "",
           "editable": false,
+          "control": "button",
           "target_page": "bedroom"
         }
       ]
@@ -72,9 +76,10 @@
           "value": 0.0,
           "min": 0.0,
           "max": 100.0,
-          "step": 1.0,
+          "step": 5.0,
           "unit": "",
           "editable": false,
+          "control": "slider",
           "target_page": ""
         },
         {
@@ -88,6 +93,7 @@
           "step": 1.0,
           "unit": "",
           "editable": false,
+          "control": "button",
           "target_page": ""
         },
         {
@@ -101,6 +107,7 @@
           "step": 5.0,
           "unit": "%",
           "editable": true,
+          "control": "button",
           "target_page": ""
         }
       ]
@@ -121,6 +128,7 @@
           "step": 0.5,
           "unit": "°C",
           "editable": true,
+          "control": "button",
           "target_page": ""
         },
         {
@@ -134,6 +142,7 @@
           "step": 1.0,
           "unit": "°C",
           "editable": false,
+          "control": "button",
           "target_page": ""
         },
         {
@@ -147,6 +156,7 @@
           "step": 1.0,
           "unit": "",
           "editable": false,
+          "control": "button",
           "target_page": ""
         }
       ]

@@ -29,7 +29,7 @@ from micropad.constants import (
 )
 from micropad.constants import load_contract as _load_contract
 from micropad.keymaps import effective_keymap
-from micropad.models import AppConfig, EntitySummary, PageItem
+from micropad.models import AppConfig, Binding, EntitySummary, PageItem
 from micropad.page_graph import index_pages
 
 # Types whose row renders a reflected state/value column: exactly the
@@ -67,6 +67,24 @@ _SERVICE_BY_ACTION_DOMAIN = {
     ("media_prev", "media_player"): "media_player.media_previous_track",
     ("edit", "number"): "number.set_value",
     ("confirm", "number"): "number.set_value",
+    # One encoder step on a slider row: the firmware publishes the row's new
+    # value, and the domain decides which attribute carries it.
+    ("adjust", "light"): "light.turn_on",
+    ("adjust", "fan"): "fan.set_percentage",
+    ("adjust", "cover"): "cover.set_cover_position",
+    ("adjust", "media_player"): "media_player.volume_set",
+    ("adjust", "number"): "number.set_value",
+}
+
+#: Extra service data for one adjust step, per service. `value` is the pad's
+#: `event.value` (the row's new value in the item's own 0..100-ish scale).
+_ADJUST_SERVICE_DATA: dict[str, dict[str, str]] = {
+    "light.turn_on": {"brightness_pct": "{{ event.value }}"},
+    "fan.set_percentage": {"percentage": "{{ event.value }}"},
+    "cover.set_cover_position": {"position": "{{ event.value }}"},
+    "media_player.volume_set": {
+        "volume_level": "{{ (event.value | float(0) / 100) | round(2) }}",
+    },
 }
 
 
@@ -121,6 +139,10 @@ def _validate_ha_template_inputs(config: AppConfig) -> None:
             )
         for binding in effective_keymap(config, page.page_id).values():
             values.extend((binding.action, binding.entity, binding.target_page))
+            # Gesture targets are user-controlled too: a hold may name its own
+            # entity, so it must pass the same template check as the tap.
+            for gesture in (binding.hold, binding.double):
+                values.extend((gesture.action, gesture.entity, gesture.target_page))
     if any(token in value for value in values for token in unsafe_tokens):
         raise GenerationError("unsafe Home Assistant template syntax in configured value")
 
@@ -223,12 +245,28 @@ def validate_generated_bounds(config: AppConfig) -> None:
     generate_catalog_payload(config)
 
 
+def _binding_payload(binding: Binding) -> dict[str, object]:
+    """One binding as published: unset gestures are omitted, not sent as none.
+
+    A keymap that uses no gestures must stay byte-identical to the one the
+    previous firmware published (the keymap byte budget and the retained payload
+    both depend on it), and the pad treats a missing gesture exactly like
+    `none` - so an omitted block is the honest encoding of "unbound".
+    """
+    payload = binding.model_dump(mode="json")
+    for gesture in ("hold", "double"):
+        block = payload.get(gesture)
+        if isinstance(block, dict) and block.get("action") == "none":
+            payload.pop(gesture)
+    return payload
+
+
 def generate_keymap_payload(config: AppConfig, page_id: str) -> str:
     """Generate a complete effective keymap in canonical physical-key order."""
     if page_id not in index_pages(config.pages):
         raise GenerationError(f"unknown page_id: {page_id}")
     bindings = effective_keymap(config, page_id)
-    payload = _compact({key_id: bindings[key_id].model_dump(mode="json") for key_id in KEY_IDS})
+    payload = _compact({key_id: _binding_payload(bindings[key_id]) for key_id in KEY_IDS})
     size = len(payload.encode("utf-8"))
     if size > MAX_MQTT_PAYLOAD_BYTES:
         raise GenerationError(f"keymap {page_id} exceeds {MAX_MQTT_PAYLOAD_BYTES} bytes: {size}")
@@ -259,10 +297,19 @@ def _event_condition(
     return [{"condition": "template", "value_template": "{{ " + " and ".join(checks) + " }}"}]
 
 
-def _service_step(service: str, entity: str) -> dict[str, object]:
+def _service_step(service: str, entity: str, *, adjust: bool = False) -> dict[str, object]:
+    """One service call. ``adjust`` marks an encoder step on a slider row.
+
+    The flag matters: light.turn_on serves both the plain "on" action (no data -
+    it is a switch, not a level) and an adjust step (brightness_pct), so the
+    service name alone cannot decide whether a value belongs in the call.
+    """
     step: dict[str, object] = {"action": service, "target": {"entity_id": entity}}
     if service == "number.set_value":
         step["data"] = {"value": "{{ event.value }}"}
+    elif adjust and service in _ADJUST_SERVICE_DATA:
+        # The row's new value, mapped onto the attribute the domain writes.
+        step["data"] = dict(_ADJUST_SERVICE_DATA[service])
     return step
 
 
@@ -278,6 +325,18 @@ def _runtime_item_template(item: PageItem) -> str:
             f"{{{{ (state_attr({item.entity!r}, 'volume_level') | float(default=0) * 100) "
             "| round(0) }}"
         )
+    elif item.control == "slider":
+        # A slider row's bar is drawn from the value, so the live payload has to
+        # carry the entity attribute that means "level" for this domain: a
+        # light's brightness (HA reports 0..255), a fan's percentage, a cover's
+        # position. A number already reflects states() above.
+        level_attribute = {
+            "light": f"(state_attr({item.entity!r}, 'brightness') | float(default=0) * 100 / 255)",
+            "fan": f"state_attr({item.entity!r}, 'percentage') | float(default=0)",
+            "cover": f"state_attr({item.entity!r}, 'current_position') | float(default=0)",
+        }.get(item.type)
+        if level_attribute:
+            runtime_values["value"] = f"{{{{ {level_attribute} | round(0) }}}}"
     fields = [
         _compact(key) + ":" + runtime_values.get(key, _compact(value))
         for key, value in payload.items()
@@ -361,10 +420,20 @@ def generate_automation(config: AppConfig) -> dict[str, object]:
             for (action, allowed_domain), service in _SERVICE_BY_ACTION_DOMAIN.items():
                 if domain != allowed_domain:
                     continue
+                if action == "adjust" and item.control != "slider":
+                    # Only a slider row can publish an adjust event (the pad
+                    # steps a slider and scrolls anything else), so the branch is
+                    # generated for exactly the rows that can produce it.
+                    continue
                 conditions: list[dict[str, str]] = _event_condition(
                     action, item.entity, page.page_id
                 )
-                if service == "number.set_value":
+                if action == "adjust" or service == "number.set_value":
+                    # The value is bounded by the row's own [min, max] and step,
+                    # so a malformed or hostile event can never write an
+                    # out-of-range value into Home Assistant. Only value-carrying
+                    # branches get this: the plain "on" branch also maps to
+                    # light.turn_on/turn_off and must stay value-free.
                     conditions.append(
                         {
                             "condition": "template",
@@ -382,7 +451,7 @@ def generate_automation(config: AppConfig) -> dict[str, object]:
                     {
                         "conditions": conditions,
                         "sequence": [
-                            _service_step(service, item.entity),
+                            _service_step(service, item.entity, adjust=action == "adjust"),
                             *_page_publications(config, page.page_id),
                         ],
                     }

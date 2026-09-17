@@ -14,6 +14,7 @@ from micropad.constants import KEY_IDS
 from micropad.models import (
     AppConfig,
     Binding,
+    BindingTarget,
     Page,
     PageItem,
     Settings,
@@ -38,6 +39,7 @@ def item(
     unit: str = "",
     editable: bool = False,
     target_page: str = "",
+    control: str = "button",
 ) -> dict[str, object]:
     """Build one page-item object in the canonical wire field order."""
     return {
@@ -51,6 +53,7 @@ def item(
         "step": step,
         "unit": unit,
         "editable": editable,
+        "control": control,
         "target_page": target_page,
     }
 
@@ -119,7 +122,18 @@ def valid_config() -> AppConfig:
                 title="Bedroom",
                 parent="home",
                 items=[
-                    PageItem(name="Bedroom Light", type="light", entity="light.bedroom"),
+                    PageItem(
+                        name="Bedroom Light",
+                        type="light",
+                        entity="light.bedroom",
+                        # A slider row: the encoder turns its brightness down/up
+                        # while the cursor rests on it, and the pad publishes the
+                        # new value on the next adjust event.
+                        control="slider",
+                        min=0,
+                        max=100,
+                        step=5,
+                    ),
                     PageItem(name="Fan", type="switch", entity="switch.fan"),
                 ],
             ),
@@ -153,4 +167,20 @@ def valid_config() -> AppConfig:
 
 
 def _typed_keymap() -> dict[str, Binding]:
-    return {key_id: Binding(**binding) for key_id, binding in keymap().items()}
+    """The typed keymap for the fixtures: mostly unbound, plus the two gestures.
+
+    One key carries a hold and a double binding and the encoder carries the
+    adjust action, so the golden files freeze the published shape of a gesture
+    binding and of the slider action too - not just the plain tap rows.
+    """
+    bindings = {key_id: Binding(**binding) for key_id, binding in keymap().items()}
+    bindings["r0c1"] = Binding(
+        action="toggle",
+        entity="light.living",
+        hold=BindingTarget(action="off", entity="light.living"),
+        double=BindingTarget(action="navigate", target_page="office"),
+    )
+    bindings["r0c2"] = Binding(action="none", hold=BindingTarget(action="press", entity="script.movie"))
+    bindings["enc_up"] = Binding(action="adjust")
+    bindings["enc_down"] = Binding(action="adjust")
+    return bindings

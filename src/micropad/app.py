@@ -61,7 +61,13 @@ from micropad.security import (
     admin_secret as env_admin_secret,
 )
 from micropad.ssh_upload import SSHDeployer, SSHUploadError, downloadable_ssh_script
-from micropad.ui_meta import action_metadata, item_type_metadata, page_templates
+from micropad.ui_meta import (
+    action_metadata,
+    control_metadata,
+    gesture_metadata,
+    item_type_metadata,
+    page_templates,
+)
 
 
 def _asset_version() -> str:
@@ -296,6 +302,15 @@ def create_app(
                 "key_ids": list(cast(list[object], contract["key_ids"])),
                 "actions": action_metadata(),
                 "item_types": sorted(ITEM_TYPES),
+                # How a row is driven (button / slider). The editor renders the
+                # same descriptors, so a slider row is a configured choice rather
+                # than a second item type.
+                "controls": list(cast(list[object], contract["controls"])),
+                "control_meta": control_metadata(),
+                # The gestures a key can carry, with their definitions, so the
+                # keymap editor can explain hold and double press in place.
+                "gestures": list(cast(list[object], contract["gestures"])),
+                "gesture_meta": gesture_metadata(),
                 # Descriptor per item type (HA domains, default action, whether the
                 # editor must collect an entity or a target page) so the frontend
                 # stops hard-coding the mapping the firmware already owns.
@@ -308,6 +323,10 @@ def create_app(
                     "max_pages": CAPS["max_pages"],
                     "max_items_per_page": CAPS["max_items_per_page"],
                     "key_count": CAPS["key_count"],
+                    # Gesture timing the firmware enforces: the editor shows the
+                    # real numbers instead of "a moment" and "a bit longer".
+                    "hold_ms": CAPS["hold_ms"],
+                    "double_press_ms": CAPS["double_press_ms"],
                     "field_caps": dict(FIELD_CAPS),
                 },
                 "default_keymap": {
@@ -491,6 +510,7 @@ def create_app(
         portal_raw = raw.get("portal")
         portal = portal_raw if isinstance(portal_raw, dict) else None
         key_id = raw.get("key_id")
+        gesture_raw = raw.get("gesture")
         directives = simulator.page_directives(
             page,
             selected=int(state.get("selected", 0)),
@@ -501,6 +521,8 @@ def create_app(
             portal=portal,
             keys=(raw.get("keys") or ()),
             press=str(key_id) if key_id else None,
+            # Optional: which gesture the key question is about (tap/hold/double).
+            gesture=str(gesture_raw) if gesture_raw else None,
         )
         try:
             result = simulator.simulate(directives)

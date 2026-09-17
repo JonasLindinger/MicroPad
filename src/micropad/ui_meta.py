@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from micropad.constants import ACTION_META, ITEM_TYPE_META
+from micropad.constants import ACTION_META, CONTROL_META, GESTURE_META, ITEM_TYPE_META
 
 
 def action_metadata() -> list[dict[str, str]]:
@@ -27,6 +27,25 @@ def item_type_metadata() -> list[dict[str, object]]:
     return [dict(entry) for entry in ITEM_TYPE_META]
 
 
+def control_metadata() -> list[dict[str, str]]:
+    """Return the row-control descriptors (button / slider) for the item editor.
+
+    Generated from the contract's ``control_meta``, so the editor's labels and
+    explanations are the same text the contract documents - adding a control is
+    a contract change, not a JavaScript edit.
+    """
+    return [dict(entry) for entry in CONTROL_META]
+
+
+def gesture_metadata() -> list[dict[str, str]]:
+    """Return the gesture descriptors (tap / hold / double press) for the keymap.
+
+    The keymap editor renders these next to the hold and double bindings, so a
+    user reading the editor sees the same definitions the contract carries.
+    """
+    return [dict(entry) for entry in GESTURE_META]
+
+
 def _item(name: str, item_type: str, entity: str = "") -> dict[str, object]:
     return {
         "name": name,
@@ -39,6 +58,7 @@ def _item(name: str, item_type: str, entity: str = "") -> dict[str, object]:
         "step": 1,
         "unit": "",
         "editable": False,
+        "control": "button",
         "target_page": "",
     }
 

@@ -115,6 +115,71 @@ def test_automation_maps_only_supported_domain_actions(
     assert branch["sequence"][0] == expected
 
 
+@pytest.mark.parametrize(
+    ("item_type", "entity", "service", "data"),
+    [
+        # One encoder step on a slider row: the row's new value is written to the
+        # attribute that means "level" for that domain.
+        ("light", "light.desk", "light.turn_on", {"brightness_pct": "{{ event.value }}"}),
+        ("fan", "fan.ceiling", "fan.set_percentage", {"percentage": "{{ event.value }}"}),
+        (
+            "cover",
+            "cover.blind",
+            "cover.set_cover_position",
+            {"position": "{{ event.value }}"},
+        ),
+        (
+            "media_player",
+            "media_player.speaker",
+            "media_player.volume_set",
+            {"volume_level": "{{ (event.value | float(0) / 100) | round(2) }}"},
+        ),
+        ("number", "number.level", "number.set_value", {"value": "{{ event.value }}"}),
+    ],
+)
+def test_automation_maps_every_adjustable_domain(
+    item_type: str, entity: str, service: str, data: dict[str, str]
+) -> None:
+    config = config_with_item(
+        PageItem(
+            name="Level",
+            type=item_type,
+            entity=entity,
+            control="slider",
+            min=0,
+            max=100,
+            step=5,
+        )
+    )
+
+    branch = find_mqtt_branch(
+        generate_automation(config), action="adjust", entity=entity, page_id="home"
+    )
+
+    assert branch["sequence"][0] == {
+        "action": service,
+        "target": {"entity_id": entity},
+        "data": data,
+    }
+    # The value is bounded by the row's own range before it reaches the service.
+    range_condition = json.dumps(branch["conditions"])
+    assert "event.value >= 0" in range_condition
+    assert "event.value <= 100" in range_condition
+
+
+def test_automation_omits_the_adjust_branch_for_a_button_row() -> None:
+    # A button row can never publish an adjust event (the pad steps a slider and
+    # scrolls anything else), so its branch must not exist.
+    config = config_with_item(PageItem(name="Desk", type="light", entity="light.desk"))
+
+    branches = generate_automation(config)["actions"][0]["choose"]
+    assert not [
+        branch
+        for branch in branches
+        if "adjust" in json.dumps(branch["conditions"])
+    ]
+
+
 def test_super_productivity_virtual_task_dispatches_start_task() -> None:
     entity = "script.sp_start_01ABC-def_XYZ"
     config = config_with_item(PageItem(name="Task", type="script", entity=entity))
