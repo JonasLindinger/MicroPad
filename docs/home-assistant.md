@@ -11,7 +11,7 @@ only through the configurator or the on-device setup portal, never in source.
 
 MicroPad and Home Assistant share one versioned contract
 (`contracts/mqtt-contract.json`, bindings in `firmware/protocol_contract.h` and
-`src/micropad/constants.py`, contract version **1**). Seven exact topics:
+`src/micropad/constants.py`, contract version **3**). Seven exact topics:
 
 | Topic | Direction | Retain | Purpose |
 |---|---|---|---|
@@ -29,6 +29,39 @@ publications (`micropad/pages/all`, `micropad/page/current`, `micropad/keymap`).
 Payload ceilings are 8192 bytes per page, 16000 per catalog, 16380 per keymap,
 with a 16384-byte firmware MQTT buffer. Generation is deterministic: the same
 config produces byte-identical YAML, JSON, and MQTT payloads.
+
+### What an event turns into
+
+`micropad/event` carries the action, the entity (if the action needs one), the
+gesture it came from and — for `adjust` — the new value:
+
+```json
+{"key": "r0c1", "action": "toggle", "entity": "light.bedroom", "gesture": "tap", "value": null}
+{"key": "enc_up", "action": "adjust", "entity": "light.bedroom", "gesture": "tap", "value": 45}
+```
+
+`gesture` is `tap`, `hold` or `double`; a gesture without a binding is not published
+at all. `hold` and `double` dispatch the action the keymap gives them, so the
+automation needs no special case for them.
+
+`adjust` is the one action whose service call depends on the domain, because "the
+level" is a different attribute everywhere. The generator writes one branch per
+slider row, and every branch is gated on the row's own `min`/`max` so a malformed
+or replayed event cannot write an out-of-range value:
+
+| Item type | Service | Written value |
+|---|---|---|
+| `light` | `light.turn_on` | `brightness_pct` |
+| `fan` | `fan.set_percentage` | `percentage` |
+| `cover` | `cover.set_cover_position` | `position` |
+| `media_player` | `media_player.volume_set` | `volume_level` (0–1, so the row's 0–100 is scaled) |
+| `number` | `number.set_value` | the number itself |
+
+Two things this deliberately does *not* do: it does not invent a level action for a
+type without one (a `switch` or a `scene` row scrolls instead), and it does not
+publish a "step up/down" event — the pad knows the row's `step` and range, the
+automation would have to guess both, and guessing is how two sources of truth drift
+apart.
 
 ## API upload
 

@@ -8,8 +8,17 @@ contract revision `2`; see `CHANGELOG.md` for what is in it, what was measured a
 deliberately left out. Every claim below was verified with real
 runs; nothing is "should work".
 
+**Unreleased on top of that (2026-09-18):** the slider/gesture slice — per-row `control`
+(button/slider), the `adjust` action, the checkbox value column, per-key `hold`/`double`
+gesture targets and **contract revision 3**. Local commits only, not pushed (awaiting the
+operator's approval); hardware verification for all of it is still open.
+
 **Current baseline** (real `arduino-cli` build, pinned `hwcdc/PSRAM` FQBN):
-flash **1 006 963 B (76 %)** · static RAM **173 364 B (52 %)** · 302 757 B flash free.
+flash **997 439 B (76 %)** · static RAM **182 620 B (55 %)** · 313 281 B flash free.
+Delta against the previous revision built with the same command: **+2 192 B flash,
++9 376 B RAM** — itemized in `CHANGELOG.md` (a `Binding` is 131 → 393 B, so the live
+keymap and the keymap parse buffer are what grew; the parse buffer is in `.bss`
+because two 5.5 KB arrays would not fit the 16 KiB loop stack).
 **Tests:** 834 pytest (44 of them browser) · 199 firmware static · host core binary · 193 release.
 
 ---
@@ -52,6 +61,14 @@ flash **1 006 963 B (76 %)** · static RAM **173 364 B (52 %)** · 302 757 B fla
 | **Fix** | **The firmware CI stage silently skipped four contract classes** — `unittest.main()` sat above them, so the stage exercised 142 of 198 cases and reported green | `28ce2ea` | the stage and pytest now report the same count |
 | **C4** | **Four new item types**: `cover`, `fan`, `input_boolean`, `lock` — each one contract row + one firmware descriptor row + the HA service mapping; the editor, `/api/meta` and the validation follow automatically. Tapping toggles (a lock *locks*), holding turns off (a lock *unlocks*); a cover has no hold action because HA's cover integration has no `turn_off` | `d2ec93b` | 7 new generator service rows, host descriptor assertions, all item-type pins updated. +64 B flash, 0 B RAM |
 
+### Phase C — slider + gestures (2026-09-18, unreleased)
+
+| ID | What | Commit | Proof |
+|---|---|---|---|
+| **C5** | **Slider rows**: per-item `control` (`button`/`slider`, contract flag `adjustable` on the five value-bearing types), the new `adjust` action (encoder turn steps the selected row by its `step`, clamped into `[min, max]`, publishes the new value; a non-slider row and a slider at its bound both scroll instead, a matrix key is a no-op), the slider bar on the panel, and the five HA service mappings (`brightness_pct`, `percentage`, `position`, `volume_level`, `number.set_value`) behind the row's own range gate. Encoder default is now `adjust` | *unreleased* | host `testAdjustSliderSemantics` (step, clamp, bound-escape, no-direction, edit-mode, degenerate range), 5 parametrized generator service tests + "no adjust branch for a button row", static pins, golden payloads |
+| **Checkbox column** | Two-valued states (`on/off`, `true/false`) render as a box with a tick instead of the word, composed from the existing rect/line prims; `text` for everything else. The item editor offers the matching switch only for values it can represent | *unreleased* | host `testRowStylesAndValueColumn` (state classification, prim composition, "no state word in the model"), prim-budget probe now covers all three row styles, browser test for the editor switch |
+| **C1b (double press)** | Per-key `hold` and `double` targets (each action/entity/target page), `Edge::DoublePress` with a 350 ms window, tap deferred *only* for keys that bind a double gesture, wake press exempt, encoder gestures warned about by the lint; keymap editor with one block per gesture + key-face badge | *unreleased* | host `testDoublePressFilter` (deferral, double, two slow taps, hold interplay, filter off, wake), `testGestureBindingResolution`, 208 static tests incl. 5 new pins, 8 new browser tests |
+
 ---
 
 ## 🔜 Left, and unblocked
@@ -65,14 +82,14 @@ flash **1 006 963 B (76 %)** · static RAM **173 364 B (52 %)** · 302 757 B fla
 | **C9** | **Breadcrumb depth in the title strip** + long-press context menu on a row | S–M |
 | **B8** | **Post-upload read-back**: after upload, re-read the retained topics and compare (`scripts/verify_live_mqtt.py` is the basis) | S–M |
 | **B9** | **German/English, dark mode, mobile layout** of the configurator | S–M |
-| **C5** | **Dimmer interaction** (hold + encoder steps a light's brightness) | M |
+| **C11** | **More slider-shaped rows**: `input_number` (helper) as an adjustable type, and a slider on a `climate` setpoint — both are one contract row + one service mapping once a target attribute is agreed | S each |
 
 ## ⛔ Left, blocked on an open decision
 
 | ID | Item | The decision |
 |---|---|---|
 | **B6** | **Live device mirror + remote key press** — would have made the last debugging session much faster | The backend needs **broker credentials** (a new secret surface in the configurator, redaction, and a paho-mqtt dependency). Or: skip the mirror, do only remote key press via HA's `mqtt.publish` service (uses the existing HA token). |
-| **C1b** | **Double press + encoder acceleration** (rest of C1) | A *contract* decision: a repeat/step parameter, or a second action + target per key (≈ +1.8 KB RAM) — or drop double press and do only encoder acceleration. |
+| **C1b** | **Encoder acceleration** (rest of C1; double press shipped 2026-09-18 with the per-key `hold`/`double` targets) | A *contract* decision: a repeat/step multiplier for a knob that keeps turning, i.e. a parameter rather than another binding. |
 | **B12** | **"One page per *room*"** | Needs the HA **area registry** (WebSocket API / a second credential), not `/api/states`. |
 | **B11** | **Move payload decoding into the core** (removes the last mirrored logic and ArduinoJson from the hot path) | Device-facing refactor of the MQTT callback — needs a hardware test pass to be called done. |
 
@@ -83,7 +100,8 @@ flash **1 006 963 B (76 %)** · static RAM **173 364 B (52 %)** · 302 757 B fla
 | **D1** | Battery gauge (needs a PCB revision) |
 | **D2** | Wall-dashboard mode (timer wake + deep sleep) |
 | **D3** | Encoder push button (verify the part first) |
-| **C1/C2** | the shipped gestures/diagnostics are host-verified only — one press on the pad and one look at `micropad/diag` would close them (the payload now carries `stack_min`, the loop stack's high-water mark, so the 16 KiB stack is confirmed by reading a topic) |
+| **C1/C2/C5** | the shipped gestures, diagnostics and slider rows are host-verified only — one press, one hold, one double press, one encoder turn on a slider row and one look at `micropad/diag` would close them (the payload carries `stack_min`, the loop stack's high-water mark, so the 16 KiB stack is confirmed by reading a topic) |
+| **Value column** | the checkbox column and the slider bar have never been seen on a real panel: the geometry is host-tested and previewed through the core, but e-paper contrast at 4 px track height is an eyeball question |
 | **Settings fix** | flash, configure once through the portal, restart: the pad must come up in normal mode instead of reopening the portal |
 | **C3** | Notification banner (HA → pad): firmware render work, then a real-pad check |
 | **C10** | Multi-device support |

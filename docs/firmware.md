@@ -175,7 +175,7 @@ checks) see `docs/hardware-acceptance.md`.
   publishes the *retained* payload `micropad/device`:
 
   ```json
-  {"fw": "1.2.0", "contract": 2, "caps": {"pages": 24, "items": 20, "name": 32,
+  {"fw": "1.2.0", "contract": 3, "caps": {"pages": 24, "items": 20, "name": 32,
    "title": 32, "page_id": 32, "entity": 96, "state": 32, "unit": 16,
    "mqtt_buffer": 16384, "stack": 16384}}
   ```
@@ -188,22 +188,79 @@ checks) see `docs/hardware-acceptance.md`.
 
 ## Input gestures
 
-Each of the fourteen inputs behaves the same whether it is tapped or held, with one
-exception that costs no extra binding storage: **holding the Enter key fires the
-item's *alternate* action instead of its default one.** The item-type descriptor
-decides which types have one — a light or a switch turns **off** on a hold instead
-of toggling; every other type ignores the hold (`alternate_action` in
-`contracts/mqtt-contract.json`, mirrored by `ITEM_TYPE_DESCRIPTORS`). The gesture
-dispatches an ordinary action, so the MQTT event, the Home Assistant automation and
-the payload schemas are unchanged.
+Three gestures: **tap** (the key's ordinary action), **hold** and **double press**.
+A binding may carry a `hold` and a `double` target of its own — each one a full
+action/entity/target page, which is what makes "hold this key to turn *that other*
+light off" configurable instead of hard-coded. An unset gesture is omitted from the
+published keymap and behaves exactly as it did before the feature existed, so an
+older keymap keeps working.
+
+What a gesture does, in order:
+
+1. **A gesture the key itself binds wins.** If a key has no explicit hold, the hold
+   falls back to the item's *alternate* action: the item-type descriptor decides
+   which types have one — a light or a switch turns **off** on a hold instead of
+   toggling, a lock unlocks — and every other type ignores the hold
+   (`alternate_action` in `contracts/mqtt-contract.json`, mirrored by
+   `ITEM_TYPE_DESCRIPTORS`). A key that binds a hold *and* sits on a light with an
+   alternate action runs the binding, never both.
+2. **A gesture without a target page, entity or action does nothing** rather than
+   guessing — the same rule the ordinary key path already followed.
+3. **Every gesture dispatches an ordinary action**, so the MQTT event, the Home
+   Assistant automation and the payload schemas are unchanged.
 
 * `LONG_PRESS_MS` (600 ms, core) is measured from the *debounced* press, so a tap
   can never fire it, and it fires exactly once per hold.
+* `DOUBLE_PRESS_MS` (350 ms, core) is measured from the *debounced* release. A
+  second press inside that window fires the double gesture once; the deferred tap
+  is dropped, so a double press is never also a tap. A double press after the
+  window is two taps, the same as it always was.
+* **Only a key that binds a double gesture waits.** The core is told which keys need
+  it (a predicate passed into the scan, backed by one bitmask word) and every other
+  key keeps the immediate press edge: latency is paid where the feature was asked
+  for, not globally.
 * A hold keeps the pad awake (it counts as input activity) and therefore cannot
   race the 60 s sleep gate.
 * The press that woke the device from light sleep is consumed by the immediate wake
-  scan, so holding it does not also fire the gesture — otherwise holding the key
-  that woke the pad would turn something off.
+  scan, so holding or double-pressing it does not also fire a gesture — otherwise
+  holding the key that woke the pad would turn something off.
+
+**Two special cases the lint refuses to let you configure silently.** Both are
+valid in the payload but can never fire, so `scripts/lint_config.py` warns:
+`adjust` bound to a matrix key (a key has no turn direction) and any gesture bound
+to the encoder (it has no hold, and its double press would have to compete with the
+turn). Both are *defined* no-ops in the core — the warning is friendliness, not a
+correctness fix.
+
+## Slider rows and the value column
+
+An item's `control` decides how the pad draws the row *and* what the encoder does
+on it; `button` is the default, `slider` marks a row that carries a level. The
+contract only offers `slider` for the five types whose value can be set from the
+outside (`adjustable`: light, fan, cover, media_player, number).
+
+* **Drawing.** A slider row adds a track and a fill to the value column, with the
+  level's fraction taken from `value` between `min` and `max` (`min`/`max` come
+  from the item; a degenerate range 0..0 or an out-of-range value draws as 0 %/100 %
+  instead of dividing by zero or overflowing the track). A two-valued state is drawn
+  as a checkbox — a box and, when on, a tick — instead of the word `on`; the pad
+  never writes `on`/`off` to the panel any more. Both compositions use the existing
+  rect/line primitives, so no new primitive kind, no new translator case and no new
+  preview path were needed.
+* **The encoder turns the level.** `adjust` steps the selected row by the item's own
+  `step`, clamped into `[min, max]`, and publishes the *new* level so Home Assistant
+  writes it back (`{"action":"adjust","entity":…,"value":<new>}`). The event carries
+  the value instead of a direction because the row's step and range only exist on the
+  device: the receiving automation would otherwise have to guess both.
+* **Three cases where the encoder does something other than step**, all deliberate:
+  a row that is not a slider (including the pad's own status rows) **scrolls**, a
+  slider already at its bound **scrolls** as well — a slider row is never a dead end
+  — and a **matrix key** (no direction) does nothing. `adjust` on a non-slider row is
+  therefore the same as `scroll_up`/`scroll_down`, which is why the encoder's default
+  binding could become `adjust` without breaking anything.
+* **The edit path is untouched.** `edit`/`confirm` still let you pick a bounded value
+  with the encoder and confirm with Enter, which is the only way to set a value that
+  is not on the step grid.
 
 ## Stored settings and the setup portal
 

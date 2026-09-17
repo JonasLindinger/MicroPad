@@ -29,7 +29,7 @@ The operator records every check in an anonymous, local acceptance record:
 - **File (never committed):** `release/local-hardware-acceptance.json`
 - **Strict contract:** `release/hardware-acceptance.schema.json`
   (`schema_version: 1`, 64-lowercase-hex `firmware_sha256`, anonymous `board_id`
-  matching `bench-[0-9]{2}`, the exact 21 check IDs below all `true`, evidence
+  matching `bench-[0-9]{2}`, the exact 27 check IDs below all `true`, evidence
   entries `{check_id, kind, sha256, captured_at}`, `additionalProperties: false`
   throughout).
 - **Validator:** `scripts/validate_hardware_acceptance.py` validates the record and,
@@ -168,6 +168,76 @@ the 25 ms debounce, with no repeat while held.
   completes** — input scanning on Core 1 never starves matrix/encoder.
 - **Evidence kind:** `video` + `manual-observation`.
 - **Pass gate:** the held key registers before the refresh finishes.
+
+### `gesture-hold-binding`
+
+- **Setup:** awake; a key bound to a `hold` action that differs from its tap
+  (e.g. tap `toggle light.desk`, hold `off light.ceiling`), and one key that binds
+  no hold at all.
+- **Action:** hold each key for ≥1 s, then release.
+- **Observable:** exactly one `micropad/event` with `gesture: "hold"` and the hold
+  action/entity — **no** `tap` event, before or after. The key without a hold emits
+  its ordinary tap (or the item's alternate action) on release and never a hold.
+- **Evidence kind:** `log` (the event topic) + `timing-log`.
+- **Pass gate:** one hold event per held key, no tap for a key that fired a hold,
+  and the hold binding wins over the item's alternate action.
+- **Why it is not host-only:** the host tests prove the state machine; only the real
+  button bounce and the 600 ms feel can be judged here.
+
+### `gesture-double-press`
+
+- **Setup:** awake; one key bound to a `double` action (e.g. `press script.dim`) and
+  one key with *no* double binding next to it.
+- **Action:** (a) two presses inside 350 ms on the bound key; (b) two presses ~1 s
+  apart on the same key; (c) two fast presses on the unbound key.
+- **Observable:** (a) **one** event, `gesture: "double"` — no tap event; (b) two
+  ordinary tap events, no double; (c) two ordinary tap events, with the *first* one
+  arriving immediately (the unbound key must not be delayed by the gesture window).
+- **Evidence kind:** `video` + `timing-log`.
+- **Pass gate:** exactly one double event for (a), two taps for (b), and the
+  unbound key's first tap latency indistinguishable from before this feature.
+
+### `gesture-wake-press-exempt`
+
+- **Setup:** pad asleep (light sleep), the wake key bound to a `hold` and a `double`
+  gesture.
+- **Action:** press and hold the wake key for ≥1 s; release; wait; then double-press
+  it.
+- **Observable:** the pad wakes and shows content, but **no** gesture event is
+  published for the press that woke it. The next press behaves normally.
+- **Evidence kind:** `video` + `log`.
+- **Pass gate:** zero events for the waking press; aimed gestures afterwards work.
+
+### `slider-adjust-encoder`
+
+- **Setup:** awake; a page with one `control: slider` light row (0–100, step 5) and
+  one ordinary row; Home Assistant running the generated automation.
+- **Action:** select the slider row, turn the encoder (both directions and past both
+  ends), then select the ordinary row and turn again.
+- **Observable:** each detent publishes `adjust` with the **new** value and the real
+  light (or `brightness_pct`) follows; the value stops at 0 %/100 % and further
+  detents in that direction move the selection instead of getting stuck; on the
+  ordinary row the encoder scrolls as it always did. Pressing Enter on the slider row
+  does nothing new.
+- **Evidence kind:** `video` + `log`.
+- **Pass gate:** value tracks the detents in both directions, clamps at both ends
+  without sticking, and the level in Home Assistant matches the panel within one
+  refresh.
+- **Also check:** e-paper **ghosting** at the track/fill boundary — every detent
+  redraws the bar, which is the fastest partial-refresh rate the panel will see.
+
+### `checkbox-value-column`
+
+- **Setup:** a page with an `on`/`off` switch row, a `true`/`false` row, a `sensor`
+  row with a numeric state and a `media_player` row.
+- **Action:** look at the value column, then toggle the switch row (waiting for the
+  refresh) and look again.
+- **Observable:** the two boolean rows show a box with a tick when *on*/*true* and an
+  empty box when *off*/*false* — the words `on`/`off` appear nowhere on the panel;
+  the sensor keeps its numeric text and the media row its state text.
+- **Evidence kind:** `photo`.
+- **Pass gate:** boxes are unambiguous at arm's length, the tick is legible at the
+  panel's 4-px line weight, and no boolean row shows text.
 
 ## Display
 

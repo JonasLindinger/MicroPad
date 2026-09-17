@@ -6,10 +6,12 @@ Working document for choosing the next work packages. Every item carries its eff
 whether it can be validated without the physical pad; "done" means the definition of done at the top
 of each phase was actually met, not that code exists.
 
-**Status: Phase A complete (A1–A9); B1–B5 and B7 shipped; C1 (long press), C2 (diagnostics) and
-C4 (cover, fan, input_boolean, lock) shipped.** See `docs/status.md` for the current ship list and
-how each item was verified. Next slice: B8 (post-upload read-back), C6 (icon set), C7 (portal
-factory reset) — or the items marked "blocked" once their open decision is made.
+**Status: Phase A complete (A1–A9); B1–B5 and B7 shipped; C1 (long press + double press),
+C2 (diagnostics), C4 (cover, fan, input_boolean, lock) and C5 (slider/dimmer interaction —
+per-row `control`, the `adjust` action and the checkbox value column) shipped.** See
+`docs/status.md` for the current ship list and how each item was verified. Next slice: B8
+(post-upload read-back), C6 (icon set), C7 (portal factory reset) — or the items marked
+"blocked" once their open decision is made.
 
 **How to read it**
 * **Effort:** S ≤ 2 h · M ≈ half a day · L ≈ 1–2 days · XL = 3+ days (incl. tests/docs).
@@ -104,8 +106,21 @@ and a keymap-schema change for the same user-visible behaviour). The core owns t
 the dispatch reuses the ordinary action path — so the MQTT event, the HA automation and the payload
 schemas are untouched. The wake press is exempt: holding the key that woke the pad never fires the
 gesture (a host test caught that case). Cost: +184 B flash, +48 B RAM.
-*Still open from C1:* double-press and encoder acceleration — both need a parameter or a binding
-field (a "repeat N" / second action per key), i.e. a contract decision rather than more core code.
+*Closed from C1 (2026-09-18):* **double press** — and with it the per-binding gesture fields C1
+deferred, now that a second gesture (hold) needs a target of its own: a binding carries `hold` and
+`double`, each a full action/entity/target-page target, and a key with a double gesture defers its
+tap for `DOUBLE_PRESS_MS` (350 ms) so a double press fires exactly once. *Still open from C1:*
+**encoder acceleration** (a "repeat N" multiplier while the knob keeps turning) — it needs a
+parameter, not a binding, and nothing else depends on it.
+
+**C5 (slider interaction) — the encoder adjusts the row under the cursor.** Shipped 2026-09-18
+together with the checkbox value column and the gesture bindings above; the design decisions and
+the three-way encoder semantics (step / scroll / no-op) are recorded in `docs/firmware.md`
+("Slider rows") and `docs/configurator.md` ("How a row is driven"). C5's original framing —
+"`edit` on a light steps brightness via the encoder" — turned out to be the wrong shape: pressing
+Enter first is exactly the interaction the feature was asked to remove, and a slider row needs no
+edit mode at all. The `edit`/`confirm` path for editable numbers is unchanged and still the way to
+type a bounded value.
 
 **C2 — diagnostics.** The pad publishes the retained `micropad/diag` payload on every connect and
 then once a minute while connected: uptime, MQTT connects, catalog/page/keymap parse accept+reject

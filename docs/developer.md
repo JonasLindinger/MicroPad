@@ -39,6 +39,47 @@ So: **edit the contract, run the generator, run the tests.** Never hand-edit
 5. Tests: extend `tests/firmware/test_core.cpp` (`testAllActionsReachDefinedOutcome`
    covers "every action has a defined outcome"), and the generator tests.
    `scripts/test_firmware_contract.sh` compares the header, the JSON and the sketch.
+6. If the action is domain-dependent (like `adjust`), the mapping belongs in
+   `generator.py` `_service_step()` **with** the branch's own guard — a service row
+   the receiving automation cannot gate is a service row that writes garbage when
+   an event is replayed.
+
+### Add a control (a new way a row is driven)
+
+1. Contract: append to `controls` (id + label + description) and set `adjustable:
+   true` on the item types that can carry it. Nothing else is needed for the
+   editor: the Control select and the save-time validation both read `adjustable`,
+   which is why the browser cannot offer a combination the backend rejects.
+2. Regenerate; `constants.CONTROLS` and the browser block follow.
+3. `firmware/micropad_core.h`: add the `Control` enumerator and map it in
+   `controlFromToken()`; drawing goes into `layoutNormalUi`, and the interaction into
+   the encoder path. Keep the *count* of primitives in mind: raise
+   `RENDER_PRIM_CAP` and update the prim-budget probe in the host tests in the same
+   commit (the test prints the measured worst case — use it, don't guess).
+4. Host tests: a row-style test for the drawing (compose-and-compare the prim list)
+   and a semantics test for the interaction, including the degenerate cases
+   (clamped bounds, a zero-width range, the wrong input kind).
+5. If the new control changes what Home Assistant must do, extend the generator and
+   the goldens.
+
+### Add a gesture
+
+1. Contract: `gestures` (id + label) plus the timing capability (`*_ms` in `caps`),
+   and one field per gesture inside the keymap schema's `Binding`.
+2. `models.py`: the gesture target is a `BindingTarget` (same shape for every
+   gesture — a gesture never gets its own private action table, and a static test
+   enforces that).
+3. `micropad_core.{h,cpp}`: the edge (`Edge::*`), the timing constant, the detection
+   in `DebouncedInput::update`, and the resolution order in `resolveBinding()`.
+   **Defer a cheaper gesture only for the keys that actually bind the expensive one**
+   — a global delay is a latency tax on every press for a feature most keys don't
+   use, and the double-press filter shows the shape (a predicate into the scan,
+   backed by a bitmask).
+4. `tests/firmware/test_firmware_static.py` pins the resolution *order*: the
+   "binding wins over the item fallback" rule is invisible in the data and can be
+   silently reversed by a refactor, so it gets a textual assertion.
+5. Lint: if the gesture can never fire on some input (the encoder has no hold), add
+   the finding to `lint._keymap_findings` instead of refusing the save.
 
 ### Add an item type
 
@@ -82,6 +123,21 @@ MICROPAD_UPDATE_GOLDEN=1 .venv/bin/python -m pytest tests/test_golden_output.py
 git diff tests/fixtures/golden/          # review the diff: this is what gets published
 ```
 
+### Change what the frontend reads (descriptors, caps, templates)
+
+The browser suite runs against a *recorded* `/api/meta` snapshot, so a descriptor
+change does not reach it by itself — and a stale snapshot silently keeps the tests
+green while the real API has moved on (that is how a renamed template item survived
+a browser assertion). Re-record and review:
+
+```bash
+.venv/bin/python scripts/record_frontend_fixtures.py
+git diff tests/fixtures/                 # the meta snapshot and the panel prim model
+```
+
+`tests/test_frontend_fixtures.py` fails when the snapshot and the live route
+disagree, so forgetting this step is a red gate instead of a quiet drift.
+
 ## The gates
 
 | Command | What it proves | Time |
@@ -94,6 +150,7 @@ git diff tests/fixtures/golden/          # review the diff: this is what gets pu
 | `scripts/compile-firmware.sh --one <FQBN>` | one real firmware build + flash/RAM numbers | ~3 min |
 | `python3 scripts/lint_config.py <config>` | would the pad store and show this config | <1 s |
 | `python3 scripts/generate_contract.py --check` | generated sources are not stale | <1 s |
+| `.venv/bin/pytest tests/test_frontend_fixtures.py` | the recorded `/api/meta` snapshot still matches the live route | <1 s |
 
 `scripts/build-simulator.sh` builds `tools/micropad_sim.cpp` (the host binary the
 preview and lint use); `tests/test_simulator.py` builds it automatically.
@@ -127,6 +184,21 @@ every other session and agent working in this clone.
 - Never commit real credentials, private IPs, entity lists or keys: the
   public-release audit (`scripts/audit_public_release.py`) is the gate, and
   `release/allowed-public-values.json` lists the only approved placeholders.
+- **A partial edit re-reads the binding from the store; it never closes over the
+  render snapshot.** Free-text fields deliberately do not rebuild the panel on
+  every keystroke (a rebuild would destroy the field mid-typing), so a handler
+  captured at render time can hold a stale value — "type the entity, then pick a
+  hold action" once wrote the empty entity back. `keymap-editor.js` has one
+  `liveBinding()` helper for this and every partial update goes through it; the
+  browser test `test_hold_and_double_gestures_are_configured_and_kept` pins the
+  case.
+- **Pin a renamed name to its source, not to a literal.** The Spotify template's
+  item names were renamed in the descriptor-table commit and a browser test kept
+  passing, because it asserted against the *recorded* `/api/meta` fixture from
+  before the rename — the snapshot hid the drift until the fixture was re-recorded
+  (see `tests/test_frontend_fixtures.py`, which now fails when the snapshot and the
+  live route disagree). The test compares against `/api/meta`'s template list, which
+  is what the UI itself renders from.
 
 ## Where things live
 

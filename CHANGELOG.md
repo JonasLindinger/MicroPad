@@ -9,6 +9,96 @@ released from there; the entries below are grouped by the release they shipped i
 
 ## [Unreleased]
 
+### Added
+
+- **Slider rows: the encoder adjusts the row under the cursor, without an Enter
+  press.** An item's `control` is now `button` (unchanged) or `slider`, and the
+  editor offers the slider only for the types that carry an adjustable value
+  (light, fan, cover, media_player, number — the contract's new `adjustable`
+  flag). The new `adjust` action steps that row by its own `step`, clamped into
+  `[min, max]`, and publishes `{"action":"adjust","entity":…,"value":<new>}`;
+  Home Assistant writes the value back through the attribute that means "level"
+  for the domain (`brightness_pct`, `percentage`, `position`, `volume_level`,
+  `number.set_value`), gated by the row's own range so a malformed event cannot
+  write an out-of-range value. Three documented properties make the encoder
+  usable with one binding: a row that is *not* a slider scrolls, a slider already
+  at its bound scrolls as well (a slider row is never a dead end), and a matrix
+  key — which has no direction — is a defined no-op. The encoder's default
+  binding is now `adjust` (it degrades to scrolling everywhere else), so the
+  feature works without re-binding anything.
+- **The pad draws a checkbox instead of the word `on`/`off`.** Two-valued states
+  (`on`/`off`, `true`/`false`, case-insensitively) render as a box with a tick in
+  the value column; everything else (a sensor reading, a media state, an empty
+  state) keeps the text column. Composed from the existing rect/line primitives,
+  so the panel translator and the browser preview needed no new primitive kind.
+  The item editor offers the matching switch next to the state field — only for
+  the values it can represent, so it can never turn a reading like `23.4` into a
+  boolean.
+- **Hold and double press are configurable per key, in the keymap and in the
+  firmware.** A binding carries an optional `hold` and an optional `double`
+  target, each with its own action, entity and target page ("hold turns *this
+  other* light off"). An unset gesture is omitted from the published keymap and
+  behaves exactly as before, so an older keymap and an older configuration stay
+  valid. The core emits `Edge::DoublePress` on a second debounced press inside
+  `DOUBLE_PRESS_MS` (350 ms); only a key that actually binds a double gesture
+  defers its tap for that window, so every other key keeps the zero-latency press
+  edge. The keymap editor gained one block per gesture plus a badge on the key
+  face, and `scripts/lint_config.py` now reports nine new findings: four *errors*
+  for a slider row that cannot work (unknown control, a type without an adjustable
+  value, no usable range, no step) and five *warnings* for a binding that can never
+  fire (`adjust` on a key instead of the encoder, a gesture on the encoder, a
+  directional action inside a gesture, a gesture with an entity but no action, a
+  gesture without the entity its action needs).
+- **Contract revision 3** carries the three additions (`adjust`, `control`,
+  `hold`/`double`, plus `controls`/`control_meta`/`gestures`/`gesture_meta`,
+  the `adjustable` and `hold_ms`/`double_press_ms` capabilities, and the page
+  schema's `control` field). `firmware/protocol_contract.h` and the browser
+  block are regenerated; the codegen refuses the old revision on purpose.
+- **The recorded frontend fixtures are a gate instead of a guess.**
+  `scripts/record_frontend_fixtures.py` is tracked now (it re-records the browser
+  suite's `/api/meta` snapshot and the panel prim model from the real backend and
+  the real core), and `tests/test_frontend_fixtures.py` fails when the snapshot and
+  the live route disagree. That closes a real gap: the browser suite had been green
+  against a `/api/meta` snapshot recorded *before* the template item names were
+  renamed, so a browser test asserted names the API no longer produced. Re-recording
+  the fixture exposed it; the gate makes the next one fail loudly instead.
+
+### Changed
+
+- **A `Binding` grew from 131 B to 393 B**, because a gesture target is the same
+  shape as a binding: the key's own `tap` target plus the optional `hold` and
+  `double` ones. Measured with the same compiler on both revisions
+  (`build/analysis/size_probe*.cpp`): `sizeof(BindingTarget)` 131 B,
+  `sizeof(Binding)` 393 B, `PadController` 118 360 → 122 024 B — i.e. the live
+  keymap (`activeKeymap[14]`) alone costs **+3 664 B of RAM**. That is the price of
+  the feature and there is no cheaper way to store two extra action/entity targets
+  per key; the alternative (a second, gesture-only table) would have needed a
+  private action table, which the static tests refuse by design.
+- **The keymap parse buffer lives in `.bss`, not on the loop-task stack.** The
+  sketch owns `micropad::Binding keymapStaging[KEY_COUNT]` (**+5 502 B of `.bss`**)
+  and `parseEffectiveKeymap()` fills the caller's buffer instead of building a
+  temporary: with 393-B bindings, *two* such arrays inside the MQTT callback frame
+  would have taken ~11 KB of the loop task's 16 KiB stack, so the parse path would
+  have risked a stack overflow exactly while decoding a keymap payload. The buffer
+  is static because the callback runs on that one task — a `.bss` array is the
+  correct home for it.
+- **`RENDER_PRIM_CAP` 32 → 40.** A full four-row page measured 22 prims with text
+  rows and 30 with four slider rows (track, fill, value) or four ticked checkbox
+  rows; 40 keeps the documented 25 % headroom over the worst case instead of the
+  one prim 32 would have left. The render buffer is 50 B per prim, so this is
+  +400 B.
+- **`DebouncedInput` 12 → 24 B and `RenderRow` 92 → 100 B** (the release timestamp
+  and the double-press flag; the row's `min`/`max`). `sizeof(Item)` is unchanged at
+  232 B — the `control` byte fits in existing padding, so a packed catalog costs no
+  more than before.
+- **Net firmware cost of the whole slice, measured with `arduino-cli` on the pinned
+  `hwcdc/PSRAM` FQBN (baseline built from the previous revision with the same
+  command): flash 995 247 B (75 %) → 997 439 B (76 %)** — +2 192 B — and **static
+  RAM 173 244 B (52 %) → 182 620 B (55 %)**, +9 376 B, which is the two arrays above
+  (3 664 + 5 502 B) plus the wider input/row structures and the bigger prim buffer.
+  145 060 B of RAM stay free, and the 16 KiB loop stack keeps its margin because the
+  keymap parse no longer happens on it.
+
 ### Fixed
 
 - **A powered pad is no longer treated as battery.** `isPowered()` used

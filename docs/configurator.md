@@ -149,6 +149,38 @@ integration has no toggle service.
 Editable starter templates (Spotify, Discord, Lights, generic media) are offered
 by the pages editor.
 
+### How a row is driven (the `control` field)
+
+Each item carries a `control` that says how the pad treats the row:
+
+- **`button`** (default) — the row is a target: select it, press Enter to run its
+  action. Unchanged behaviour.
+- **`slider`** — the row is a level: on top of the normal press behaviour, turning
+  the encoder *steps its value* without an Enter press first (the level is written
+  back to Home Assistant through the attribute that means "level" for that domain:
+  `brightness_pct`, `percentage`, `position`, `volume_level` or
+  `number.set_value`), and the panel draws a slider bar in the value column.
+  Stepping is clamped to the item's `min`/`max` by its `step`; at either bound the
+  encoder scrolls on instead of getting stuck.
+
+The editor offers `slider` **only** for the item types that carry an adjustable
+value — light, fan, cover, media_player, number (`adjustable` in the contract;
+`/api/meta` carries it, so the select and the validation agree by construction
+rather than by a hard-coded list in the browser). A `slider` on any other type is
+rejected on save, exactly like a missing entity; if you change an item's type to a
+type without a level, the control falls back to `button` in the same write instead
+of leaving a config the pad cannot use.
+
+### The state switch
+
+Home Assistant states like `on`/`off` are shown as a checkbox next to the state
+field, and checking it writes `on`/`off`. It appears only for values it can
+represent (`on`, `off`, `true`, `false` or an empty state) so it can never turn a
+reading such as `23.4` into a boolean. For anything else — a sensor value, a media
+state, `unavailable` — the text field stays the only input. On the pad itself the
+same two-valued states are drawn as a checkbox instead of the word, so what the
+editor suggests is what the panel shows.
+
 ## Key editor
 
 Every input maps to an action. The fourteen key IDs are fixed by the contract:
@@ -157,13 +189,34 @@ enc_down`. The global key map must contain all fourteen in canonical order; a pa
 may override any subset. Actions (from `src/micropad/ui_meta.py`):
 
 - **Navigation:** `enter`, `back`, `home`, `navigate`, `keymap`.
-- **Scrolling:** `scroll`, `scroll_up`, `scroll_down`.
+- **Scrolling / levels:** `scroll`, `scroll_up`, `scroll_down`, `adjust`.
 - **Device:** `toggle`, `on`, `off`, `press`, `edit`, `confirm`.
 - **Media:** `volume_up`, `volume_down`, `media_next`, `media_prev`.
 - **System:** `settings`, `get_all_pages`, `none`.
 
 `navigate` and `keymap` take a `target_page`; the device actions (except `none`,
 `settings`, `get_all_pages`) take an `entity` argument.
+
+### Gestures per key
+
+Below the action picker each key has a **Hold** and a **Double press** block. Each
+one holds its own action, entity and target page, so `hold` can mean something
+entirely different from the tap ("tap turns the desk light on, hold turns the
+ceiling off"). `Clear hold` / `Clear double press` unset the gesture again, which
+is what the *omitted* gesture means: the key behaves exactly as it did before, and
+the published keymap does not mention it.
+
+- The block shows the timing the firmware uses (`Hold (600 ms)`, `Double press
+  (350 ms)`), read from `/api/meta` rather than restated in the browser, so the
+  editor cannot drift from the core.
+- The target field follows the chosen action: an entity autocomplete for the device
+  actions, a page select for `navigate`/`keymap`, nothing for `none`.
+- A key face shows a small **H+D** badge when it carries gestures, so a board full
+  of keys is readable at a glance without opening each binding.
+- **The conflict rules are surfaced, not enforced**: binding the encoder to a
+  gesture, or `adjust` to a matrix key, saves fine but can never fire, so
+  `scripts/lint_config.py` warns. Refusing the save was the alternative; a warning
+  keeps a configuration that becomes valid on the next firmware revision loadable.
 
 ## Entity discovery
 
