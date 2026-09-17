@@ -3,7 +3,7 @@
   "$id": "https://micropad.local/contracts/page.schema.json",
   "$comment": "AI-assisted development — firmware, HA automation, config generator and docs were created with AI (LLM) help, reviewed and tested by the author. Provided as-is, without warranty; verify on your own hardware, don't use for safety-critical applications.",
   "title": "MicroPad Page",
-  "description": "One detached page published by the backend on topic micropad/page/current, or nested inside a catalog payload. page_id is required and non-empty; every item carries all eleven spec fields the firmware parses and the backend always emits.",
+  "description": "One detached page published by the backend on topic micropad/page/current, or nested inside a catalog payload. page_id is required and non-empty; every item carries all twelve spec fields the firmware parses and the backend always emits. control selects how the row is driven: a button runs its action on a press, a slider additionally follows an encoder turn while the cursor rests on it.",
   "type": "object",
   "additionalProperties": false,
   "required": ["page_id", "title", "parent", "items"],
@@ -21,7 +21,7 @@
     "item": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["name", "type", "entity", "state", "value", "min", "max", "step", "unit", "editable", "target_page"],
+      "required": ["name", "type", "entity", "state", "value", "min", "max", "step", "unit", "editable", "control", "target_page"],
       "properties": {
         "name": {"type": "string", "minLength": 1},
         "type": {
@@ -36,6 +36,7 @@
         "step": {"type": "number", "exclusiveMinimum": 0},
         "unit": {"type": "string", "default": ""},
         "editable": {"type": "boolean", "default": false},
+        "control": {"type": "string", "enum": ["button", "slider"], "default": "button"},
         "target_page": {"type": "string", "default": ""}
       }
     }

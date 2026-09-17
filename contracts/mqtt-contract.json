@@ -1,6 +1,6 @@
 {
   "_ai_assisted_notice": "AI-assisted development — firmware, HA automation, config generator and docs were created with AI (LLM) help, reviewed and tested by the author. Provided as-is, without warranty; verify on your own hardware, don't use for safety-critical applications.",
-  "version": 2,
+  "version": 3,
   "topics": {
     "event": {"name": "micropad/event", "retain": false},
     "pages": {"name": "micropad/pages/all", "retain": true},
@@ -10,7 +10,7 @@
     "device": {"name": "micropad/device", "retain": true},
     "diag": {"name": "micropad/diag", "retain": true}
   },
-  "actions": ["none", "enter", "back", "home", "settings", "scroll", "scroll_up", "scroll_down", "navigate", "keymap", "get_all_pages", "toggle", "on", "off", "press", "volume_up", "volume_down", "media_next", "media_prev", "edit", "confirm"],
+  "actions": ["none", "enter", "back", "home", "settings", "scroll", "scroll_up", "scroll_down", "navigate", "keymap", "get_all_pages", "toggle", "on", "off", "press", "volume_up", "volume_down", "media_next", "media_prev", "edit", "confirm", "adjust"],
   "action_meta": [
     {"id": "enter", "label": "Enter", "group": "Navigation", "argument": "none"},
     {"id": "back", "label": "Back", "group": "Navigation", "argument": "none"},
@@ -32,26 +32,38 @@
     {"id": "media_prev", "label": "Previous track", "group": "Media", "argument": "entity"},
     {"id": "none", "label": "No action", "group": "System", "argument": "none"},
     {"id": "settings", "label": "Settings", "group": "System", "argument": "none"},
-    {"id": "get_all_pages", "label": "Refresh all pages", "group": "System", "argument": "none"}
+    {"id": "get_all_pages", "label": "Refresh all pages", "group": "System", "argument": "none"},
+    {"id": "adjust", "label": "Adjust slider", "group": "Device", "argument": "entity"}
   ],
   "key_ids": ["r0c0", "r0c1", "r0c2", "r0c3", "r1c0", "r1c1", "r1c2", "r1c3", "r2c0", "r2c1", "r2c2", "r2c3", "enc_up", "enc_down"],
+  "controls": ["button", "slider"],
+  "control_meta": [
+    {"id": "button", "label": "Button", "description": "A press runs the row's action; the value column shows the Home Assistant state."},
+    {"id": "slider", "label": "Slider", "description": "A press runs the row's action and an encoder turn adjusts the row's value while the cursor rests on it - no Enter needed."}
+  ],
+  "gestures": ["tap", "hold", "double"],
+  "gesture_meta": [
+    {"id": "tap", "label": "Press", "description": "One press. Always available; bound per key in the keymap."},
+    {"id": "hold", "label": "Hold", "description": "The key is held past the hold threshold before it is released."},
+    {"id": "double", "label": "Double press", "description": "Two presses within the double-press window."}
+  ],
   "item_types": ["category", "light", "switch", "script", "button", "scene", "sensor", "media_player", "number", "settings", "back", "cover", "fan", "input_boolean", "lock"],
   "item_type_meta": [
-    {"id": "category", "label": "Category", "ha_domains": [], "default_action": "navigate", "alternate_action": "none", "editable": false, "has_value": false, "needs_target_page": true},
-    {"id": "light", "label": "Light", "ha_domains": ["light"], "default_action": "toggle", "alternate_action": "off", "editable": false, "has_value": true, "needs_target_page": false},
-    {"id": "switch", "label": "Switch", "ha_domains": ["switch"], "default_action": "toggle", "alternate_action": "off", "editable": false, "has_value": true, "needs_target_page": false},
-    {"id": "script", "label": "Script", "ha_domains": ["script"], "default_action": "press", "alternate_action": "none", "editable": false, "has_value": false, "needs_target_page": false},
-    {"id": "button", "label": "Button", "ha_domains": ["button"], "default_action": "press", "alternate_action": "none", "editable": false, "has_value": false, "needs_target_page": false},
-    {"id": "scene", "label": "Scene", "ha_domains": ["scene"], "default_action": "press", "alternate_action": "none", "editable": false, "has_value": false, "needs_target_page": false},
-    {"id": "sensor", "label": "Sensor", "ha_domains": ["sensor", "binary_sensor"], "default_action": "none", "alternate_action": "none", "editable": false, "has_value": true, "needs_target_page": false},
-    {"id": "media_player", "label": "Media player", "ha_domains": ["media_player"], "default_action": "none", "alternate_action": "none", "editable": false, "has_value": true, "needs_target_page": false},
-    {"id": "number", "label": "Number", "ha_domains": ["number"], "default_action": "edit", "alternate_action": "none", "editable": true, "has_value": true, "needs_target_page": false},
-    {"id": "settings", "label": "Settings", "ha_domains": [], "default_action": "settings", "alternate_action": "none", "editable": false, "has_value": false, "needs_target_page": false},
-    {"id": "back", "label": "Back", "ha_domains": [], "default_action": "back", "alternate_action": "none", "editable": false, "has_value": false, "needs_target_page": false},
-    {"id": "cover", "label": "Cover", "ha_domains": ["cover"], "default_action": "toggle", "alternate_action": "none", "editable": false, "has_value": true, "needs_target_page": false},
-    {"id": "fan", "label": "Fan", "ha_domains": ["fan"], "default_action": "toggle", "alternate_action": "off", "editable": false, "has_value": true, "needs_target_page": false},
-    {"id": "input_boolean", "label": "Helper switch", "ha_domains": ["input_boolean"], "default_action": "toggle", "alternate_action": "off", "editable": false, "has_value": true, "needs_target_page": false},
-    {"id": "lock", "label": "Lock", "ha_domains": ["lock"], "default_action": "on", "alternate_action": "off", "editable": false, "has_value": true, "needs_target_page": false}
+    {"id": "category", "label": "Category", "ha_domains": [], "default_action": "navigate", "alternate_action": "none", "editable": false, "has_value": false, "adjustable": false, "needs_target_page": true},
+    {"id": "light", "label": "Light", "ha_domains": ["light"], "default_action": "toggle", "alternate_action": "off", "editable": false, "has_value": true, "adjustable": true, "needs_target_page": false},
+    {"id": "switch", "label": "Switch", "ha_domains": ["switch"], "default_action": "toggle", "alternate_action": "off", "editable": false, "has_value": true, "adjustable": false, "needs_target_page": false},
+    {"id": "script", "label": "Script", "ha_domains": ["script"], "default_action": "press", "alternate_action": "none", "editable": false, "has_value": false, "adjustable": false, "needs_target_page": false},
+    {"id": "button", "label": "Button", "ha_domains": ["button"], "default_action": "press", "alternate_action": "none", "editable": false, "has_value": false, "adjustable": false, "needs_target_page": false},
+    {"id": "scene", "label": "Scene", "ha_domains": ["scene"], "default_action": "press", "alternate_action": "none", "editable": false, "has_value": false, "adjustable": false, "needs_target_page": false},
+    {"id": "sensor", "label": "Sensor", "ha_domains": ["sensor", "binary_sensor"], "default_action": "none", "alternate_action": "none", "editable": false, "has_value": true, "adjustable": false, "needs_target_page": false},
+    {"id": "media_player", "label": "Media player", "ha_domains": ["media_player"], "default_action": "none", "alternate_action": "none", "editable": false, "has_value": true, "adjustable": true, "needs_target_page": false},
+    {"id": "number", "label": "Number", "ha_domains": ["number"], "default_action": "edit", "alternate_action": "none", "editable": true, "has_value": true, "adjustable": true, "needs_target_page": false},
+    {"id": "settings", "label": "Settings", "ha_domains": [], "default_action": "settings", "alternate_action": "none", "editable": false, "has_value": false, "adjustable": false, "needs_target_page": false},
+    {"id": "back", "label": "Back", "ha_domains": [], "default_action": "back", "alternate_action": "none", "editable": false, "has_value": false, "adjustable": false, "needs_target_page": false},
+    {"id": "cover", "label": "Cover", "ha_domains": ["cover"], "default_action": "toggle", "alternate_action": "none", "editable": false, "has_value": true, "adjustable": true, "needs_target_page": false},
+    {"id": "fan", "label": "Fan", "ha_domains": ["fan"], "default_action": "toggle", "alternate_action": "off", "editable": false, "has_value": true, "adjustable": true, "needs_target_page": false},
+    {"id": "input_boolean", "label": "Helper switch", "ha_domains": ["input_boolean"], "default_action": "toggle", "alternate_action": "off", "editable": false, "has_value": true, "adjustable": false, "needs_target_page": false},
+    {"id": "lock", "label": "Lock", "ha_domains": ["lock"], "default_action": "on", "alternate_action": "off", "editable": false, "has_value": true, "adjustable": false, "needs_target_page": false}
   ],
   "limits": {
     "page_bytes": 8192,
@@ -67,9 +79,11 @@
     "mqtt_buffer_bytes": 16384,
     "event_buffer_bytes": 512,
     "loop_task_stack_bytes": 16384,
-    "render_prim_cap": 32,
+    "render_prim_cap": 40,
     "max_partial_refreshes": 0,
     "input_debounce_ms": 25,
+    "hold_ms": 600,
+    "double_press_ms": 350,
     "field_caps": {
       "page_id": 32,
       "title": 32,

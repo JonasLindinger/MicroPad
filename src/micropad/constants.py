@@ -24,7 +24,7 @@ AI_NOTICE = (
 )
 
 CONTRACT_PATH = Path(__file__).resolve().parents[2] / "contracts" / "mqtt-contract.json"
-SUPPORTED_CONTRACT_VERSION = 2
+SUPPORTED_CONTRACT_VERSION = 3
 
 
 def load_contract() -> dict[str, Any]:
@@ -54,8 +54,12 @@ DEVICE_TOPIC = TOPICS["device"]
 KEY_IDS = tuple(CONTRACT["key_ids"])
 ACTIONS = frozenset(CONTRACT["actions"])
 ITEM_TYPES = frozenset(CONTRACT["item_types"])
+CONTROLS = tuple(CONTRACT["controls"])
+GESTURES = tuple(CONTRACT["gestures"])
 ACTION_META: tuple[dict[str, str], ...] = tuple(CONTRACT["action_meta"])
 ITEM_TYPE_META: tuple[dict[str, Any], ...] = tuple(CONTRACT["item_type_meta"])
+CONTROL_META: tuple[dict[str, str], ...] = tuple(CONTRACT["control_meta"])
+GESTURE_META: tuple[dict[str, str], ...] = tuple(CONTRACT["gesture_meta"])
 
 # --- device capabilities (mirrored by firmware/micropad_core.h) -------------
 CAPS: dict[str, Any] = CONTRACT["caps"]
@@ -68,6 +72,10 @@ HOME_PAGE_ID = "home"
 KEY_COUNT = int(CAPS["key_count"])
 QUEUE_CAPACITY = int(CAPS["queue_capacity"])
 FIELD_CAPS: dict[str, int] = {key: int(value) for key, value in CAPS["field_caps"].items()}
+#: Gesture timing the firmware enforces (contract caps): the configurator shows
+#: these numbers so "hold" and "double press" mean something concrete.
+HOLD_MS = int(CAPS["hold_ms"])
+DOUBLE_PRESS_MS = int(CAPS["double_press_ms"])
 
 # --- payload ceilings -------------------------------------------------------
 LIMITS: dict[str, int] = {key: int(value) for key, value in CONTRACT["limits"].items()}

@@ -4,9 +4,12 @@
 #include <cstring>
 
 int main() {
-  static_assert(mp::CONTRACT_VERSION == 2);
+  // Contract revision 3 added the `adjust` action (encoder turn on a slider row)
+  // and the `hold`/`double` gesture targets plus the item `control` field.
+  static_assert(mp::CONTRACT_VERSION == 3);
   static_assert(mp::KEY_ID_COUNT == 14);
-  static_assert(mp::ACTION_COUNT == 21);
+  static_assert(mp::ACTION_COUNT == 22);
+  assert(std::strcmp(mp::ACTIONS[21], "adjust") == 0);
   assert(std::strcmp(mp::TOPIC_EVENT, "micropad/event") == 0);
   // Device info is retained like the other state topics, so a late
   // subscriber (backend, UI) still learns the pad's firmware build.

@@ -51,7 +51,7 @@ JS_END = "// </generated from contracts/mqtt-contract.json>"
 # here - the refusal below exists so a version bump is a conscious edit rather than a
 # number change that silently generates the old shape. Older revisions stay listed as
 # long as the generated output would be identical for them.
-SUPPORTED_CONTRACT_VERSIONS = frozenset({2})
+SUPPORTED_CONTRACT_VERSIONS = frozenset({3})
 
 
 def load_contract() -> dict[str, Any]:

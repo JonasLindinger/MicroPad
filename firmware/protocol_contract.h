@@ -9,7 +9,7 @@ namespace mp {
 // wire-contract binding shared by the firmware sketch, the config generator,
 // the /api/meta endpoint and the browser. Change the contract and run
 // `python3 scripts/generate_contract.py --write`; `--check` fails on drift.
-inline constexpr unsigned CONTRACT_VERSION = 2;
+inline constexpr unsigned CONTRACT_VERSION = 3;
 inline constexpr char TOPIC_CURRENT_PAGE[] = "micropad/page/current";
 inline constexpr char TOPIC_DEVICE[] = "micropad/device";
 inline constexpr char TOPIC_DIAG[] = "micropad/diag";
@@ -25,7 +25,7 @@ inline constexpr const char *ACTIONS[] = {
     "none", "enter", "back", "home", "settings", "scroll", "scroll_up",
     "scroll_down", "navigate", "keymap", "get_all_pages", "toggle", "on",
     "off", "press", "volume_up", "volume_down", "media_next", "media_prev",
-    "edit", "confirm",
+    "edit", "confirm", "adjust",
 };
 inline constexpr size_t KEY_ID_COUNT = sizeof(KEY_IDS) / sizeof(KEY_IDS[0]);
 inline constexpr size_t ACTION_COUNT = sizeof(ACTIONS) / sizeof(ACTIONS[0]);

@@ -3,14 +3,14 @@
   "$id": "https://micropad.local/contracts/event.schema.json",
   "$comment": "AI-assisted development — firmware, HA automation, config generator and docs were created with AI (LLM) help, reviewed and tested by the author. Provided as-is, without warranty; verify on your own hardware, don't use for safety-critical applications.",
   "title": "MicroPad MQTT Event",
-  "description": "One action event published by the MicroPad firmware on topic micropad/event. action is always present; entity, value, page_id, and target_page are emitted only when meaningful, matching the firmware serializer and the backend dispatch conditions.",
+  "description": "One action event published by the MicroPad firmware on topic micropad/event. action is always present; entity, value, page_id, and target_page are emitted only when meaningful, matching the firmware serializer and the backend dispatch conditions. An adjust event carries the row's new value (the encoder turned on a slider row).",
   "type": "object",
   "additionalProperties": false,
   "required": ["action"],
   "properties": {
     "action": {
       "type": "string",
-      "enum": ["none", "enter", "back", "home", "settings", "scroll", "scroll_up", "scroll_down", "navigate", "keymap", "get_all_pages", "toggle", "on", "off", "press", "volume_up", "volume_down", "media_next", "media_prev", "edit", "confirm"]
+      "enum": ["none", "enter", "back", "home", "settings", "scroll", "scroll_up", "scroll_down", "navigate", "keymap", "get_all_pages", "toggle", "on", "off", "press", "volume_up", "volume_down", "media_next", "media_prev", "edit", "confirm", "adjust"]
     },
     "entity": {"type": "string"},
     "value": {"type": "number"},

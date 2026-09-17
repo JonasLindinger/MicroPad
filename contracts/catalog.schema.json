@@ -38,7 +38,7 @@
         "name": {"type": "string", "minLength": 1},
         "type": {
           "type": "string",
-          "enum": ["category", "light", "switch", "script", "button", "scene", "sensor", "media_player", "number", "settings", "back"]
+          "enum": ["category", "light", "switch", "script", "button", "scene", "sensor", "media_player", "number", "settings", "back", "cover", "fan", "input_boolean", "lock"]
         },
         "entity": {"type": "string", "default": ""},
         "state": {"type": "string", "default": ""},
@@ -48,6 +48,7 @@
         "step": {"type": "number", "exclusiveMinimum": 0, "default": 1},
         "unit": {"type": "string", "default": ""},
         "editable": {"type": "boolean", "default": false},
+        "control": {"type": "string", "enum": ["button", "slider"], "default": "button"},
         "target_page": {"type": "string", "default": ""}
       }
     }

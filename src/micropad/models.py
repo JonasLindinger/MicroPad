@@ -31,12 +31,18 @@ Action = Literal[
     "none", "enter", "back", "home", "settings", "scroll", "scroll_up",
     "scroll_down", "navigate", "keymap", "get_all_pages", "toggle", "on", "off",
     "press", "volume_up", "volume_down", "media_next", "media_prev", "edit", "confirm",
+    "adjust",
 ]
 ItemType = Literal[
     "category", "light", "switch", "script", "button", "scene", "sensor",
     "media_player", "number", "settings", "back", "cover", "fan",
     "input_boolean", "lock",
 ]
+#: How a row is driven: a plain button (a press runs its action) or a slider (the
+#: encoder additionally adjusts the row's value while the cursor rests on it).
+#: The values come from the contract's ``controls``; a type that carries no
+#: adjustable value can never be a slider.
+Control = Literal["button", "slider"]
 ReloadStrategy = Literal["none", "core_restart"]
 
 if frozenset(get_args(Action)) != ACTIONS:
@@ -57,6 +63,14 @@ _ENTITY_DOMAINS: dict[str, frozenset[str]] = {
 _TARGET_PAGE_TYPES: frozenset[str] = frozenset(
     str(entry["id"]) for entry in ITEM_TYPE_META if entry["needs_target_page"]
 )
+#: Types whose value an encoder turn may change (contract flag ``adjustable``):
+#: a light's brightness, a fan's percentage, a cover position, a media player's
+#: volume or a bounded number. Anything else would have nothing to adjust, so
+#: models.py refuses ``control: slider`` for it instead of publishing a row the
+#: pad can only scroll past.
+_ADJUSTABLE_TYPES: frozenset[str] = frozenset(
+    str(entry["id"]) for entry in ITEM_TYPE_META if entry.get("adjustable")
+)
 
 
 class StrictModel(BaseModel):
@@ -65,8 +79,8 @@ class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
 
 
-class Binding(StrictModel):
-    """Action bound to a physical MicroPad input."""
+class BindingTarget(StrictModel):
+    """Action plus its optional context strings, shared by taps and gestures."""
 
     action: Action = "none"
     entity: str = ""
@@ -92,6 +106,23 @@ class Binding(StrictModel):
     @classmethod
     def normalize_target(cls, value: str) -> str:
         return normalize_identifier(value)
+
+
+class Binding(BindingTarget):
+    """Action bound to a physical MicroPad input.
+
+    ``hold`` and ``double`` carry the two gestures of the same key. Both default
+    to an empty (``none``) binding, which is exactly the single-press behaviour a
+    keymap written before gestures existed has: an empty gesture never fires, so
+    old configurations and old published keymaps stay valid and the pad keeps
+    acting on the tap. A gesture binding is a full target (its own action, entity
+    and target page), because "hold turns *this other* light off" is the point of
+    the feature; the payload generator omits an unset gesture so a keymap that
+    uses none of them stays as small as it was.
+    """
+
+    hold: BindingTarget = Field(default_factory=BindingTarget)
+    double: BindingTarget = Field(default_factory=BindingTarget)
 
 
 _ENTITY_ID_PATTERN = re.compile(r"^[a-z_][a-z0-9_]*\.[a-z0-9_]+$")
@@ -146,6 +177,7 @@ class PageItem(StrictModel):
     step: Annotated[float, Field(gt=0)] = 1
     unit: str = ""
     editable: bool = False
+    control: Control = "button"
     target_page: str = ""
 
     @field_validator("target_page")
@@ -171,6 +203,17 @@ class PageItem(StrictModel):
     def validate_shape(self) -> PageItem:
         if self.min > self.max:
             raise ValueError("min must not exceed max")
+        if self.control == "slider":
+            # A slider without a range to move in, or on a type with no
+            # adjustable value, is a row the operator would turn with nothing
+            # happening. Both are refused here, where the editor can show why.
+            if self.type not in _ADJUSTABLE_TYPES:
+                raise ValueError(
+                    f"{self.type} items cannot be a slider: the type carries no "
+                    "adjustable value (light, fan, cover, media_player and number do)"
+                )
+            if self.min >= self.max:
+                raise ValueError("slider items require min < max")
         if self.type in _TARGET_PAGE_TYPES and not self.target_page:
             raise ValueError(f"{self.type} items require target_page")
         if self.type in _ENTITY_DOMAINS and not self.entity:
@@ -257,7 +300,11 @@ class AppConfig(StrictModel):
 
 _DEFAULT_ACTIONS: dict[str, Action] = {
     "r0c0": "home", "r0c3": "enter", "r1c3": "enter", "r2c3": "back",
-    "enc_up": "scroll_up", "enc_down": "scroll_down",
+    # The encoder is bound to `adjust`, not to plain scrolling: an encoder turn
+    # adjusts the selected row when that row is a slider and scrolls the cursor
+    # otherwise, so one binding covers both without a second input. `scroll_up` /
+    # `scroll_down` remain available for an operator who wants scrolling only.
+    "enc_up": "adjust", "enc_down": "adjust",
 }
 
 
