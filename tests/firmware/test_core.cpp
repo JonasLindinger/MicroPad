@@ -260,27 +260,45 @@ void testSafeCopyClipDisplayCaps() {
 void testRenderPrimBudgetHeadroom() {
   // Worst case: four visible rows (selection cursor), title, network status
   // cell, scrollbar and the USB power symbol. The measured worst case is 22
-  // prims; the budget must keep at least 25 % headroom so a layout change that
-  // silently overflows the model is caught here instead of on the panel.
-  RenderSnapshot snap{};
-  snap.totalItems = MAX_ITEMS_PER_PAGE;
-  snap.rowCount = static_cast<uint8_t>(VISIBLE_ROWS);
-  snap.networkState = NETWORK_STATE_MQTT;
-  safeCopy(snap.title, "Erdgeschoss");
-  for (uint8_t i = 0; i < VISIBLE_ROWS; ++i) {
-    std::snprintf(snap.rows[i].name, sizeof(snap.rows[i].name), "row %u",
-                  static_cast<unsigned>(i));
-    snap.rows[i].state[0] = '\0';
-    snap.rows[i].value = 12.5f * static_cast<float>(i + 1);
-    snap.rows[i].selected = (i == 0);
-    snap.rows[i].editing = (i == 0);
+  // prims for plain text rows; the budget must keep at least 25 % headroom so a
+  // layout change that silently overflows the model is caught here instead of on
+  // the panel. Slider and checkbox rows draw more per row (a track plus fill, a
+  // box plus tick), so all three row styles are measured.
+  for (int style = 0; style < 3; ++style) {
+    RenderSnapshot snap{};
+    snap.totalItems = MAX_ITEMS_PER_PAGE;
+    snap.rowCount = static_cast<uint8_t>(VISIBLE_ROWS);
+    snap.networkState = NETWORK_STATE_MQTT;
+    safeCopy(snap.title, "Erdgeschoss");
+    for (uint8_t i = 0; i < VISIBLE_ROWS; ++i) {
+      std::snprintf(snap.rows[i].name, sizeof(snap.rows[i].name), "row %u",
+                    static_cast<unsigned>(i));
+      snap.rows[i].state[0] = '\0';
+      snap.rows[i].value = 12.5f * static_cast<float>(i + 1);
+      snap.rows[i].selected = (i == 0);
+      snap.rows[i].editing = (i == 0);
+      snap.rows[i].min = 0.0f;
+      snap.rows[i].max = 100.0f;
+      if (style == 0) {
+        // Text rows: the pre-slider worst case (one value span per row).
+        snap.rows[i].style = RowStyle::Text;
+      } else if (style == 1) {
+        // Checkbox rows: every box ticked, the most prims a row can emit.
+        snap.rows[i].style = RowStyle::Checkbox;
+        safeCopy(snap.rows[i].state, "on");
+      } else {
+        // Slider rows: every bar filled.
+        snap.rows[i].style = RowStyle::Slider;
+        snap.rows[i].value = 100.0f;
+      }
+    }
+    RenderModel model;
+    layoutNormalUi(snap, model);
+    networkStatusPrims(snap.networkState, model);
+    powerIconPrims(true, model);
+    assert(model.count <= RENDER_PRIM_CAP);
+    assert(model.count * 4 <= RENDER_PRIM_CAP * 3);  // >= 25 % headroom
   }
-  RenderModel model;
-  layoutNormalUi(snap, model);
-  networkStatusPrims(snap.networkState, model);
-  powerIconPrims(true, model);
-  assert(model.count <= RENDER_PRIM_CAP);
-  assert(model.count * 4 <= RENDER_PRIM_CAP * 3);  // >= 25 % headroom
 }
 
 void testKeymapModel() {
@@ -303,22 +321,28 @@ void testKeymapModel() {
   assert(map[3].action == Action::Enter);
   assert(map[7].action == Action::Enter);
   assert(map[11].action == Action::Back);
-  assert(map[12].action == Action::ScrollUp);
-  assert(map[13].action == Action::ScrollDown);
+  // The encoder default is Adjust: it steps a slider row and scrolls otherwise.
+  assert(map[12].action == Action::Adjust);
+  assert(map[13].action == Action::Adjust);
   for (size_t i : {1U, 2U, 4U, 5U, 6U, 8U, 9U, 10U}) {
     assert(map[i].action == Action::None);
+  }
+  // Gestures start unbound, so a default keymap behaves exactly as before.
+  for (size_t i = 0; i < KEY_COUNT; ++i) {
+    assert(map[i].hold.action == Action::None);
+    assert(map[i].doubleTap.action == Action::None);
   }
 }
 
 void testActionModel() {
-  constexpr const char *tokens[21] = {
+  constexpr const char *tokens[22] = {
       "none",       "enter",        "back",        "home",
       "settings",   "scroll",       "scroll_up",   "scroll_down",
       "navigate",   "keymap",       "get_all_pages", "toggle",
       "on",         "off",          "press",       "volume_up",
       "volume_down", "media_next",  "media_prev",  "edit",
-      "confirm"};
-  static_assert(sizeof(tokens) / sizeof(tokens[0]) == 21);
+      "confirm",    "adjust"};
+  static_assert(sizeof(tokens) / sizeof(tokens[0]) == 22);
   for (size_t i = 0; i < sizeof(tokens) / sizeof(tokens[0]); ++i) {
     Action parsed{};
     const Action expect = static_cast<Action>(i);
@@ -343,6 +367,20 @@ void testActionModel() {
   Binding home{};
   home.action = Action::Home;
   assert(resolveBinding(home, released) == Action::None);
+
+  // control is the second token table; it round-trips like every other enum.
+  constexpr const char *controls[CONTROL_COUNT] = {"button", "slider"};
+  static_assert(sizeof(controls) / sizeof(controls[0]) == 2);
+  for (size_t i = 0; i < sizeof(controls) / sizeof(controls[0]); ++i) {
+    Control parsed{};
+    const Control expect = static_cast<Control>(i);
+    assert(std::strcmp(controlName(expect), controls[i]) == 0);
+    assert(parseControl(controls[i], parsed));
+    assert(parsed == expect);
+  }
+  Control rejectedControl{};
+  assert(!parseControl("dial", rejectedControl));
+  assert(!parseControl(nullptr, rejectedControl));
 }
 
 void testItemTypeModel() {
@@ -1774,7 +1812,9 @@ void scenarioEmit(const InputEvent &input) {
       gScenarioPad->activeKeymap[static_cast<size_t>(input.key)];
   const Action action = resolveBinding(binding, input);
   if (action == Action::None) return;
-  gScenarioPad->applyAction(action, binding, input.atMs);
+  // The direction travels with the event, exactly as the sketch passes it: an
+  // encoder turn that resolves to Adjust needs it to know which way to step.
+  gScenarioPad->applyAction(action, binding, input.atMs, input.direction);
 }
 
 }  // namespace
@@ -2111,6 +2151,35 @@ void testAllActionsReachDefinedOutcome() {
   assert(e.action == Action::Keymap);
   assert(std::strcmp(e.pageId, "home") == 0);
   assert(pad.queue.size() == 0);
+
+  // adjust: a zero-direction turn (a matrix key has no direction) is the
+  // documented no-op; a directional turn on a row that is not a slider scrolls
+  // exactly like scroll_up/scroll_down; on a slider row it steps the value and
+  // queues an adjust event carrying the new value.
+  pad.state.selected = 0;
+  r = pad.applyAction(Action::Adjust, b, 1400, 0);
+  assert(!r.stateChanged && !r.eventReady);
+  r = pad.applyAction(Action::Adjust, b, 1450, 1);
+  assert(r.stateChanged && r.eventReady);
+  assert(pad.state.selected == 1);  // switch row is not a slider: scrolls
+  Event scrolled{};
+  assert(pad.queue.pop(scrolled));
+  assert(scrolled.action == Action::ScrollDown);
+  items[1].control = Control::Slider;
+  items[1].min = 0.0f;
+  items[1].max = 10.0f;
+  items[1].step = 2.0f;
+  items[1].value = 4.0f;
+  r = pad.applyAction(Action::Adjust, b, 1500, 1);
+  assert(r.stateChanged && r.eventReady);
+  assert(items[1].value == 6.0f);
+  Event stepped{};
+  assert(pad.queue.pop(stepped));
+  assert(stepped.action == Action::Adjust);
+  assert(stepped.value == 6.0f);
+  assert(std::strcmp(stepped.entity, "number.x") == 0);
+  assert(std::strcmp(stepped.pageId, "home") == 0);
+  assert(std::strcmp(stepped.targetPage, "") == 0);
 }
 
 
@@ -2310,7 +2379,7 @@ void testItemTypeDescriptorTable() {
   // order. A missing or reordered row would silently give one item type another
   // type's action, which no other test would catch.
   assert(ITEM_TYPE_COUNT == 15);
-  assert(ACTION_COUNT == 21);
+  assert(ACTION_COUNT == 22);
   for (size_t index = 0; index < ITEM_TYPE_COUNT; ++index) {
     assert(static_cast<size_t>(ITEM_TYPE_DESCRIPTORS[index].type) == index);
   }
@@ -2363,6 +2432,35 @@ void testItemTypeDescriptorTable() {
     if (ITEM_TYPE_DESCRIPTORS[index].editable) ++editableCount;
   }
   assert(editableCount == 1);
+
+  // Which types may be a slider row (contract flag `adjustable`): exactly the
+  // ones whose value an encoder turn can move. A type that is adjustable but has
+  // no numeric value, or a value-bearing type marked adjustable by accident,
+  // would give the operator a slider that does nothing.
+  size_t adjustableCount = 0;
+  for (size_t index = 0; index < ITEM_TYPE_COUNT; ++index) {
+    if (ITEM_TYPE_DESCRIPTORS[index].adjustable) ++adjustableCount;
+  }
+  assert(adjustableCount == 5);
+  assert(itemTypeDescriptor(ItemType::Light).adjustable);
+  assert(itemTypeDescriptor(ItemType::Fan).adjustable);
+  assert(itemTypeDescriptor(ItemType::Cover).adjustable);
+  assert(itemTypeDescriptor(ItemType::MediaPlayer).adjustable);
+  assert(itemTypeDescriptor(ItemType::Number).adjustable);
+  assert(!itemTypeDescriptor(ItemType::Switch).adjustable);
+  assert(!itemTypeDescriptor(ItemType::Sensor).adjustable);
+  assert(!itemTypeDescriptor(ItemType::Lock).adjustable);
+  assert(!itemTypeDescriptor(ItemType::InputBoolean).adjustable);
+  for (size_t index = 0; index < ITEM_TYPE_COUNT; ++index) {
+    if (ITEM_TYPE_DESCRIPTORS[index].adjustable) {
+      assert(ITEM_TYPE_DESCRIPTORS[index].editable ||
+             index == static_cast<size_t>(ItemType::Light) ||
+             index == static_cast<size_t>(ItemType::Fan) ||
+             index == static_cast<size_t>(ItemType::Cover) ||
+             index == static_cast<size_t>(ItemType::MediaPlayer) ||
+             index == static_cast<size_t>(ItemType::Number));
+    }
+  }
 
   // An out-of-range type (corrupt or truncated payload) must not read past the
   // table; the accessor clamps to the inert Category row.
@@ -2523,6 +2621,357 @@ void testLongPressGesture() {
   static_assert(LONG_PRESS_MS == 600, "long press threshold");
 }
 
+void testDoublePressFilter() {
+  // Without a bound double gesture the dispatch stays exactly as it was: the
+  // press edge is delivered immediately, with no deferral at all.
+  DebouncedInput plain;
+  assert(plain.update(true, 0) == Edge::None);
+  assert(plain.update(true, INPUT_DEBOUNCE_MS) == Edge::Pressed);
+
+  // With the filter on, the first tap waits out the double-press window.
+  DebouncedInput input;
+  input.setDoublePressEnabled(true);
+  assert(input.doublePressEnabled());
+  assert(input.update(true, 0) == Edge::None);                     // candidate
+  assert(input.update(true, INPUT_DEBOUNCE_MS) == Edge::None);     // tap deferred
+  assert(input.update(true, INPUT_DEBOUNCE_MS + DOUBLE_PRESS_MS - 1) == Edge::None);
+  // Window closed with no second press: the deferred tap is delivered.
+  assert(input.update(true, INPUT_DEBOUNCE_MS + DOUBLE_PRESS_MS) == Edge::Pressed);
+  assert(input.update(true, INPUT_DEBOUNCE_MS + DOUBLE_PRESS_MS + 100) == Edge::None);
+  assert(input.update(false, 2000) == Edge::None);
+  assert(input.update(false, 2000 + INPUT_DEBOUNCE_MS) == Edge::Released);
+
+  // A second debounced press inside the window is the double gesture, and the
+  // deferred tap is dropped: a double press fires exactly once.
+  DebouncedInput twice;
+  twice.setDoublePressEnabled(true);
+  assert(twice.update(true, 0) == Edge::None);
+  assert(twice.update(true, 25) == Edge::None);       // tap deferred
+  assert(twice.update(false, 100) == Edge::None);     // candidate release
+  assert(twice.update(false, 125) == Edge::Released);
+  assert(twice.update(true, 200) == Edge::None);      // candidate press
+  assert(twice.update(true, 225) == Edge::DoublePress);
+  assert(twice.update(true, 300) == Edge::None);      // one double per pair
+  assert(twice.update(false, 400) == Edge::None);
+  assert(twice.update(false, 425) == Edge::Released);
+
+  // Two slow presses are two taps, not one double: the second press arrives
+  // after the window, so the first tap was already delivered and the second
+  // press simply starts a new one.
+  DebouncedInput slow;
+  slow.setDoublePressEnabled(true);
+  assert(slow.update(true, 0) == Edge::None);
+  assert(slow.update(true, 25) == Edge::None);
+  assert(slow.update(true, 25 + DOUBLE_PRESS_MS) == Edge::Pressed);  // first tap
+  assert(slow.update(false, 500) == Edge::None);
+  assert(slow.update(false, 525) == Edge::Released);
+  assert(slow.update(true, 900) == Edge::None);
+  assert(slow.update(true, 925) == Edge::None);
+  assert(slow.update(true, 925 + DOUBLE_PRESS_MS) == Edge::Pressed);  // second tap
+
+  // A hold on a double-enabled key still fires both: the deferred tap once the
+  // window closes and then the hold at the (later) long-press threshold.
+  DebouncedInput held;
+  held.setDoublePressEnabled(true);
+  assert(held.update(true, 0) == Edge::None);
+  assert(held.update(true, 25) == Edge::None);
+  assert(held.update(true, 25 + DOUBLE_PRESS_MS) == Edge::Pressed);
+  assert(held.update(true, 25 + LONG_PRESS_MS) == Edge::LongPress);
+
+  // Turning the filter off does not swallow a tap that is still waiting.
+  DebouncedInput off;
+  off.setDoublePressEnabled(true);
+  assert(off.update(true, 0) == Edge::None);
+  assert(off.update(true, 25) == Edge::None);
+  off.setDoublePressEnabled(false);
+  assert(off.update(true, 30) == Edge::Pressed);  // delivered, not dropped
+  assert(off.update(true, 40) == Edge::None);
+
+  // The wake press is consumed by the wake scan: it must not turn into a
+  // deferred tap or the first half of a double press either.
+  DebouncedInput waking;
+  waking.setDoublePressEnabled(true);
+  waking.primeForWake(true, 5000);
+  assert(waking.update(true, 5025) == Edge::None);
+  assert(waking.update(false, 5100) == Edge::None);
+  assert(waking.update(false, 5125) == Edge::Released);
+
+  static_assert(DOUBLE_PRESS_MS == 350, "double press window");
+  static_assert(DOUBLE_PRESS_MS < LONG_PRESS_MS,
+                "a deferred tap is always delivered before a hold fires");
+}
+
+void testGestureBindingResolution() {
+  // A bound gesture replaces the tap action; an unbound one leaves the key's
+  // behaviour untouched, which is what keeps an older keymap valid.
+  Binding binding{};
+  binding.action = Action::Toggle;
+  safeCopy(binding.entity, "light.desk");
+  binding.hold.action = Action::Off;
+  safeCopy(binding.hold.entity, "light.desk");
+  binding.doubleTap.action = Action::Press;
+  safeCopy(binding.doubleTap.entity, "script.party");
+
+  InputEvent tap{KeyId::R0C1, true, 0, 100};
+  InputEvent hold{KeyId::R0C1, true, 0, 700};
+  hold.longPress = true;
+  InputEvent doublePress{KeyId::R0C1, true, 0, 300};
+  doublePress.doublePress = true;
+  InputEvent release{KeyId::R0C1, false, 0, 800};
+
+  assert(resolveBinding(binding, tap) == Action::Toggle);
+  assert(resolveBinding(binding, hold) == Action::Off);
+  assert(resolveBinding(binding, doublePress) == Action::Press);
+  assert(resolveBinding(binding, release) == Action::None);
+
+  Binding effective{};
+  effectiveBinding(effective, binding, hold);
+  assert(effective.action == Action::Off);
+  assert(std::strcmp(effective.entity, "light.desk") == 0);
+  effectiveBinding(effective, binding, doublePress);
+  assert(effective.action == Action::Press);
+  assert(std::strcmp(effective.entity, "script.party") == 0);
+  effectiveBinding(effective, binding, tap);
+  assert(effective.action == Action::Toggle);
+  assert(std::strcmp(effective.entity, "light.desk") == 0);
+  // The gestures survive a tap copy (the whole struct is copied).
+  assert(effective.hold.action == Action::Off);
+  assert(effective.doubleTap.action == Action::Press);
+
+  // Unbound gestures fall through to the tap, so a hold on a key without a hold
+  // binding behaves exactly like the tap it always was.
+  Binding bare{};
+  bare.action = Action::Home;
+  assert(resolveBinding(bare, hold) == Action::Home);
+  assert(resolveBinding(bare, doublePress) == Action::Home);
+  effectiveBinding(effective, bare, hold);
+  assert(effective.action == Action::Home);
+
+  // Direction resolution is unchanged, and a gesture on a Scroll binding keeps
+  // the direction for the gesture's own action.
+  Binding scroll{};
+  scroll.action = Action::Adjust;
+  assert(resolveBinding(scroll, InputEvent{KeyId::EncDown, true, 1, 10}) ==
+         Action::Adjust);
+}
+
+void testAdjustSliderSemantics() {
+  PadController pad;
+  addPage(pad, "home", "", 3);
+  safeCopy(pad.state.pageId, "home");
+  Item (&items)[MAX_ITEMS_PER_PAGE] = pad.catalog.pages[0].items;
+
+  items[0].type = ItemType::Light;
+  safeCopy(items[0].entity, "light.desk");
+  items[0].control = Control::Slider;
+  items[0].min = 0.0f;
+  items[0].max = 100.0f;
+  items[0].step = 5.0f;
+  items[0].value = 50.0f;
+
+  items[1].type = ItemType::Switch;
+  safeCopy(items[1].entity, "switch.fan");
+  items[2].type = ItemType::Number;
+  safeCopy(items[2].entity, "number.ac");
+  items[2].editable = true;
+  items[2].min = 0.0f;
+  items[2].max = 10.0f;
+  items[2].step = 2.0f;
+  items[2].value = 4.0f;
+
+  Binding b{};
+  ApplyResult r{};
+  Event event{};
+
+  // A slider row steps by exactly one step, clamped into [min, max].
+  pad.state.selected = 0;
+  r = pad.applyAction(Action::Adjust, b, 100, 1);
+  assert(r.stateChanged && r.eventReady);
+  assert(items[0].value == 55.0f);
+  assert(pad.queue.pop(event));
+  assert(event.action == Action::Adjust);
+  assert(event.value == 55.0f);
+  assert(std::strcmp(event.entity, "light.desk") == 0);
+  assert(std::strcmp(event.pageId, "home") == 0);
+  assert(event.targetPage[0] == '\0');  // an adjust event has no target page
+  r = pad.applyAction(Action::Adjust, b, 200, -1);
+  assert(items[0].value == 50.0f);
+  assert(pad.queue.pop(event));
+  assert(event.value == 50.0f);
+
+  // Near the top the step clamps to max instead of overshooting.
+  items[0].value = 98.0f;
+  r = pad.applyAction(Action::Adjust, b, 300, 1);
+  assert(items[0].value == 100.0f);
+  assert(pad.queue.pop(event));
+  assert(event.value == 100.0f);
+
+  // At the bound the encoder scrolls instead, so the row is never a dead end:
+  // two slider rows back to back stay reachable.
+  pad.state.selected = 0;
+  r = pad.applyAction(Action::Adjust, b, 400, 1);
+  assert(r.stateChanged && r.eventReady);
+  assert(pad.state.selected == 1);
+  assert(pad.queue.pop(event));
+  assert(event.action == Action::ScrollDown);
+  assert(std::strcmp(event.targetPage, "home") == 0);
+
+  // A row that is not a slider scrolls: the same behaviour as before sliders
+  // existed, so an existing config keeps working with an encoder bound to
+  // adjust.
+  r = pad.applyAction(Action::Adjust, b, 500, 1);
+  assert(pad.state.selected == 2);
+  assert(pad.queue.pop(event));
+  assert(event.action == Action::ScrollDown);
+  r = pad.applyAction(Action::Adjust, b, 600, -1);
+  assert(pad.state.selected == 1);
+  assert(pad.queue.pop(event));
+  assert(event.action == Action::ScrollUp);
+
+  // A matrix key has no direction: nothing to adjust, nothing to scroll.
+  r = pad.applyAction(Action::Adjust, b, 700, 0);
+  assert(!r.stateChanged && !r.eventReady);
+  assert(pad.state.selected == 1);
+
+  // While an editable number row is being edited, the same turn keeps the
+  // documented optimistic-edit behaviour (an Edit event, not an adjust event).
+  pad.state.selected = 2;
+  safeCopy(b.entity, "number.ac");
+  r = pad.applyAction(Action::Edit, b, 800);
+  assert(r.eventReady && pad.state.editing);
+  assert(pad.queue.pop(event));
+  assert(event.action == Action::Edit);
+  r = pad.applyAction(Action::Adjust, b, 900, 1);
+  assert(items[2].value == 6.0f);
+  assert(pad.queue.pop(event));
+  assert(event.action == Action::Edit);
+  assert(event.value == 6.0f);
+  r = pad.applyAction(Action::Adjust, b, 1000, 1);
+  assert(items[2].value == 8.0f);
+  assert(pad.queue.pop(event));
+  r = pad.applyAction(Action::Adjust, b, 1100, 1);
+  assert(items[2].value == 10.0f);
+  assert(pad.queue.pop(event));
+  // At the top of the range while editing: no step left, and no scroll either
+  // (edit mode owns the encoder until Confirm).
+  r = pad.applyAction(Action::Adjust, b, 1200, 1);
+  assert(!r.eventReady);
+  assert(items[2].value == 10.0f);
+
+  // A slider row whose payload range is degenerate (min == max) behaves like a
+  // plain row: the firmware cannot move it, so the encoder scrolls.
+  pad.state.editing = false;
+  items[1].control = Control::Slider;
+  items[1].min = 10.0f;
+  items[1].max = 10.0f;
+  items[1].value = 10.0f;
+  pad.state.selected = 1;
+  r = pad.applyAction(Action::Adjust, b, 1300, 1);
+  assert(r.stateChanged && r.eventReady);
+  assert(pad.state.selected == 2);
+  assert(pad.queue.pop(event));
+  assert(event.action == Action::ScrollDown);
+}
+
+void testRowStylesAndValueColumn() {
+  // The checkbox is the value column of a two-valued state; the words on/off are
+  // what the panel no longer prints.
+  assert(booleanState("on"));
+  assert(booleanState("ON"));
+  assert(booleanState("off"));
+  assert(booleanState("Off"));
+  assert(booleanState("true"));
+  assert(booleanState("FALSE"));
+  assert(!booleanState("open"));
+  assert(!booleanState("playing"));
+  assert(!booleanState(""));
+  assert(!booleanState(nullptr));
+  assert(booleanStateOn("on"));
+  assert(booleanStateOn("TRUE"));
+  assert(!booleanStateOn("off"));
+  assert(!booleanStateOn(""));
+
+  // The fill tracks [min, max] and stays inside the track.
+  RenderRow row{};
+  row.min = 0.0f;
+  row.max = 100.0f;
+  row.value = 0.0f;
+  assert(sliderFillWidth(row) == 0);
+  row.value = 100.0f;
+  assert(sliderFillWidth(row) == SLIDER_TRACK_W - 2);
+  row.value = 50.0f;
+  assert(sliderFillWidth(row) >= (SLIDER_TRACK_W - 2) / 2 - 1);
+  assert(sliderFillWidth(row) <= (SLIDER_TRACK_W - 2) / 2 + 1);
+  row.value = 500.0f;  // a payload value outside its own range cannot overflow
+  assert(sliderFillWidth(row) == SLIDER_TRACK_W - 2);
+  row.value = -500.0f;
+  assert(sliderFillWidth(row) == 0);
+  row.value = 50.0f;
+  row.max = row.min;  // degenerate range: no bar
+  assert(sliderFillWidth(row) == 0);
+
+  // fillPageSnapshot derives the style from the item: a slider row, a checkbox
+  // for a two-valued state, text otherwise.
+  Page page{};
+  safeCopy(page.pageId, "home");
+  safeCopy(page.title, "Home");
+  page.itemCount = 4;
+  page.items[0].type = ItemType::Light;
+  safeCopy(page.items[0].name, "Lampe");
+  safeCopy(page.items[0].entity, "light.desk");
+  safeCopy(page.items[0].state, "on");
+  page.items[0].control = Control::Slider;
+  page.items[0].min = 0.0f;
+  page.items[0].max = 100.0f;
+  page.items[0].value = 40.0f;
+  page.items[1].type = ItemType::Switch;
+  safeCopy(page.items[1].name, "Dose");
+  safeCopy(page.items[1].state, "on");
+  page.items[2].type = ItemType::Switch;
+  safeCopy(page.items[2].name, "Lampe 2");
+  safeCopy(page.items[2].state, "off");
+  page.items[3].type = ItemType::Sensor;
+  safeCopy(page.items[3].name, "Temp");
+  safeCopy(page.items[3].state, "23.4");
+  AppState state{};
+  safeCopy(state.pageId, "home");
+  RenderSnapshot snap{};
+  fillPageSnapshot(page, state, snap);
+  assert(snap.rowCount == 4);
+  assert(snap.rows[0].style == RowStyle::Slider);
+  assert(snap.rows[0].min == 0.0f && snap.rows[0].max == 100.0f);
+  assert(snap.rows[1].style == RowStyle::Checkbox);
+  assert(snap.rows[2].style == RowStyle::Checkbox);
+  assert(snap.rows[3].style == RowStyle::Text);
+  assert(booleanStateOn(snap.rows[1].state));
+  assert(!booleanStateOn(snap.rows[2].state));
+
+  // The prim model: a ticked checkbox is a box plus two tick lines, an unticked
+  // one is just the box, and neither prints the state word.
+  RenderModel model;
+  layoutNormalUi(snap, model);
+  uint16_t rects = 0;
+  uint16_t lines = 0;
+  uint16_t texts = 0;
+  for (uint16_t i = 0; i < model.count; ++i) {
+    if (model.prims[i].kind == PrimKind::Rect) ++rects;
+    if (model.prims[i].kind == PrimKind::Line) ++lines;
+    if (model.prims[i].kind == PrimKind::Text) ++texts;
+  }
+  // Two checkbox boxes, one slider track: three rects (plus the selection
+  // cursor, which is a triangle, and no scrollbar at exactly four rows).
+  assert(rects == 3);
+  assert(lines == 2);
+  // title + 4 row names + the slider's number + the sensor's reading = 7 text
+  // spans: the two checkbox rows print no value word at all.
+  assert(texts == 7);
+  // The state word must not appear anywhere in the model.
+  for (uint16_t i = 0; i < model.count; ++i) {
+    assert(std::strcmp(model.prims[i].text, "on") != 0);
+    assert(std::strcmp(model.prims[i].text, "off") != 0);
+  }
+}
+
 int main() {
   static_assert(KEY_COUNT == 14);
   static_assert(QUEUE_CAPACITY == 16);
@@ -2615,8 +3064,12 @@ int main() {
   testItemTypeDescriptorTable();
   testFormatDiagnostics();
   testLongPressGesture();
+  testDoublePressFilter();
+  testGestureBindingResolution();
+  testAdjustSliderSemantics();
+  testRowStylesAndValueColumn();
   testAllActionsReachDefinedOutcome();
-  static_assert(micropad::ACTION_COUNT == 21, "21 supported actions");
+  static_assert(micropad::ACTION_COUNT == 22, "22 supported actions");
   static_assert(micropad::ITEM_TYPE_COUNT == 15, "15 supported item types");
   static_assert(micropad::USB_SAMPLE_MS == 500, "500 ms USB sample interval");
   static_assert(micropad::USB_STABLE_MS == 1500, "1500 ms USB stable window");

@@ -474,17 +474,115 @@ class FirmwareNetworkContractTest(FirmwareStaticContractTest):
         core = self.source("firmware/micropad_core.h")
         core_cpp = self.source("firmware/micropad_core.cpp")
         self.assertIn("constexpr uint32_t LONG_PRESS_MS = 600;", core)
-        self.assertIn("enum class Edge : uint8_t { None, Pressed, Released, LongPress };", core)
+        self.assertIn(
+            "enum class Edge : uint8_t { None, Pressed, Released, LongPress, DoublePress };",
+            core,
+        )
         self.assertIn("Action selectedItemLongPressAction() const;", core)
         self.assertIn("Action alternateActionForSelectedItem(const Item &item);", core)
         self.assertIn("pad.selectedItemLongPressAction()", text)
-        self.assertIn("if (input.longPress)", text)
+        # A key-owned hold gesture wins; the item's alternate action is the
+        # fallback for a key whose hold is unbound.
+        self.assertIn(
+            "if (input.longPress && binding.hold.action == micropad::Action::None)",
+            text,
+        )
         # The wake press is consumed by the immediate wake scan, so holding the key
         # that woke the pad never turns into a gesture.
         self.assertIn("longPressFired_ = rawPressed;", core_cpp)
         # Gestures must not add a second threshold or a private action table.
         self.assertNotIn("LONG_PRESS_MS =", text)
         self.assertNotIn("longPressFired", text)
+
+    def test_double_press_filter_is_key_scoped(self):
+        # A double press defers the tap for DOUBLE_PRESS_MS, and only for keys
+        # whose effective binding actually carries a double gesture: every other
+        # key must keep firing on the press edge with no added latency.
+        text = self.ino()
+        core = self.source("firmware/micropad_core.h")
+        core_cpp = self.source("firmware/micropad_core.cpp")
+        self.assertIn("constexpr uint32_t DOUBLE_PRESS_MS = 350;", core)
+        self.assertLess(
+            core.index("constexpr uint32_t DOUBLE_PRESS_MS"),
+            core.index("constexpr uint32_t RESYNC_SETTLE_MS"),
+        )
+        self.assertIn("void setDoublePressEnabled(bool enabled);", core)
+        self.assertIn("using DoubleEnableFn = bool (*)(uint8_t keyIndex);", core)
+        self.assertIn("DoubleEnableFn doubleEnabled = nullptr", core)
+        self.assertIn("debounce[index].setDoublePressEnabled(", core_cpp)
+        # The sketch derives the gate from the effective keymap, not from a
+        # second table the keymap parser would have to keep in sync.
+        self.assertIn(
+            "pad.activeKeymap[index].doubleTap.action != micropad::Action::None",
+            text,
+        )
+        self.assertIn("matrixDoublePressEnabled", text)
+        # The deferred tap is delivered before a hold could fire on the same
+        # press, and turning the filter off never swallows a waiting tap.
+        self.assertIn("tapPending_ && (!doublePressEnabled_", core_cpp)
+        self.assertNotIn("delay(", core_cpp)
+
+    def test_gesture_bindings_parse_from_the_keymap(self):
+        # hold/double are full targets (action, entity, target page) parsed from
+        # the keymap payload; a keymap without them keeps its tap behaviour.
+        text = self.ino()
+        core_cpp = self.source("firmware/micropad_core.cpp")
+        self.assertIn("bool parseBindingTarget(JsonVariantConst value, micropad::BindingTarget &out)", text)
+        self.assertIn('const JsonVariantConst holdValue = obj["hold"];', text)
+        self.assertIn('const JsonVariantConst doubleValue = obj["double"];', text)
+        self.assertIn("out.hold = micropad::BindingTarget{};", text)
+        self.assertIn("out.doubleTap = micropad::BindingTarget{};", text)
+        # Gesture resolution lives in the core, never in the sketch.
+        self.assertIn("void effectiveBinding(Binding &out, const Binding &binding,", core_cpp)
+        self.assertIn("binding.hold.action != Action::None", core_cpp)
+        self.assertIn("input.doublePress && binding.doubleTap.action != Action::None", core_cpp)
+        self.assertIn("micropad::effectiveBinding(gesture, binding, input);", text)
+        # The direction travels with the event so Adjust can step a value.
+        self.assertIn("pad.applyAction(action, resolved, input.atMs, input.direction);", text)
+
+    def test_item_control_parses_and_is_normalised(self):
+        # A slider row is a payload field, and the firmware only trusts it for a
+        # type whose value it can actually move.
+        text = self.ino()
+        core = self.source("firmware/micropad_core.h")
+        core_cpp = self.source("firmware/micropad_core.cpp")
+        self.assertIn("enum class Control : uint8_t { Button, Slider };", core)
+        self.assertIn("bool parseControl(const char *text, Control &out);", core)
+        self.assertIn('constexpr const char *kControlNames[CONTROL_COUNT] = {"button", "slider"};', core_cpp)
+        self.assertIn('const JsonVariantConst controlValue = obj["control"];', text)
+        self.assertIn("!micropad::parseControl(controlText, out.control)", text)
+        self.assertIn("itemTypeDescriptor(out.type).adjustable", text)
+        self.assertIn("out.control = micropad::Control::Button;", text)
+        # The encoder turn reaches the core's action table, not a sketch branch.
+        self.assertIn("case Action::Adjust: {", core_cpp)
+        self.assertIn("item->control == Control::Slider", core_cpp)
+        self.assertIn("out.action = increase ? Action::ScrollDown : Action::ScrollUp;", core_cpp)
+
+    def test_checkbox_and_slider_layout_lives_in_the_core(self):
+        core = self.source("firmware/micropad_core.h")
+        core_cpp = self.source("firmware/micropad_core.cpp")
+        self.assertIn("enum class RowStyle : uint8_t { Text, Checkbox, Slider };", core)
+        self.assertIn("bool booleanState(const char *state);", core)
+        self.assertIn("int16_t sliderFillWidth(const RenderRow &row);", core)
+        self.assertIn("row.style = RowStyle::Checkbox;", core_cpp)
+        self.assertIn("row.style = RowStyle::Slider;", core_cpp)
+        # Both value styles are composed from the existing prims: no new PrimKind.
+        self.assertIn("addRect(model, boxX, boxY, CHECKBOX_SIZE, CHECKBOX_SIZE,", core_cpp)
+        self.assertIn("SLIDER_TRACK_BOTTOM_PAD", core)
+        self.assertIn("PRIM_COLOR_BLACK);", core_cpp)
+
+    def test_keymap_staging_lives_in_bss_not_on_the_loop_stack(self):
+        # A Binding carries its two gesture targets too, so the 14-entry keymap
+        # scratch is ~5.5 KB: it must not sit in the MQTT callback frame (the
+        # loop task has 16 KiB in total).
+        text = self.ino()
+        self.assertIn("micropad::Binding keymapStaging[micropad::KEY_COUNT];", text)
+        self.assertIn("parseEffectiveKeymap(root, keymapStaging)", text)
+        self.assertNotIn("Binding staging[micropad::KEY_COUNT]", text)
+        body = self.function_body(text, "bool parseEffectiveKeymap(JsonVariantConst root,")
+        # One array only: the validated staging is the caller's own buffer.
+        self.assertNotIn("staging[", body)
+        self.assertIn("parseBinding(bindingValue, out[i])", body)
 
     def test_mqtt_buffer_size_exact(self):
         self.assertIn(
@@ -1819,9 +1917,10 @@ class FirmwareOptimisationContractTest(FirmwareStaticContractTest):
         self.assertIn("constexpr size_t PAGE_ID_CAP = 33;", core)
 
     def test_render_prim_budget_has_measured_headroom(self):
-        # The measured worst-case frame is 22 prims; 32 keeps >25 % headroom
-        # (testRenderPrimBudgetHeadroom in the host binary proves it).
-        self.assertIn("constexpr size_t RENDER_PRIM_CAP = 32;",
+        # The measured worst-case frame is 22 prims with text rows and 30 with
+        # slider or ticked checkbox rows; 40 keeps >25 % headroom over the worst
+        # case (testRenderPrimBudgetHeadroom in the host binary proves it).
+        self.assertIn("constexpr size_t RENDER_PRIM_CAP = 40;",
                       self.core_header())
 
     # --- responsiveness: the sleep predicate is sampled -------------------

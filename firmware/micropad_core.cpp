@@ -19,7 +19,9 @@ constexpr const char *kActionNames[ACTION_COUNT] = {
     "navigate",      "keymap",     "get_all_pages", "toggle",
     "on",            "off",        "press",         "volume_up",
     "volume_down",   "media_next", "media_prev",    "edit",
-    "confirm"};
+    "confirm",       "adjust"};
+
+constexpr const char *kControlNames[CONTROL_COUNT] = {"button", "slider"};
 
 constexpr const char *kItemTypeNames[ITEM_TYPE_COUNT] = {
     "category", "light",   "switch", "script",       "button",
@@ -67,26 +69,32 @@ constexpr int8_t kQuadratureSteps[16] = {
 // defaultAction/editable values match contracts/mqtt-contract.json
 // (item_type_meta), which is what the configurator renders.
 const ItemTypeDescriptor ITEM_TYPE_DESCRIPTORS[ITEM_TYPE_COUNT] = {
-    {ItemType::Category, Action::Navigate, Action::None, false},
-    {ItemType::Light, Action::Toggle, Action::Off, false},
-    {ItemType::Switch, Action::Toggle, Action::Off, false},
-    {ItemType::Script, Action::Press, Action::None, false},
-    {ItemType::Button, Action::Press, Action::None, false},
-    {ItemType::Scene, Action::Press, Action::None, false},
-    {ItemType::Sensor, Action::None, Action::None, false},
-    {ItemType::MediaPlayer, Action::None, Action::None, false},
-    {ItemType::Number, Action::Edit, Action::None, true},
-    {ItemType::Settings, Action::Settings, Action::None, false},
-    {ItemType::Back, Action::Back, Action::None, false},
+    // {type, tap action, hold action, editable, adjustable}
+    {ItemType::Category, Action::Navigate, Action::None, false, false},
+    {ItemType::Light, Action::Toggle, Action::Off, false, true},
+    {ItemType::Switch, Action::Toggle, Action::Off, false, false},
+    {ItemType::Script, Action::Press, Action::None, false, false},
+    {ItemType::Button, Action::Press, Action::None, false, false},
+    {ItemType::Scene, Action::Press, Action::None, false, false},
+    {ItemType::Sensor, Action::None, Action::None, false, false},
+    {ItemType::MediaPlayer, Action::None, Action::None, false, true},
+    {ItemType::Number, Action::Edit, Action::None, true, true},
+    {ItemType::Settings, Action::Settings, Action::None, false, false},
+    {ItemType::Back, Action::Back, Action::None, false, false},
     // Cover: HA has toggle, open_cover and close_cover but no turn_off, so the hold
     // has no second action (a tap toggles). Lock: HA has lock/unlock/open and no
     // toggle, so "on" locks and the hold unlocks. Both verified against the
     // integration service lists, not guessed.
-    {ItemType::Cover, Action::Toggle, Action::None, false},
-    {ItemType::Fan, Action::Toggle, Action::Off, false},
-    {ItemType::InputBoolean, Action::Toggle, Action::Off, false},
-    {ItemType::Lock, Action::On, Action::Off, false},
+    {ItemType::Cover, Action::Toggle, Action::None, false, true},
+    {ItemType::Fan, Action::Toggle, Action::Off, false, true},
+    {ItemType::InputBoolean, Action::Toggle, Action::Off, false, false},
+    {ItemType::Lock, Action::On, Action::Off, false, false},
 };
+
+// `adjustable` (the contract flag of the same name) is what makes a row eligible
+// to be a slider. A payload that marks a non-adjustable type as a slider is
+// normalised back to a button while parsing, so the panel never renders a slider
+// the firmware cannot move (see micropad_core.h Item.control).
 
 const ItemTypeDescriptor &itemTypeDescriptor(ItemType type) {
   const size_t index = static_cast<size_t>(type);
@@ -124,26 +132,63 @@ bool parseItemType(const char *text, ItemType &out) {
   return true;
 }
 
+const char *controlName(Control control) {
+  return nameFor(kControlNames, CONTROL_COUNT, static_cast<size_t>(control));
+}
+
+bool parseControl(const char *text, Control &out) {
+  size_t index = 0;
+  if (!valueFor(kControlNames, CONTROL_COUNT, text, index)) return false;
+  out = static_cast<Control>(index);
+  return true;
+}
+
 void loadDefaultKeymap(Binding (&out)[KEY_COUNT]) {
   for (size_t i = 0; i < KEY_COUNT; ++i) {
-    out[i].action = Action::None;
-    safeCopy(out[i].entity, "");
-    safeCopy(out[i].targetPage, "");
+    out[i] = Binding{};
   }
   out[0].action = Action::Home;       // r0c0
   out[3].action = Action::Enter;      // r0c3
   out[7].action = Action::Enter;      // r1c3
   out[11].action = Action::Back;      // r2c3
-  out[12].action = Action::ScrollUp;  // enc_up
-  out[13].action = Action::ScrollDown;  // enc_down
+  // The encoder is bound to Adjust, not to plain scrolling: an encoder turn steps
+  // the selected row's value when that row is a slider and scrolls the cursor
+  // otherwise (see PadController::applyAction), so one binding covers both. This
+  // mirrors the backend's default_keymap (models.py _DEFAULT_ACTIONS).
+  out[12].action = Action::Adjust;  // enc_up
+  out[13].action = Action::Adjust;  // enc_down
 }
 
 Action resolveBinding(const Binding &binding, const InputEvent &input) {
   if (!input.pressed) return Action::None;
+  // A bound gesture wins over the tap action; an unbound one falls through, so
+  // the key behaves exactly as it did before gestures existed.
+  if (input.longPress && binding.hold.action != Action::None) {
+    return binding.hold.action;
+  }
+  if (input.doublePress && binding.doubleTap.action != Action::None) {
+    return binding.doubleTap.action;
+  }
   if (binding.action != Action::Scroll) return binding.action;
   if (input.direction < 0) return Action::ScrollUp;
   if (input.direction > 0) return Action::ScrollDown;
   return Action::None;
+}
+
+void effectiveBinding(Binding &out, const Binding &binding,
+                      const InputEvent &input) {
+  out = binding;
+  if (input.longPress && binding.hold.action != Action::None) {
+    out.action = binding.hold.action;
+    safeCopy(out.entity, binding.hold.entity);
+    safeCopy(out.targetPage, binding.hold.targetPage);
+    return;
+  }
+  if (input.doublePress && binding.doubleTap.action != Action::None) {
+    out.action = binding.doubleTap.action;
+    safeCopy(out.entity, binding.doubleTap.entity);
+    safeCopy(out.targetPage, binding.doubleTap.targetPage);
+  }
 }
 
 namespace {
@@ -292,10 +337,39 @@ Edge DebouncedInput::update(bool rawPressed, uint32_t nowMs) {
     if (stable_) {
       pressedAtMs_ = nowMs;
       longPressFired_ = false;
+      if (doublePressEnabled_) {
+        // A second debounced press inside the window of the first is the double
+        // gesture: the deferred tap is dropped so a double press fires exactly
+        // once. Anything else defers the tap for up to DOUBLE_PRESS_MS.
+        if (secondPressArmed_ &&
+            static_cast<uint32_t>(nowMs - releasedAtMs_) <= DOUBLE_PRESS_MS) {
+          secondPressArmed_ = false;
+          tapPending_ = false;
+          return Edge::DoublePress;
+        }
+        secondPressArmed_ = false;
+        tapPending_ = true;
+        tapPendingAtMs_ = nowMs;
+        return Edge::None;
+      }
       return Edge::Pressed;
     }
     longPressFired_ = false;  // a release ends any pending hold
+    releasedAtMs_ = nowMs;
+    // The release may still become the first half of a double press. The tap
+    // stays deferred until the window closes.
+    if (doublePressEnabled_ && tapPending_) secondPressArmed_ = true;
     return Edge::Released;
+  }
+  // A deferred tap whose window has closed is delivered before the hold check, so
+  // even a sparse polling gap cannot reorder the two gestures. The same happens
+  // if the filter was switched off while the tap was waiting (a keymap update
+  // removed the double gesture): the press is not swallowed.
+  if (tapPending_ && (!doublePressEnabled_ ||
+                      static_cast<uint32_t>(nowMs - tapPendingAtMs_) >= DOUBLE_PRESS_MS)) {
+    tapPending_ = false;
+    secondPressArmed_ = false;
+    return Edge::Pressed;
   }
   // Debounced state unchanged: the only event left is the hold crossing the long
   // press threshold. Emitted once, and only while the key is really held.
@@ -303,6 +377,15 @@ Edge DebouncedInput::update(bool rawPressed, uint32_t nowMs) {
   if (static_cast<uint32_t>(nowMs - pressedAtMs_) < LONG_PRESS_MS) return Edge::None;
   longPressFired_ = true;
   return Edge::LongPress;
+}
+
+void DebouncedInput::setDoublePressEnabled(bool enabled) {
+  if (doublePressEnabled_ == enabled) return;
+  doublePressEnabled_ = enabled;
+  // A filter turned off with a tap still waiting must not swallow that tap: the
+  // next update() delivers it as an ordinary press (see the check above) and no
+  // second press can turn it into a double any more.
+  if (!enabled) secondPressArmed_ = false;
 }
 
 void DebouncedInput::primeForWake(bool rawPressed, uint32_t nowMs) {
@@ -321,6 +404,12 @@ void DebouncedInput::primeForWake(bool rawPressed, uint32_t nowMs) {
   // item's alternate action ("turn off") on top of the action they already
   // triggered, just for holding the key that woke the pad.
   longPressFired_ = rawPressed;
+  // The wake press is delivered by that immediate scan, so it must not be
+  // mistaken for the first half of a double press either.
+  if (doublePressEnabled_) {
+    tapPending_ = false;
+    secondPressArmed_ = false;
+  }
 }
 
 bool DebouncedInput::held() const { return stable_; }
@@ -390,18 +479,25 @@ int8_t QuadratureDecoder::update(uint8_t ab) {
 }
 
 void scanMatrixPass(DebouncedInput (&debounce)[MATRIX_KEY_COUNT],
-                    MatrixReadFn readKey, EventEmitFn emit, uint32_t nowMs) {
+                    MatrixReadFn readKey, EventEmitFn emit, uint32_t nowMs,
+                    DoubleEnableFn doubleEnabled) {
   if (readKey == nullptr || emit == nullptr) return;
   for (uint8_t row = 0; row < MATRIX_ROWS; ++row) {
     for (uint8_t col = 0; col < MATRIX_COLS; ++col) {
       const uint8_t index = matrixKeyIndex(row, col);
+      // Only a key with a bound double gesture defers its tap; every other key
+      // keeps the plain press edge (see DebouncedInput::setDoublePressEnabled).
+      debounce[index].setDoublePressEnabled(doubleEnabled != nullptr &&
+                                            doubleEnabled(index));
       const Edge edge = debounce[index].update(readKey(row, col), nowMs);
       if (edge != Edge::None) {
         InputEvent event{};
         event.key = static_cast<KeyId>(index);
-        event.pressed = (edge == Edge::Pressed) || (edge == Edge::LongPress);
+        event.pressed = (edge == Edge::Pressed) || (edge == Edge::LongPress) ||
+                        (edge == Edge::DoublePress);
         event.direction = 0;
         event.longPress = (edge == Edge::LongPress);
+        event.doublePress = (edge == Edge::DoublePress);
         event.atMs = nowMs;
         emit(event);
       }
@@ -668,8 +764,55 @@ bool PadController::resyncDue(uint32_t nowMs) const {
 
 void PadController::noteInputBurst(uint32_t atMs) { state.lastInputMs = atMs; }
 
+namespace {
+
+// One bounded step of a value row: the new value, or false when the row is
+// already at the end of its range in that direction. A non-positive step falls
+// back to 1 so a hostile payload cannot freeze the value.
+bool steppedValue(float current, float min, float max, float step, bool increase,
+                  float &out) {
+  const float delta = step > 0.0f ? step : 1.0f;
+  if (increase) {
+    if (current + delta <= max) {
+      out = current + delta;
+      return true;
+    }
+    if (current < max) {
+      out = max;
+      return true;
+    }
+    return false;
+  }
+  if (current - delta >= min) {
+    out = current - delta;
+    return true;
+  }
+  if (current > min) {
+    out = min;
+    return true;
+  }
+  return false;
+}
+
+// Move the cursor one row; false at the end of the list, so the caller can treat
+// "nothing left to do" as a no-op instead of an event.
+bool moveSelection(const Page *page, AppState &state, bool down) {
+  if (page == nullptr) return false;
+  if (down) {
+    if (state.selected + 1 >= page->itemCount) return false;
+    ++state.selected;
+  } else {
+    if (state.selected == 0) return false;
+    --state.selected;
+  }
+  normalizeSelection(page, state);
+  return true;
+}
+
+}  // namespace
+
 ApplyResult PadController::applyAction(Action action, const Binding &binding,
-                                       uint32_t atMs) {
+                                       uint32_t atMs, int8_t direction) {
   ApplyResult result{false, false};
   bool changed = false;
   bool wantEvent = false;
@@ -688,24 +831,10 @@ ApplyResult PadController::applyAction(Action action, const Binding &binding,
       if (state.editing && item != nullptr && item->type == ItemType::Number) {
         // Optimistic number edit: adjust by the item's positive step, clamped
         // to [min, max], and queue an Edit carrying the new value.
-        const float step = item->step > 0.0f ? item->step : 1.0f;
-        float value = item->value;
-        if (action == Action::ScrollDown) {
-          if (item->value + step <= item->max) {
-            value = item->value + step;
-          } else if (item->value < item->max) {
-            value = item->max;
-          } else {
-            break;
-          }
-        } else {
-          if (item->value - step >= item->min) {
-            value = item->value - step;
-          } else if (item->value > item->min) {
-            value = item->min;
-          } else {
-            break;
-          }
+        float value = 0.0f;
+        if (!steppedValue(item->value, item->min, item->max, item->step,
+                          action == Action::ScrollDown, value)) {
+          break;
         }
         item->value = value;
         changed = true;
@@ -716,17 +845,59 @@ ApplyResult PadController::applyAction(Action action, const Binding &binding,
         safeCopy(out.targetPage, "");
         break;
       }
-      if (page == nullptr) break;
-      if (action == Action::ScrollDown) {
-        if (state.selected + 1 >= page->itemCount) break;
-        ++state.selected;
-      } else {
-        if (state.selected == 0) break;
-        --state.selected;
-      }
-      normalizeSelection(page, state);
+      if (!moveSelection(page, state, action == Action::ScrollDown)) break;
       changed = true;
       wantEvent = true;
+      safeCopy(out.targetPage, state.pageId);
+      break;
+    }
+    case Action::Adjust: {
+      // An encoder turn on the row under the cursor, without pressing anything:
+      //  * while an editable number row is being edited, step it exactly like
+      //    ScrollUp/ScrollDown does and confirm with an Edit event;
+      //  * on a slider row, step the value by `step`, clamped into [min, max],
+      //    and publish an adjust event carrying the new value;
+      //  * otherwise - and on a slider already at its bound in that direction -
+      //    scroll the cursor, so the encoder is never a dead end and a config
+      //    without sliders keeps behaving exactly like plain scrolling.
+      // The row's own entity is addressed (the pad adjusts what it shows), and
+      // the direction comes from the turn: clockwise/right raises the value.
+      if (direction == 0) break;  // a matrix key has no direction
+      const bool increase = direction > 0;
+      if (item != nullptr && state.editing && item->type == ItemType::Number) {
+        float value = 0.0f;
+        if (!steppedValue(item->value, item->min, item->max, item->step, increase,
+                          value)) {
+          break;
+        }
+        item->value = value;
+        changed = true;
+        wantEvent = true;
+        out.action = Action::Edit;
+        out.value = item->value;
+        safeCopy(out.entity, item->entity);
+        safeCopy(out.targetPage, "");
+        break;
+      }
+      if (item != nullptr && item->control == Control::Slider) {
+        float value = 0.0f;
+        if (steppedValue(item->value, item->min, item->max, item->step, increase,
+                         value)) {
+          item->value = value;
+          changed = true;
+          wantEvent = true;
+          out.value = item->value;
+          safeCopy(out.entity, item->entity);
+          safeCopy(out.targetPage, "");
+          break;
+        }
+      }
+      // Scrolling fallback: report it as the scroll it is, so an adjust event on
+      // the wire always carries a value.
+      if (!moveSelection(page, state, increase)) break;
+      changed = true;
+      wantEvent = true;
+      out.action = increase ? Action::ScrollDown : Action::ScrollUp;
       safeCopy(out.targetPage, state.pageId);
       break;
     }
@@ -1006,6 +1177,43 @@ size_t clipTextEllipsis(char (&dst)[RENDER_TEXT_CAP], const char *src,
   return keep;
 }
 
+namespace {
+
+// Case-insensitive equality for the two-valued states the checkbox renders
+// ("ON"/"On"/"on" all mean the same thing on a real Home Assistant payload).
+bool stateCaseIs(const char *state, const char *expected) {
+  if (state == nullptr || expected == nullptr) return false;
+  size_t index = 0;
+  for (; state[index] != '\0' && expected[index] != '\0'; ++index) {
+    const char raw = state[index];
+    const char lowered =
+        (raw >= 'A' && raw <= 'Z') ? static_cast<char>(raw - 'A' + 'a') : raw;
+    if (lowered != expected[index]) return false;
+  }
+  return state[index] == '\0' && expected[index] == '\0';
+}
+
+}  // namespace
+
+bool booleanState(const char *state) {
+  return booleanStateOn(state) || stateCaseIs(state, "off") ||
+         stateCaseIs(state, "false");
+}
+
+bool booleanStateOn(const char *state) {
+  return stateCaseIs(state, "on") || stateCaseIs(state, "true");
+}
+
+int16_t sliderFillWidth(const RenderRow &row) {
+  const float span = row.max - row.min;
+  if (!(span > 0.0f)) return 0;
+  float ratio = (row.value - row.min) / span;
+  if (ratio < 0.0f) ratio = 0.0f;
+  if (ratio > 1.0f) ratio = 1.0f;
+  const int16_t inner = static_cast<int16_t>(SLIDER_TRACK_W - 2);
+  return static_cast<int16_t>(ratio * static_cast<float>(inner) + 0.5f);
+}
+
 void formatRowValue(char (&dst)[RENDER_TEXT_CAP], const RenderRow &row) {
   char value[16];
   if (row.state[0] != '\0') {
@@ -1078,8 +1286,20 @@ void fillPageSnapshot(const Page &page, const AppState &state,
     safeCopy(row.state, item.state);
     safeCopy(row.unit, item.unit);
     row.value = item.value;
+    row.min = item.min;
+    row.max = item.max;
     row.selected = (itemIndex == state.selected);
     row.editing = row.selected && state.editing;
+    // How the value column is drawn follows from the item alone: a slider row
+    // shows the bar plus its number, a two-valued state shows a checkbox instead
+    // of the word "on"/"off", everything else keeps the state text.
+    if (item.control == Control::Slider) {
+      row.style = RowStyle::Slider;
+    } else if (booleanState(item.state)) {
+      row.style = RowStyle::Checkbox;
+    } else {
+      row.style = RowStyle::Text;
+    }
     ++out.rowCount;
   }
 }
@@ -1114,7 +1334,18 @@ void layoutNormalUi(const RenderSnapshot &snap, RenderModel &model) {
     // long value shrinks it. Overflow is marked with a trailing ellipsis so
     // a clipped name reads as truncated instead of ending mid-word.
     char value[RENDER_TEXT_CAP];
-    formatRowValue(value, row);
+    if (row.style == RowStyle::Checkbox) {
+      // The checkbox *is* the value: no word, so the name gets the full row.
+      value[0] = '\0';
+    } else if (row.style == RowStyle::Slider) {
+      // A slider row shows its number, never the on/off state: the interesting
+      // reading of a dimmed light is the level, not the fact that it is on.
+      RenderRow plain = row;
+      plain.state[0] = '\0';
+      formatRowValue(value, plain);
+    } else {
+      formatRowValue(value, row);
+    }
     const int16_t valueWidth =
         static_cast<int16_t>(std::strlen(value)) * MONO_CHAR_W;
     const int16_t namePx = ROW_VALUE_RIGHT_X - ROW_TEXT_X - valueWidth -
@@ -1124,8 +1355,44 @@ void layoutNormalUi(const RenderSnapshot &snap, RenderModel &model) {
                                  : 1;
     clipTextEllipsis(name, row.name, nameChars);
     addText(model, name, ROW_TEXT_X, rowTop, ROW_HEIGHT, TextAlign::Left);
-    addText(model, value, ROW_VALUE_RIGHT_X, rowTop, ROW_HEIGHT,
-            TextAlign::Right);
+    if (row.style == RowStyle::Checkbox) {
+      // Box in the value column, ticked when the entity is on. Composed from one
+      // rect and two lines, so no new primitive kind is needed for the panel or
+      // the browser preview.
+      const int16_t boxX =
+          static_cast<int16_t>(CHECKBOX_RIGHT_X - CHECKBOX_SIZE);
+      const int16_t boxY = static_cast<int16_t>(
+          rowTop + (ROW_HEIGHT - CHECKBOX_SIZE) / 2);
+      addRect(model, boxX, boxY, CHECKBOX_SIZE, CHECKBOX_SIZE,
+              PRIM_COLOR_BLACK);
+      if (booleanStateOn(row.state)) {
+        addLine(model, static_cast<int16_t>(boxX + 2),
+                static_cast<int16_t>(boxY + 7), static_cast<int16_t>(boxX + 6),
+                static_cast<int16_t>(boxY + 11));
+        addLine(model, static_cast<int16_t>(boxX + 6),
+                static_cast<int16_t>(boxY + 11), static_cast<int16_t>(boxX + 12),
+                static_cast<int16_t>(boxY + 3));
+      }
+    } else {
+      addText(model, value, ROW_VALUE_RIGHT_X, rowTop, ROW_HEIGHT,
+              TextAlign::Right);
+    }
+    if (row.style == RowStyle::Slider) {
+      // Slider bar along the bottom of the row: an outlined track plus a
+      // proportional fill, so the level is readable at a glance without reading
+      // the number. The fill tracks [min, max] and is clamped, so a payload with
+      // value outside its own range cannot draw outside the track.
+      const int16_t trackY = static_cast<int16_t>(
+          rowTop + ROW_HEIGHT - SLIDER_TRACK_BOTTOM_PAD - SLIDER_TRACK_H);
+      addRect(model, SLIDER_TRACK_X, trackY, SLIDER_TRACK_W, SLIDER_TRACK_H,
+              PRIM_COLOR_BLACK);
+      const int16_t fillW = sliderFillWidth(row);
+      if (fillW > 0) {
+        addFillRect(model, static_cast<int16_t>(SLIDER_TRACK_X + 1),
+                    static_cast<int16_t>(trackY + 1), fillW,
+                    static_cast<int16_t>(SLIDER_TRACK_H - 2), PRIM_COLOR_BLACK);
+      }
+    }
   }
 
   // Conditional scrollbar: track plus proportional thumb at x=291, only when

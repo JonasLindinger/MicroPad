@@ -25,17 +25,17 @@
 //     usb <0|1>                                  # USB host present; default 0
 //     portal <0|1>                               # default 0
 //     portalinfo <ssid>\t<password>\t<address>   # required when portal is 1
-//     item <name>\t<state>\t<unit>\t<value>\t<type>\t<entity>\t<target_page>
-//     key <key_id>\t<action>\t<entity>\t<target_page>   # an effective binding
-//     press <key_id>                             # resolve what pressing it does
+//     item <name>\t<state>\t<unit>\t<value>\t<type>\t<entity>\t<target_page>[\t<min>\t<max>\t<step>\t<control>]
+//     key <key_id>\t<action>\t<entity>\t<target_page>[\t<hold_action>\t<hold_entity>\t<hold_target_page>\t<double_action>\t<double_entity>\t<double_target_page>]   # an effective binding
+//     press <key_id> [tap|hold|double]           # resolve what pressing it does
 //
 // Output (single JSON object):
 //
 //     {"ok":true,"mode":"normal","title":"Home","total_items":3,"first_visible":0,
-//      "row_count":3,"rows":[...],"prims":[{"kind":"rect",...}],
+//      "row_count":3,"rows":[{"name":...,"style":"checkbox"}...],"prims":[{"kind":"rect",...}],
 //      "prims_truncated":false,"would_reject":false,
 //      "findings":[{"code":"field_clipped","severity":"warning",...}],
-//      "press":{"key":"r0c3","binding_action":"enter","item_action":"toggle",
+//      "press":{"key":"r0c3","gesture":"tap","binding_action":"enter","item_action":"toggle",
 //               "entity":"light.desk","target_page":""}}
 //
 // Exit codes: 0 = rendered (inspect "would_reject"/"findings"), 2 = malformed
@@ -56,6 +56,8 @@ namespace {
 using micropad::Action;
 using micropad::AppState;
 using micropad::Binding;
+using micropad::BindingTarget;
+using micropad::InputEvent;
 using micropad::Item;
 using micropad::ItemType;
 using micropad::KeyId;
@@ -65,6 +67,7 @@ using micropad::RenderModel;
 using micropad::RenderPrim;
 using micropad::RenderRow;
 using micropad::RenderSnapshot;
+using micropad::RowStyle;
 using micropad::TextAlign;
 
 constexpr size_t MAX_ITEMS = micropad::MAX_ITEMS_PER_PAGE;
@@ -95,6 +98,8 @@ struct Input {
   KeyId pressKey = KeyId::R0C0;
   Binding pressBinding{};
   bool hasBinding = false;
+  // Which gesture the press resolves as: 0 tap, 1 hold, 2 double.
+  uint8_t pressGesture = 0;
   KeyBinding bindings[MAX_BINDINGS]{};
   size_t bindingCount = 0;
   std::vector<Finding> findings;
@@ -255,6 +260,32 @@ bool parseItem(const std::string &payload, Input &input) {
   if (fields.size() > 6) {
     copyIdentifier(item.targetPage, fields[6], "items[].target_page", input);
   }
+  // Range and control are optional (the preview existed before sliders did), so
+  // a page that carries neither still renders exactly as it did.
+  if (fields.size() > 7) {
+    if (!parseFloat(fields[7], item.min)) {
+      fail(input, "item min must be a number");
+      return false;
+    }
+  }
+  if (fields.size() > 8) {
+    if (!parseFloat(fields[8], item.max)) {
+      fail(input, "item max must be a number");
+      return false;
+    }
+  }
+  if (fields.size() > 9) {
+    if (!parseFloat(fields[9], item.step)) {
+      fail(input, "item step must be a number");
+      return false;
+    }
+  }
+  if (fields.size() > 10 && !fields[10].empty()) {
+    if (!micropad::parseControl(fields[10].c_str(), item.control)) {
+      fail(input, "unknown item control '" + fields[10] + "'");
+      return false;
+    }
+  }
   ++input.page.itemCount;
   return true;
 }
@@ -271,6 +302,30 @@ bool parseBinding(const std::string &payload, Input &input, Binding &binding) {
   }
   if (fields.size() > 2) copyIdentifier(binding.entity, fields[2], "key.entity", input);
   if (fields.size() > 3) copyIdentifier(binding.targetPage, fields[3], "key.target_page", input);
+  // The two gesture targets are optional and default to unbound (action none),
+  // exactly like a keymap published before gestures existed.
+  binding.hold = BindingTarget{};
+  binding.doubleTap = BindingTarget{};
+  if (fields.size() > 4 && !fields[4].empty() &&
+      !micropad::parseAction(fields[4].c_str(), binding.hold.action)) {
+    fail(input, "unknown hold action '" + fields[4] + "'");
+    return false;
+  }
+  if (fields.size() > 5) copyIdentifier(binding.hold.entity, fields[5], "key.hold.entity", input);
+  if (fields.size() > 6) {
+    copyIdentifier(binding.hold.targetPage, fields[6], "key.hold.target_page", input);
+  }
+  if (fields.size() > 7 && !fields[7].empty() &&
+      !micropad::parseAction(fields[7].c_str(), binding.doubleTap.action)) {
+    fail(input, "unknown double action '" + fields[7] + "'");
+    return false;
+  }
+  if (fields.size() > 8) {
+    copyIdentifier(binding.doubleTap.entity, fields[8], "key.double.entity", input);
+  }
+  if (fields.size() > 9) {
+    copyIdentifier(binding.doubleTap.targetPage, fields[9], "key.double.target_page", input);
+  }
   return true;
 }
 
@@ -356,9 +411,29 @@ bool readInput(Input &input, bool &havePage, bool &havePortalInfo) {
       input.bindings[input.bindingCount].key = key;
       ++input.bindingCount;
     } else if (keyword == "press") {
-      if (tokens.size() < 1 || !micropad::parseKeyId(tokens[0].c_str(), input.pressKey)) {
+      // The gesture is an optional second token; tabs are accepted as separators
+      // like everywhere else in this format.
+      std::string spaced = payload;
+      for (char &character : spaced) {
+        if (character == '\t') character = ' ';
+      }
+      const std::vector<std::string> parts = split(spaced, ' ');
+      if (parts.size() < 1 || !micropad::parseKeyId(parts[0].c_str(), input.pressKey)) {
         fail(input, "press needs a known <key_id>");
         return false;
+      }
+      if (parts.size() > 1) {
+        const std::string gesture = parts[1];
+        if (gesture == "tap") {
+          input.pressGesture = 0;
+        } else if (gesture == "hold") {
+          input.pressGesture = 1;
+        } else if (gesture == "double") {
+          input.pressGesture = 2;
+        } else {
+          fail(input, "press gesture must be tap, hold or double");
+          return false;
+        }
       }
       input.hasPress = true;
     } else {
@@ -397,11 +472,15 @@ void printRows(const RenderSnapshot &snapshot) {
   std::printf("\"rows\":[");
   for (uint8_t i = 0; i < snapshot.rowCount; ++i) {
     const RenderRow &row = snapshot.rows[i];
+    const char *style = row.style == RowStyle::Slider
+                            ? "slider"
+                            : (row.style == RowStyle::Checkbox ? "checkbox" : "text");
     std::printf(
         "%s{\"name\":\"%s\",\"state\":\"%s\",\"unit\":\"%s\",\"value\":%g,"
-        "\"selected\":%s,\"editing\":%s}",
+        "\"min\":%g,\"max\":%g,\"style\":\"%s\",\"selected\":%s,\"editing\":%s}",
         i == 0 ? "" : ",", jsonEscape(row.name).c_str(), jsonEscape(row.state).c_str(),
         jsonEscape(row.unit).c_str(), static_cast<double>(row.value),
+        static_cast<double>(row.min), static_cast<double>(row.max), style,
         row.selected ? "true" : "false", row.editing ? "true" : "false");
   }
   std::printf("],");
@@ -440,19 +519,41 @@ void printPress(const Input &input) {
     std::printf("\"press\":null");
     return;
   }
+  // The gesture the caller asked about resolves exactly like the firmware does:
+  // a bound hold/double wins over the tap, an unbound one falls back to it.
+  const bool longPress = input.pressGesture == 1;
+  const bool doublePress = input.pressGesture == 2;
+  micropad::Binding effective{};
+  if (input.hasBinding) {
+    InputEvent scoped{};
+    scoped.key = input.pressKey;
+    scoped.pressed = true;
+    scoped.longPress = longPress;
+    scoped.doublePress = doublePress;
+    micropad::effectiveBinding(effective, input.pressBinding, scoped);
+  }
+  const bool gestureBound =
+      input.hasBinding &&
+      ((longPress && input.pressBinding.hold.action != Action::None) ||
+       (doublePress && input.pressBinding.doubleTap.action != Action::None));
   const char *bindingAction =
-      input.hasBinding ? micropad::actionName(input.pressBinding.action) : nullptr;
+      input.hasBinding ? micropad::actionName(gestureBound ? effective.action
+                                                          : input.pressBinding.action)
+                       : nullptr;
   const char *itemAction = nullptr;
   if (!input.portal && input.state.selected < input.page.itemCount) {
     itemAction = micropad::actionName(micropad::actionForSelectedItem(
         input.page.items[input.state.selected], input.state.editing));
   }
   std::printf(
-      "\"press\":{\"key\":\"%s\",\"binding_action\":\"%s\",\"item_action\":\"%s\","
-      "\"entity\":\"%s\",\"target_page\":\"%s\"}",
-      micropad::keyIdName(input.pressKey), bindingAction == nullptr ? "" : bindingAction,
-      itemAction == nullptr ? "" : itemAction, jsonEscape(input.pressBinding.entity).c_str(),
-      jsonEscape(input.pressBinding.targetPage).c_str());
+      "\"press\":{\"key\":\"%s\",\"gesture\":\"%s\",\"binding_action\":\"%s\","
+      "\"item_action\":\"%s\",\"entity\":\"%s\",\"target_page\":\"%s\"}",
+      micropad::keyIdName(input.pressKey),
+      longPress ? "hold" : (doublePress ? "double" : "tap"),
+      bindingAction == nullptr ? "" : bindingAction,
+      itemAction == nullptr ? "" : itemAction,
+      jsonEscape(gestureBound ? effective.entity : input.pressBinding.entity).c_str(),
+      jsonEscape(gestureBound ? effective.targetPage : input.pressBinding.targetPage).c_str());
 }
 
 int render(Input &input) {

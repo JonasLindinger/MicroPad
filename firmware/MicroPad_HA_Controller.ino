@@ -141,6 +141,10 @@ bool readMatrixKey(uint8_t row, uint8_t col) {
 micropad::PadController pad;
 bool catalogReady = false;
 
+// Staging keymap for one micropad/keymap payload (see onMqttMessage). In .bss
+// rather than on the loop-task stack for the size reason documented there.
+micropad::Binding keymapStaging[micropad::KEY_COUNT];
+
 // Activity clocks for the warm-sleep gate (Task 11). lastActivityMs is
 // refreshed by every emitted input so the idle timeout counts real inactivity;
 // awakeStartedMs anchors the 3000 ms post-wake minimum-awake brake and is set
@@ -155,18 +159,25 @@ void emitInput(const micropad::InputEvent &input) {
   if (index >= micropad::KEY_COUNT) return;
   lastActivityMs = input.atMs;  // every emitted event is input activity
   const micropad::Binding &binding = pad.activeKeymap[index];
+  // The effective binding answers both questions at once: which action this
+  // input carries (a bound gesture wins over the tap) and which entity/target
+  // page it addresses (a hold may name a different entity than the tap).
+  micropad::Binding gesture{};
+  micropad::effectiveBinding(gesture, binding, input);
   micropad::Action action = micropad::resolveBinding(binding, input);
+  micropad::Binding resolved = gesture;
   if (!input.pressed) return;
   // P1.1: a direct key binding steers exactly its own entity. Enter is the one
   // device-owned resolution that acts on the selected item, so the item's
   // entity is bound into a local copy of the binding — the stored keymap is
   // never rewritten and no selected item is substituted for a keymap entity.
-  micropad::Binding resolved = binding;
   if (action == micropad::Action::Enter) {
     // A hold asks the item for its second action (light/switch: turn off instead
     // of toggle); a type without one ignores the hold, so nothing is dispatched
-    // that the operator did not ask for. The tap path is untouched.
-    if (input.longPress) {
+    // that the operator did not ask for. The tap path is untouched. This is the
+    // fallback for a key whose own hold gesture is unbound: a bound hold was
+    // already resolved above and never reaches this branch.
+    if (input.longPress && binding.hold.action == micropad::Action::None) {
       const micropad::Action alternate = pad.selectedItemLongPressAction();
       if (alternate == micropad::Action::None) return;
       action = alternate;
@@ -190,14 +201,23 @@ void emitInput(const micropad::InputEvent &input) {
     return;
   }
   const micropad::ApplyResult result =
-      pad.applyAction(action, resolved, input.atMs);
+      pad.applyAction(action, resolved, input.atMs, input.direction);
   if (result.stateChanged) {
     requestDraw(micropad::DrawReason::StateChange);
   }
 }
 
+// Which matrix keys defer their tap for the double-press window: exactly the
+// keys whose effective binding carries a double gesture. Everything else keeps
+// the zero-latency press edge.
+bool matrixDoublePressEnabled(uint8_t index) {
+  return index < micropad::MATRIX_KEY_COUNT &&
+         pad.activeKeymap[index].doubleTap.action != micropad::Action::None;
+}
+
 void scanMatrix(uint32_t nowMs) {
-  micropad::scanMatrixPass(matrixDebounce, readMatrixKey, emitInput, nowMs);
+  micropad::scanMatrixPass(matrixDebounce, readMatrixKey, emitInput, nowMs,
+                           matrixDoublePressEnabled);
 }
 
 void scanEncoder(uint32_t nowMs) {
@@ -968,7 +988,7 @@ bool booleanField(JsonVariantConst value, bool &out, bool fallback) {
 
 }  // namespace
 
-bool parseBinding(JsonVariantConst value, micropad::Binding &out) {
+bool parseBindingTarget(JsonVariantConst value, micropad::BindingTarget &out) {
   if (!value.is<JsonObjectConst>()) return false;
   JsonObjectConst obj = value.as<JsonObjectConst>();
   const char *actionText = jsonString(obj["action"]);
@@ -978,6 +998,28 @@ bool parseBinding(JsonVariantConst value, micropad::Binding &out) {
   out.action = action;
   if (!copyOptionalString(obj["entity"], out.entity)) return false;
   if (!copyOptionalString(obj["target_page"], out.targetPage)) return false;
+  return true;
+}
+
+bool parseBinding(JsonVariantConst value, micropad::Binding &out) {
+  if (!value.is<JsonObjectConst>()) return false;
+  JsonObjectConst obj = value.as<JsonObjectConst>();
+  // The tap target plus the two optional gesture targets. A keymap published
+  // before gestures existed simply has neither field, and both stay unbound -
+  // the key then behaves exactly as it did (see resolveBinding).
+  micropad::BindingTarget tap{};
+  if (!parseBindingTarget(value, tap)) return false;
+  out.action = tap.action;
+  safeCopy(out.entity, tap.entity);
+  safeCopy(out.targetPage, tap.targetPage);
+  out.hold = micropad::BindingTarget{};
+  out.doubleTap = micropad::BindingTarget{};
+  const JsonVariantConst holdValue = obj["hold"];
+  if (!holdValue.isNull() && !parseBindingTarget(holdValue, out.hold)) return false;
+  const JsonVariantConst doubleValue = obj["double"];
+  if (!doubleValue.isNull() && !parseBindingTarget(doubleValue, out.doubleTap)) {
+    return false;
+  }
   return true;
 }
 
@@ -1007,11 +1049,30 @@ bool parseItem(JsonVariantConst value, micropad::Item &out) {
   if (!numericField(obj["max"], out.max, 100.0f)) return false;
   if (!numericField(obj["step"], out.step, 1.0f)) return false;
   if (!booleanField(obj["editable"], out.editable, false)) return false;
-  if (!std::isfinite(out.value) || !std::isfinite(out.min) ||
-      !std::isfinite(out.max) || !std::isfinite(out.step)) {
+  // `control` selects how the row is driven. Absent (a payload from an older
+  // generator) keeps the historical button behaviour; an unknown value rejects
+  // the payload like any other unknown enum token.
+  out.control = micropad::Control::Button;
+  const JsonVariantConst controlValue = obj["control"];
+  if (!controlValue.isNull()) {
+    const char *controlText = jsonString(controlValue);
+    if (controlText == nullptr) return false;
+    if (!micropad::parseControl(controlText, out.control)) return false;
+  }
+  if (!std::isfinite(out.value) || !std::isfinite(out.min) || !std::isfinite(out.max) ||
+      !std::isfinite(out.step)) {
     return false;
   }
   if (out.min > out.max || out.step <= 0.0f) return false;
+  // A slider on a type whose value the firmware cannot move, or with no range to
+  // move in, is normalised to a button instead of rejecting the page: the payload
+  // stays visible and the encoder keeps scrolling. The backend refuses to
+  // generate such an item in the first place, so this only ever catches a
+  // hand-written payload.
+  if (out.control == micropad::Control::Slider &&
+      (!micropad::itemTypeDescriptor(out.type).adjustable || out.min >= out.max)) {
+    out.control = micropad::Control::Button;
+  }
   return true;
 }
 
@@ -1068,7 +1129,14 @@ bool parseCurrentPage(JsonVariantConst root, micropad::Page &out) {
 
 bool parseEffectiveKeymap(JsonVariantConst root,
                           micropad::Binding (&out)[micropad::KEY_COUNT]) {
-  micropad::Binding staging[micropad::KEY_COUNT]{};
+  // Parsing writes straight into the staging array the caller owns. A rejected
+  // keymap leaves that array partly written, which is harmless because the
+  // caller commits (replaceKeymap) only after this returns true — and it keeps a
+  // second 14-entry keymap copy off the loop-task stack, which the gesture
+  // fields make three times as expensive (see Binding in micropad_core.h).
+  for (uint8_t i = 0; i < micropad::KEY_COUNT; ++i) {
+    out[i] = micropad::Binding{};
+  }
   if (root.is<JsonObjectConst>()) {
     // Canonical backend shape: {key_id: {action, entity, target_page}} with
     // exactly the fourteen physical keys (a fifteenth key is rejected).
@@ -1078,7 +1146,7 @@ bool parseEffectiveKeymap(JsonVariantConst root,
       const char *keyName = micropad::keyIdName(static_cast<micropad::KeyId>(i));
       const JsonVariantConst bindingValue = obj[keyName];
       if (bindingValue.isNull()) return false;  // missing key id
-      if (!parseBinding(bindingValue, staging[i])) return false;
+      if (!parseBinding(bindingValue, out[i])) return false;
     }
   } else if (root.is<JsonArrayConst>()) {
     // Clean-room spec shape: an array of exactly 14 objects carrying key_id.
@@ -1094,7 +1162,7 @@ bool parseEffectiveKeymap(JsonVariantConst root,
       const uint8_t index = static_cast<uint8_t>(parsedKey);
       if (seen[index]) return false;  // duplicate key ids rejected
       seen[index] = true;
-      if (!parseBinding(entry, staging[index])) return false;
+      if (!parseBinding(entry, out[index])) return false;
     }
     for (uint8_t i = 0; i < micropad::KEY_COUNT; ++i) {
       if (!seen[i]) return false;  // every key must be present
@@ -1102,9 +1170,7 @@ bool parseEffectiveKeymap(JsonVariantConst root,
   } else {
     return false;
   }
-  // All 14 entries validated: the complete staging array is committed in one
-  // operation by the caller (replaceKeymap); nothing below can fail.
-  std::memcpy(out, staging, sizeof(staging));
+  // All 14 entries validated; the caller commits them in one operation.
   return true;
 }
 
@@ -1169,9 +1235,12 @@ void onMqttMessage(char *topic, uint8_t *payload, unsigned int length) {
     return;
   }
   if (std::strcmp(topic, mp::TOPIC_KEYMAP) == 0) {
-    micropad::Binding staging[micropad::KEY_COUNT]{};
-    if (parseEffectiveKeymap(root, staging)) {
-      replaceKeymap(pad.activeKeymap, staging);
+    // The staging keymap lives in .bss, not on the stack: a Binding carries its
+    // two gesture targets as well, so 14 of them are ~5.5 KB — too much to put
+    // in the MQTT callback frame (the loop task has 16 KiB total). Only this
+    // callback touches the buffer, and it is never read after a failed parse.
+    if (parseEffectiveKeymap(root, keymapStaging)) {
+      replaceKeymap(pad.activeKeymap, keymapStaging);
     } else {
       ++diagnostics.keymapRejects;
     }

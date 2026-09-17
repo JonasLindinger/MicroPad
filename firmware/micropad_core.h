@@ -20,6 +20,13 @@ constexpr uint32_t INPUT_DEBOUNCE_MS = 25;
 // well above a deliberate tap (a normal press here is 25 ms of debounce plus a
 // human tap) so the gesture cannot fire by accident.
 constexpr uint32_t LONG_PRESS_MS = 600;
+// How long after a press a second press still counts as a double press. A key
+// without a bound double gesture is never affected: the filter only defers a tap
+// when the effective keymap binds one (see DebouncedInput::setDoublePressEnabled),
+// so ordinary keys keep firing on the press edge with no added latency. Well
+// below LONG_PRESS_MS, so a deferred tap is always delivered before a hold could
+// fire on the same press.
+constexpr uint32_t DOUBLE_PRESS_MS = 350;
 constexpr uint32_t RESYNC_SETTLE_MS = 350;
 constexpr uint32_t WIFI_RETRY_MS = 5000;
 // Recovery: a saved Wi-Fi record that can never associate (typo, moved AP,
@@ -154,7 +161,7 @@ enum class KeyId : uint8_t {
 enum class Action : uint8_t {
   None, Enter, Back, Home, Settings, Scroll, ScrollUp, ScrollDown,
   Navigate, Keymap, GetAllPages, Toggle, On, Off, Press, VolumeUp,
-  VolumeDown, MediaNext, MediaPrev, Edit, Confirm
+  VolumeDown, MediaNext, MediaPrev, Edit, Confirm, Adjust
 };
 enum class DrawReason : uint8_t {
   Boot, StateChange, PortalEnter, PortalExit, PowerEdge, Recovery, PartialLimit
@@ -163,14 +170,31 @@ enum class ItemType : uint8_t {
   Category, Light, Switch, Script, Button, Scene, Sensor,
   MediaPlayer, Number, Settings, Back, Cover, Fan, InputBoolean, Lock
 };
+// How one row renders its value column: as text (the Home Assistant state or a
+// number), as a checkbox (a two-valued state) or as a slider bar (an item whose
+// control is `slider`). Derived from the item, never configured separately on the
+// panel side.
+enum class RowStyle : uint8_t { Text, Checkbox, Slider };
+constexpr size_t ROW_STYLE_COUNT = static_cast<size_t>(RowStyle::Slider) + 1;
+
+// How a row is driven. `Button` is the historical behaviour (a press runs the
+// row's action); `Slider` adds an encoder turn that adjusts the row's value while
+// the cursor rests on it, without an Enter press. Mirrors the contract's
+// `controls` list, which the editor reads.
+enum class Control : uint8_t { Button, Slider };
+constexpr size_t CONTROL_COUNT = static_cast<size_t>(Control::Slider) + 1;
+
 // LongPress is emitted once per hold, LONG_PRESS_MS after the debounced press.
-enum class Edge : uint8_t { None, Pressed, Released, LongPress };
+// DoublePress replaces the second press of a double press when the key has a
+// bound double gesture; the first press of that pair is delivered as a deferred
+// Pressed unless the second press arrives inside DOUBLE_PRESS_MS.
+enum class Edge : uint8_t { None, Pressed, Released, LongPress, DoublePress };
 enum class PowerEdge : uint8_t { None, Connected, Disconnected };
 
 // Enum-bounded counts. Derived from the enum instead of typed as literals so a
 // new action/item type cannot leave a table short or a loop bound stale; the
 // static tests additionally assert these track contracts/mqtt-contract.json.
-constexpr size_t ACTION_COUNT = static_cast<size_t>(Action::Confirm) + 1;
+constexpr size_t ACTION_COUNT = static_cast<size_t>(Action::Adjust) + 1;
 // Off the *last* enumerator: appending an item type must update this line, and
 // tests/integration/test_mqtt_contract.py fails if it stops matching the contract.
 constexpr size_t ITEM_TYPE_COUNT = static_cast<size_t>(ItemType::Lock) + 1;
@@ -189,16 +213,32 @@ struct ItemTypeDescriptor {
   // meaningful second action.
   Action alternateAction;
   bool editable;  // Confirm replaces defaultAction while the pad edits this row
+  // True when the type carries a value an encoder turn can move (and therefore
+  // may be configured as a slider row). Mirrors the contract's `adjustable` flag.
+  bool adjustable;
 };
 extern const ItemTypeDescriptor ITEM_TYPE_DESCRIPTORS[ITEM_TYPE_COUNT];
 const ItemTypeDescriptor &itemTypeDescriptor(ItemType type);
 
-// One key's effective action plus optional context strings (see "Fixed Data
-// Model"). entity is the target HA entity id, targetPage the destination page.
+// One action plus its optional context strings (see "Fixed Data Model"). entity
+// is the target HA entity id, targetPage the destination page. Used for a key's
+// tap and for each of its gestures.
+struct BindingTarget {
+  Action action = Action::None;
+  char entity[ENTITY_CAP] = {};
+  char targetPage[PAGE_ID_CAP] = {};
+};
+
+// One key's effective binding: the tap target plus the two gesture targets. An
+// unbound gesture (action None) never fires and leaves the key's behaviour
+// exactly as it was before gestures existed, which is what keeps an older
+// published keymap valid.
 struct Binding {
   Action action = Action::None;
   char entity[ENTITY_CAP] = {};
   char targetPage[PAGE_ID_CAP] = {};
+  BindingTarget hold;
+  BindingTarget doubleTap;
 };
 
 // A decoded, debounced hardware event. direction is meaningful for encoder
@@ -213,6 +253,9 @@ struct InputEvent {
   // hold means "the other thing". Declared last so the existing four-field
   // aggregate initializers (and any future one) stay valid and default to a tap.
   bool longPress = false;
+  // True for the second press of a double press (see DebouncedInput). Declared
+  // last for the same reason as longPress.
+  bool doublePress = false;
 };
 
 // Per-key active-low debouncer (see "Debounced Matrix and Encoder Input").
@@ -229,9 +272,18 @@ class DebouncedInput {
  public:
   // Returns None when nothing changed, the debounced edge on a change, and
   // LongPress exactly once while a debounced press is held past LONG_PRESS_MS.
+  // With the double-press filter enabled the press edge is deferred by up to
+  // DOUBLE_PRESS_MS: a second press inside that window reports DoublePress (and
+  // the deferred Pressed is dropped), otherwise the deferred Pressed is returned
+  // as soon as the window closes.
   Edge update(bool rawPressed, uint32_t nowMs);
   void primeForWake(bool rawPressed, uint32_t nowMs);
   bool held() const;
+  // Enables the double-press filter for this key. The caller (scanMatrixPass,
+  // fed from the effective keymap) enables it only for keys that bind a double
+  // gesture, so no other key pays the deferral.
+  void setDoublePressEnabled(bool enabled);
+  bool doublePressEnabled() const { return doublePressEnabled_; }
 
  private:
   bool stable_ = false;
@@ -239,6 +291,13 @@ class DebouncedInput {
   bool longPressFired_ = false;
   uint32_t candidateSinceMs_ = 0;
   uint32_t pressedAtMs_ = 0;
+  bool doublePressEnabled_ = false;
+  // A debounced press whose tap is waiting for the double-press window, and the
+  // release that armed the second press. Both are cleared by primeForWake.
+  bool tapPending_ = false;
+  bool secondPressArmed_ = false;
+  uint32_t tapPendingAtMs_ = 0;
+  uint32_t releasedAtMs_ = 0;
 };
 
 // 16-state quadrature decoder tuned for the board's two transitions per
@@ -294,6 +353,7 @@ struct Item {
   float step;
   char unit[UNIT_CAP];
   bool editable;
+  Control control = Control::Button;
   char targetPage[PAGE_ID_CAP];
 };
 struct Page {
@@ -352,8 +412,15 @@ struct RenderRow {
   char state[STATE_CAP];
   char unit[UNIT_CAP];
   float value;
+  // Range of a slider row, used only to size the bar's fill.
+  float min;
+  float max;
   bool selected;
   bool editing;
+  // How the value column is drawn, derived from the item: Slider for a slider
+  // row (the bar plus the numeric value), Checkbox for a two-valued state (the
+  // box instead of the word "on"/"off"), Text otherwise.
+  RowStyle style = RowStyle::Text;
 };
 
 // A self-contained, immutable description of everything the display needs.
@@ -466,11 +533,23 @@ constexpr int16_t ROW_NAME_CLIP_X = 150;
 constexpr int16_t ROW_VALUE_RIGHT_X = 288;    // right-aligned value, before gutter
 constexpr int16_t MONO_CHAR_W = 11;           // FreeMonoBold9pt7b xAdvance (clip math)
 constexpr size_t RENDER_TEXT_CAP = 32;
-// 32 prims is the measured worst case plus ~45 % headroom: a full 4-row page
-// with selection cursors, title, network cell, scrollbar and power symbol emits
-// 22 prims (host probe), so the former 48 only paid for unused render-task
-// stack (each prim is 50 bytes).
-constexpr size_t RENDER_PRIM_CAP = 32;
+// Slider rows draw a track along the bottom of the row plus a proportional fill;
+// checkbox rows draw a box (and two tick lines when it is on) in the value
+// column instead of a word. Both are composed from the existing rect/line prims,
+// so the panel translator and the browser preview need no new primitive kind.
+constexpr int16_t SLIDER_TRACK_X = ROW_TEXT_X;
+constexpr int16_t SLIDER_TRACK_W = ROW_VALUE_RIGHT_X - ROW_TEXT_X;
+constexpr int16_t SLIDER_TRACK_H = 4;
+constexpr int16_t SLIDER_TRACK_BOTTOM_PAD = 3;  // track sits this far above row bottom
+constexpr int16_t CHECKBOX_SIZE = 14;
+constexpr int16_t CHECKBOX_RIGHT_X = ROW_VALUE_RIGHT_X;
+// Measured worst cases (host probe, testRenderPrimBudgetHeadroom): a full 4-row
+// page with selection cursor, title, network cell, scrollbar and power symbol
+// emits 22 prims with text rows, and 30 with four slider rows (track, fill and
+// value each) or four ticked checkbox rows. 40 keeps the documented 25 % headroom
+// over the worst case instead of the one prim 32 would have left. Each prim is
+// 50 bytes of render-task stack (8 KiB total), so the extra 8 prims cost 400 B.
+constexpr size_t RENDER_PRIM_CAP = 40;
 constexpr uint32_t DISPLAY_BUSY_TIMEOUT_MS = 15000;
 
 // Network state values a snapshot carries (mirrors the sketch enum): 1
@@ -654,6 +733,18 @@ size_t clipTextEllipsis(char (&dst)[RENDER_TEXT_CAP], const char *src,
 // angle brackets without changing the row layout.
 void formatRowValue(char (&dst)[RENDER_TEXT_CAP], const RenderRow &row);
 
+// True for a two-valued state that the panel draws as a checkbox instead of the
+// literal word: "on"/"off" and "true"/"false", case-insensitively. Everything
+// else (a sensor reading, a media state, an empty state) keeps the text column,
+// so the checkbox never invents a boolean where the entity has none.
+bool booleanState(const char *state);
+// True when the state is the "on" (or "true") side of that pair.
+bool booleanStateOn(const char *state);
+// Pixel width of a slider row's bar fill, derived from the row's [min, max] and
+// value and clamped to the track's inner width. 0 for an empty range or a value
+// at the bottom of it, the full inner width at the top.
+int16_t sliderFillWidth(const RenderRow &row);
+
 // Full landscape UI model for the non-portal snapshot: title/status strip,
 // four fixed item rows with selection, and the conditional scrollbar.
 void layoutNormalUi(const RenderSnapshot &snap, RenderModel &model);
@@ -762,8 +853,11 @@ struct PadController {
 
   Page *currentPage();
   Item *currentItem();
+  // direction carries the encoder turn (-1 up/counterclockwise, +1
+  // down/clockwise, 0 for a matrix key) so Adjust can step the selected row's
+  // value; every other action ignores it.
   ApplyResult applyAction(Action action, const Binding &binding,
-                          uint32_t atMs);
+                          uint32_t atMs, int8_t direction = 0);
   Action selectedItemAction() const;
   Action selectedItemLongPressAction() const;
   bool resyncDue(uint32_t nowMs) const;
@@ -830,13 +924,25 @@ bool parseKeyId(const char *text, KeyId &out);
 const char *actionName(Action action);
 bool parseAction(const char *text, Action &out);
 bool parseItemType(const char *text, ItemType &out);
+const char *controlName(Control control);
+bool parseControl(const char *text, Control &out);
 void loadDefaultKeymap(Binding (&out)[KEY_COUNT]);
 Action resolveBinding(const Binding &binding, const InputEvent &input);
+
+// The binding one input actually carries out: a bound gesture replaces the tap
+// target (its own action, entity and target page - a hold may address a
+// different entity than the tap), an unbound gesture leaves the tap target in
+// place. resolveBinding() answers the action, this answers action plus context.
+void effectiveBinding(Binding &out, const Binding &binding,
+                      const InputEvent &input);
 
 // Host-testable input scanning. The raw GPIO is owned by thin adapters the
 // Arduino sketch supplies over real pins; host tests supply their own.
 using MatrixReadFn = bool (*)(uint8_t row, uint8_t col);
 using EventEmitFn = void (*)(const InputEvent &input);
+// Per-key double-press gate: true for a key whose effective binding carries a
+// double gesture, which is the only case where a tap is deferred.
+using DoubleEnableFn = bool (*)(uint8_t keyIndex);
 
 // Matrix switch index for (row, col): matches the KeyId ordering r0c0..r2c3.
 constexpr uint8_t matrixKeyIndex(uint8_t row, uint8_t col) {
@@ -853,7 +959,8 @@ constexpr InputEvent encoderEvent(int8_t step, uint32_t nowMs) {
 // One active-low matrix pass. readKey owns driving its row LOW and restoring
 // it HIGH before returning; emit receives each debounced edge.
 void scanMatrixPass(DebouncedInput (&debounce)[MATRIX_KEY_COUNT],
-                    MatrixReadFn readKey, EventEmitFn emit, uint32_t nowMs);
+                    MatrixReadFn readKey, EventEmitFn emit, uint32_t nowMs,
+                    DoubleEnableFn doubleEnabled = nullptr);
 
 // One encoder pass. phase is the raw (A << 1) | B sample; a completed detent
 // delivers exactly one pressed event through emit.
