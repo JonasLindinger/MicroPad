@@ -19,7 +19,8 @@ Delta against the previous revision built with the same command: **+2 192 B flas
 +9 376 B RAM** — itemized in `CHANGELOG.md` (a `Binding` is 131 → 393 B, so the live
 keymap and the keymap parse buffer are what grew; the parse buffer is in `.bss`
 because two 5.5 KB arrays would not fit the 16 KiB loop stack).
-**Tests:** 834 pytest (44 of them browser) · 199 firmware static · host core binary · 193 release.
+**Tests (after the slider/gesture slice):** 883 pytest, 55 of them browser · 208 firmware static ·
+host core binary · 193 release · 9 deployment.
 
 ---
 
