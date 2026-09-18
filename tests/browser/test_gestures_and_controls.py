@@ -115,6 +115,34 @@ def test_state_checkbox_is_absent_for_a_real_reading(page, app_url):
 
 
 @pytest.mark.browser
+def test_state_switch_keeps_the_rows_own_pair(page, app_url, config_writes):
+    # The pad draws the checkbox for every two-valued vocabulary, not only for
+    # on/off, so the switch writes the pair the row actually uses: a cover in
+    # "open" state must toggle to "closed", never to "off" - a state written in
+    # the wrong vocabulary is one Home Assistant contradicts on the next refresh.
+    page.goto(app_url)
+    _add_item(page, "Blind", "cover", "cover.blind")
+
+    card = page.locator('[data-item-index="0"]')
+    card.get_by_label("State").fill("open")
+    expect(page.locator("#save-status")).to_have_text("Saved")
+
+    toggle = card.get_by_label("On", exact=True)
+    expect(toggle).to_be_visible()
+    expect(toggle).to_be_checked()  # "open" is the on side of its pair
+    toggle.uncheck()
+    expect(page.locator("#save-status")).to_have_text("Saved")
+    saved_state = config_writes()[-1]["json"]["pages"][0]["items"][0]["state"]
+    assert saved_state == "closed"
+    expect(card.get_by_label("State")).to_have_value("closed")
+
+    # ... and back, from the off member of the same pair.
+    toggle.check()
+    expect(page.locator("#save-status")).to_have_text("Saved")
+    assert config_writes()[-1]["json"]["pages"][0]["items"][0]["state"] == "open"
+
+
+@pytest.mark.browser
 def test_hold_and_double_gestures_are_configured_and_kept(
     page, app_url, config_writes
 ):

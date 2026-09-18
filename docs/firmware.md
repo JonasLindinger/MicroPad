@@ -175,7 +175,7 @@ checks) see `docs/hardware-acceptance.md`.
   publishes the *retained* payload `micropad/device`:
 
   ```json
-  {"fw": "1.2.0", "contract": 3, "caps": {"pages": 24, "items": 20, "name": 32,
+  {"fw": "1.3.0", "contract": 3, "caps": {"pages": 24, "items": 20, "name": 32,
    "title": 32, "page_id": 32, "entity": 96, "state": 32, "unit": 16,
    "mqtt_buffer": 16384, "stack": 16384}}
   ```
@@ -243,8 +243,13 @@ outside (`adjustable`: light, fan, cover, media_player, number).
   level's fraction taken from `value` between `min` and `max` (`min`/`max` come
   from the item; a degenerate range 0..0 or an out-of-range value draws as 0 %/100 %
   instead of dividing by zero or overflowing the track). A two-valued state is drawn
-  as a checkbox — a box and, when on, a tick — instead of the word `on`; the pad
-  never writes `on`/`off` to the panel any more. Both compositions use the existing
+  as a checkbox — a box and, when on, a tick — instead of the word, and the pad
+  never writes `on`/`off` to the panel any more. The vocabulary is the checkbox's
+  own, not one entity type's: on/off, true/false, open/closed, locked/unlocked,
+  home/away, yes/no, active/inactive, enabled/disabled (case-insensitively), so a
+  cover or a lock reads like a switch does. States that only *look* binary — a media
+  player's `playing`/`paused`, a sensor reading, an empty state — keep their text,
+  because a tick would claim a semantics they do not have. Both compositions use the existing
   rect/line primitives, so no new primitive kind, no new translator case and no new
   preview path were needed.
 * **The encoder turns the level.** `adjust` steps the selected row by the item's own
@@ -252,12 +257,23 @@ outside (`adjustable`: light, fan, cover, media_player, number).
   writes it back (`{"action":"adjust","entity":…,"value":<new>}`). The event carries
   the value instead of a direction because the row's step and range only exist on the
   device: the receiving automation would otherwise have to guess both.
-* **Three cases where the encoder does something other than step**, all deliberate:
-  a row that is not a slider (including the pad's own status rows) **scrolls**, a
-  slider already at its bound **scrolls** as well — a slider row is never a dead end
-  — and a **matrix key** (no direction) does nothing. `adjust` on a non-slider row is
-  therefore the same as `scroll_up`/`scroll_down`, which is why the encoder's default
-  binding could become `adjust` without breaking anything.
+* **What the encoder does besides stepping**, all deliberate: a row that is *not* a
+  slider (including the pad's own status rows) **scrolls**, a slider already at its
+  bound in that direction **does nothing at all** (no step, no event, no cursor
+  move: the value is at its limit and the limit holds), and a **matrix key** (no
+  direction) does nothing. `adjust` on a non-slider row is therefore the same as
+  `scroll_up`/`scroll_down`.
+* **The encoder's shipped default stays `scroll_up`/`scroll_down`.** A turn moves the
+  cursor on every page, exactly as it always did; `adjust` is available in the key map
+  for an operator who wants the encoder to drive levels. That default is also the way
+  out of the one case the bound rule cannot cover: a page whose rows are *all* sliders
+  parked at the same end would otherwise not scroll with the encoder, and any key
+  bound to `scroll_up`/`scroll_down` (or `back`/`home`) still leaves the row.
+* **A slider row never scrolls**, not even when it cannot step. A degenerate range
+  (`min == max`) or a step of zero makes the turn a no-op rather than a cursor move —
+  and the lint reports such a row as an error (`slider_without_range`,
+  `slider_without_step`), so a payload the pad would refuse to move never reaches it
+  in the first place.
 * **The edit path is untouched.** `edit`/`confirm` still let you pick a bounded value
   with the encoder and confirm with Enter, which is the only way to set a value that
   is not on the step grid.

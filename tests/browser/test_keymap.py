@@ -166,9 +166,9 @@ def test_restore_defaults_requires_confirmation_and_clears_all_overrides(page, a
         "r0c0": "home", "r0c1": "none", "r0c2": "none", "r0c3": "enter",
         "r1c0": "none", "r1c1": "none", "r1c2": "none", "r1c3": "enter",
         "r2c0": "none", "r2c1": "none", "r2c2": "none", "r2c3": "back",
-        # The encoder default is adjust: it steps the selected slider row and
-        # scrolls the cursor everywhere else.
-        "enc_up": "adjust", "enc_down": "adjust",
+        # The encoder default stays plain scrolling; `adjust` (step the sliders
+        # under the cursor) is an option, not the shipped default.
+        "enc_up": "scroll_up", "enc_down": "scroll_down",
     }
     # Every page-local override is cleared (the fixture starts living-room with an r1c0
     # override) while the rest of the configuration is left intact.

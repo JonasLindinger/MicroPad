@@ -120,7 +120,11 @@ the three-way encoder semantics (step / scroll / no-op) are recorded in `docs/fi
 "`edit` on a light steps brightness via the encoder" — turned out to be the wrong shape: pressing
 Enter first is exactly the interaction the feature was asked to remove, and a slider row needs no
 edit mode at all. The `edit`/`confirm` path for editable numbers is unchanged and still the way to
-type a bounded value.
+type a bounded value. Two decisions were settled by the operator rather than by the code: the
+encoder's default stays `scroll_up`/`scroll_down` (`adjust` is an option in the key map, not a new
+behaviour on every existing page), and a slider at its bound does nothing at all instead of
+scrolling on — the escape off such a row is any key bound to scrolling, which is what the default
+does.
 
 **C2 — diagnostics.** The pad publishes the retained `micropad/diag` payload on every connect and
 then once a minute while connected: uptime, MQTT connects, catalog/page/keymap parse accept+reject

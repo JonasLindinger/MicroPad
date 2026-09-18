@@ -321,9 +321,11 @@ void testKeymapModel() {
   assert(map[3].action == Action::Enter);
   assert(map[7].action == Action::Enter);
   assert(map[11].action == Action::Back);
-  // The encoder default is Adjust: it steps a slider row and scrolls otherwise.
-  assert(map[12].action == Action::Adjust);
-  assert(map[13].action == Action::Adjust);
+  // The encoder default stays plain scrolling: a default that silently changes
+  // what the encoder does on every existing page would be a surprise, so `adjust`
+  // is an option in the key map, not the shipped default.
+  assert(map[12].action == Action::ScrollUp);
+  assert(map[13].action == Action::ScrollDown);
   for (size_t i : {1U, 2U, 4U, 5U, 6U, 8U, 9U, 10U}) {
     assert(map[i].action == Action::None);
   }
@@ -2155,7 +2157,8 @@ void testAllActionsReachDefinedOutcome() {
   // adjust: a zero-direction turn (a matrix key has no direction) is the
   // documented no-op; a directional turn on a row that is not a slider scrolls
   // exactly like scroll_up/scroll_down; on a slider row it steps the value and
-  // queues an adjust event carrying the new value.
+  // queues an adjust event carrying the new value, and at the bound it does
+  // nothing at all (no step, no scroll, no event).
   pad.state.selected = 0;
   r = pad.applyAction(Action::Adjust, b, 1400, 0);
   assert(!r.stateChanged && !r.eventReady);
@@ -2806,19 +2809,34 @@ void testAdjustSliderSemantics() {
   assert(pad.queue.pop(event));
   assert(event.value == 100.0f);
 
-  // At the bound the encoder scrolls instead, so the row is never a dead end:
-  // two slider rows back to back stay reachable.
+  // At the bound in that direction nothing happens at all: no step, no event and
+  // no cursor move. The value is at its limit and that limit holds - a turn that
+  // was meant to stop turning must not scroll the page out from under the
+  // operator. The opposite direction still steps, so the row itself is not stuck.
   pad.state.selected = 0;
   r = pad.applyAction(Action::Adjust, b, 400, 1);
+  assert(!r.stateChanged && !r.eventReady);
+  assert(items[0].value == 100.0f);
+  assert(pad.state.selected == 0);
+  assert(pad.queue.size() == 0);
+  r = pad.applyAction(Action::Adjust, b, 420, -1);
   assert(r.stateChanged && r.eventReady);
+  assert(items[0].value == 95.0f);
+  assert(pad.queue.pop(event));
+  assert(event.action == Action::Adjust);
+
+  // The escape from a slider at its bound is a plain scroll, which is why the
+  // encoder's shipped default stays scroll_up/scroll_down: an explicit ScrollDown
+  // (a key bound to it, or the encoder's own default) still leaves the row.
+  pad.state.selected = 0;
+  r = pad.applyAction(Action::ScrollDown, b, 430);
   assert(pad.state.selected == 1);
   assert(pad.queue.pop(event));
   assert(event.action == Action::ScrollDown);
-  assert(std::strcmp(event.targetPage, "home") == 0);
 
-  // A row that is not a slider scrolls: the same behaviour as before sliders
-  // existed, so an existing config keeps working with an encoder bound to
-  // adjust.
+  // A row that is not a slider scrolls under `adjust` too: the same behaviour as
+  // before sliders existed, so an existing config keeps working with an encoder
+  // bound to adjust.
   r = pad.applyAction(Action::Adjust, b, 500, 1);
   assert(pad.state.selected == 2);
   assert(pad.queue.pop(event));
@@ -2858,8 +2876,10 @@ void testAdjustSliderSemantics() {
   assert(!r.eventReady);
   assert(items[2].value == 10.0f);
 
-  // A slider row whose payload range is degenerate (min == max) behaves like a
-  // plain row: the firmware cannot move it, so the encoder scrolls.
+  // A slider row whose payload range is degenerate (min == max) can never move, so
+  // a turn is a no-op like any other slider that cannot step - not a scroll. The
+  // lint refuses such a row with `slider_without_range` as an error, so this is the
+  // behaviour of a payload the backend would not have published.
   pad.state.editing = false;
   items[1].control = Control::Slider;
   items[1].min = 10.0f;
@@ -2867,29 +2887,36 @@ void testAdjustSliderSemantics() {
   items[1].value = 10.0f;
   pad.state.selected = 1;
   r = pad.applyAction(Action::Adjust, b, 1300, 1);
-  assert(r.stateChanged && r.eventReady);
-  assert(pad.state.selected == 2);
-  assert(pad.queue.pop(event));
-  assert(event.action == Action::ScrollDown);
+  assert(!r.stateChanged && !r.eventReady);
+  assert(pad.state.selected == 1);
+  assert(items[1].value == 10.0f);
+  assert(pad.queue.size() == 0);
 }
 
 void testRowStylesAndValueColumn() {
-  // The checkbox is the value column of a two-valued state; the words on/off are
-  // what the panel no longer prints.
-  assert(booleanState("on"));
-  assert(booleanState("ON"));
-  assert(booleanState("off"));
-  assert(booleanState("Off"));
-  assert(booleanState("true"));
-  assert(booleanState("FALSE"));
-  assert(!booleanState("open"));
-  assert(!booleanState("playing"));
-  assert(!booleanState(""));
+  // The checkbox is the value column of a two-valued state; the word is what the
+  // panel no longer prints. Every pair Home Assistant reports for a boolean-ish
+  // entity counts, not only an entity literally called a switch: a cover, a lock
+  // and a presence sensor read at a glance like a switch does.
+  for (const char *state : {"on", "ON", "true", "True", "open", "OPEN", "locked",
+                            "home", "yes", "active", "enabled"}) {
+    assert(booleanState(state));                            // it is a pair member
+    assert(booleanStateOn(state));                          // on the "on" side
+  }
+  for (const char *state : {"off", "Off", "false", "FALSE", "closed", "unlocked",
+                            "away", "no", "inactive", "disabled"}) {
+    assert(booleanState(state));                            // it is a pair member
+    assert(!booleanStateOn(state));                         // on the "off" side
+  }
+  // Only binary *shapes* count: states that merely look binary keep their text,
+  // so the tick never claims a semantics the entity does not have.
+  for (const char *state : {"playing", "paused", "idle", "cleaning", "23.4", "",
+                            "unavailable"}) {
+    assert(!booleanState(state));
+    assert(!booleanStateOn(state));
+  }
   assert(!booleanState(nullptr));
-  assert(booleanStateOn("on"));
-  assert(booleanStateOn("TRUE"));
-  assert(!booleanStateOn("off"));
-  assert(!booleanStateOn(""));
+  assert(!booleanStateOn(nullptr));
 
   // The fill tracks [min, max] and stays inside the track.
   RenderRow row{};

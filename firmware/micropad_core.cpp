@@ -151,12 +151,15 @@ void loadDefaultKeymap(Binding (&out)[KEY_COUNT]) {
   out[3].action = Action::Enter;      // r0c3
   out[7].action = Action::Enter;      // r1c3
   out[11].action = Action::Back;      // r2c3
-  // The encoder is bound to Adjust, not to plain scrolling: an encoder turn steps
-  // the selected row's value when that row is a slider and scrolls the cursor
-  // otherwise (see PadController::applyAction), so one binding covers both. This
-  // mirrors the backend's default_keymap (models.py _DEFAULT_ACTIONS).
-  out[12].action = Action::Adjust;  // enc_up
-  out[13].action = Action::Adjust;  // enc_down
+  // The encoder keeps plain scrolling as the default: a turn moves the cursor,
+  // exactly as it always did. `adjust` (which steps the value of a slider row
+  // instead) is available for an operator who wants it, but it is not imposed on
+  // every configuration - a default that changes what the encoder does on every
+  // existing page is a surprise, and the configurator's key map is where that
+  // choice belongs. This mirrors the backend's default key map (models.py
+  // _DEFAULT_ACTIONS).
+  out[12].action = Action::ScrollUp;    // enc_up
+  out[13].action = Action::ScrollDown;  // enc_down
 }
 
 Action resolveBinding(const Binding &binding, const InputEvent &input) {
@@ -857,9 +860,13 @@ ApplyResult PadController::applyAction(Action action, const Binding &binding,
       //    ScrollUp/ScrollDown does and confirm with an Edit event;
       //  * on a slider row, step the value by `step`, clamped into [min, max],
       //    and publish an adjust event carrying the new value;
-      //  * otherwise - and on a slider already at its bound in that direction -
-      //    scroll the cursor, so the encoder is never a dead end and a config
-      //    without sliders keeps behaving exactly like plain scrolling.
+      //  * on a slider that is already at its bound in that direction, do
+      //    nothing: the value is at its limit and the operator asked for that
+      //    limit to hold. Turning further does not move the cursor instead -
+      //    a row that suddenly scrolls the page when you meant to stop turning
+      //    is how you lose the row you were working on;
+      //  * otherwise (the row is not a slider at all) scroll the cursor, so a
+      //    configuration without sliders behaves exactly like plain scrolling.
       // The row's own entity is addressed (the pad adjusts what it shows), and
       // the direction comes from the turn: clockwise/right raises the value.
       if (direction == 0) break;  // a matrix key has no direction
@@ -889,11 +896,11 @@ ApplyResult PadController::applyAction(Action action, const Binding &binding,
           out.value = item->value;
           safeCopy(out.entity, item->entity);
           safeCopy(out.targetPage, "");
-          break;
         }
+        break;  // a slider row never scrolls: stepping is all it does
       }
-      // Scrolling fallback: report it as the scroll it is, so an adjust event on
-      // the wire always carries a value.
+      // Not a slider: plain scrolling, reported as the scroll it is, so an adjust
+      // event on the wire always carries a value.
       if (!moveSelection(page, state, increase)) break;
       changed = true;
       wantEvent = true;
@@ -1195,13 +1202,40 @@ bool stateCaseIs(const char *state, const char *expected) {
 
 }  // namespace
 
+namespace {
+
+// The two-valued states the value column renders as a checkbox: one symbol per
+// pair, never the word. A boolean row is a box with a tick or an empty box, so
+// the panel says "this is a switch" at a glance instead of printing a five-letter
+// word in a twelve-character column - and every pair Home Assistant reports for a
+// boolean-ish entity counts, not just the literal on/off of an entity that is
+// called a switch.
+//
+// Deliberately not in here: states that merely look binary (a media player's
+// "playing"/"paused", a vacuum's "docked"/"cleaning"). A tick would claim a
+// semantics those states do not have, so they keep their text.
+constexpr const char *kOnStates[] = {"on", "true",  "open",  "locked",
+                                     "home", "yes", "active", "enabled"};
+constexpr const char *kOffStates[] = {"off", "false",  "closed", "unlocked",
+                                      "away", "no",  "inactive", "disabled"};
+
+bool matchesAny(const char *state, const char *const *words, size_t count) {
+  for (size_t i = 0; i < count; ++i) {
+    if (stateCaseIs(state, words[i])) return true;
+  }
+  return false;
+}
+
+}  // namespace
+
 bool booleanState(const char *state) {
-  return booleanStateOn(state) || stateCaseIs(state, "off") ||
-         stateCaseIs(state, "false");
+  return booleanStateOn(state) ||
+         matchesAny(state, kOffStates,
+                    sizeof(kOffStates) / sizeof(kOffStates[0]));
 }
 
 bool booleanStateOn(const char *state) {
-  return stateCaseIs(state, "on") || stateCaseIs(state, "true");
+  return matchesAny(state, kOnStates, sizeof(kOnStates) / sizeof(kOnStates[0]));
 }
 
 int16_t sliderFillWidth(const RenderRow &row) {

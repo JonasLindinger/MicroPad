@@ -10,8 +10,9 @@ runs; nothing is "should work".
 
 **Unreleased on top of that (2026-09-18):** the slider/gesture slice — per-row `control`
 (button/slider), the `adjust` action, the checkbox value column, per-key `hold`/`double`
-gesture targets and **contract revision 3**. Local commits only, not pushed (awaiting the
-operator's approval); hardware verification for all of it is still open.
+gesture targets, **contract revision 3** and **firmware 1.3.0**. Local commits on a
+feature branch, not merged (awaiting the operator's review); hardware verification for all
+of it is still open.
 
 **Current baseline** (real `arduino-cli` build, pinned `hwcdc/PSRAM` FQBN):
 flash **997 439 B (76 %)** · static RAM **182 620 B (55 %)** · 313 281 B flash free.
@@ -66,8 +67,8 @@ host core binary · 193 release · 9 deployment.
 
 | ID | What | Commit | Proof |
 |---|---|---|---|
-| **C5** | **Slider rows**: per-item `control` (`button`/`slider`, contract flag `adjustable` on the five value-bearing types), the new `adjust` action (encoder turn steps the selected row by its `step`, clamped into `[min, max]`, publishes the new value; a non-slider row and a slider at its bound both scroll instead, a matrix key is a no-op), the slider bar on the panel, and the five HA service mappings (`brightness_pct`, `percentage`, `position`, `volume_level`, `number.set_value`) behind the row's own range gate. Encoder default is now `adjust` | *unreleased* | host `testAdjustSliderSemantics` (step, clamp, bound-escape, no-direction, edit-mode, degenerate range), 5 parametrized generator service tests + "no adjust branch for a button row", static pins, golden payloads |
-| **Checkbox column** | Two-valued states (`on/off`, `true/false`) render as a box with a tick instead of the word, composed from the existing rect/line prims; `text` for everything else. The item editor offers the matching switch only for values it can represent | *unreleased* | host `testRowStylesAndValueColumn` (state classification, prim composition, "no state word in the model"), prim-budget probe now covers all three row styles, browser test for the editor switch |
+| **C5** | **Slider rows**: per-item `control` (`button`/`slider`, contract flag `adjustable` on the five value-bearing types), the new `adjust` action (encoder turn steps the selected row by its `step`, clamped into `[min, max]`, publishes the new value; a non-slider row scrolls, a slider at its bound does nothing at all, a matrix key is a no-op), the slider bar on the panel, and the five HA service mappings (`brightness_pct`, `percentage`, `position`, `volume_level`, `number.set_value`) behind the row's own range gate. **Encoder default stays `scroll_up`/`scroll_down`** (operator decision) | *unreleased* | host `testAdjustSliderSemantics` (step, clamp, bound-no-op, the scroll escape, no-direction, edit-mode, degenerate range), 5 parametrized generator service tests + "no adjust branch for a button row", static pins, golden payloads |
+| **Checkbox column** | The checkbox *symbol* replaces the word for every two-valued vocabulary (on/off, true/false, open/closed, locked/unlocked, home/away, yes/no, active/inactive, enabled/disabled), composed from the existing rect/line prims; text for everything else, including states that only look binary. The item editor offers the matching switch for that vocabulary and writes the row's own pair | *unreleased* | host `testRowStylesAndValueColumn` (11 on-words, 10 off-words, 7 non-boolean states, prim composition, "no state word in the model"), prim-budget probe covering all three row styles, browser tests for the switch and for the pair (`open` → `closed`) |
 | **C1b (double press)** | Per-key `hold` and `double` targets (each action/entity/target page), `Edge::DoublePress` with a 350 ms window, tap deferred *only* for keys that bind a double gesture, wake press exempt, encoder gestures warned about by the lint; keymap editor with one block per gesture + key-face badge | *unreleased* | host `testDoublePressFilter` (deferral, double, two slow taps, hold interplay, filter off, wake), `testGestureBindingResolution`, 208 static tests incl. 5 new pins, 8 new browser tests |
 
 ---

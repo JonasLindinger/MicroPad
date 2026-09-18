@@ -300,11 +300,13 @@ class AppConfig(StrictModel):
 
 _DEFAULT_ACTIONS: dict[str, Action] = {
     "r0c0": "home", "r0c3": "enter", "r1c3": "enter", "r2c3": "back",
-    # The encoder is bound to `adjust`, not to plain scrolling: an encoder turn
-    # adjusts the selected row when that row is a slider and scrolls the cursor
-    # otherwise, so one binding covers both without a second input. `scroll_up` /
-    # `scroll_down` remain available for an operator who wants scrolling only.
-    "enc_up": "adjust", "enc_down": "adjust",
+    # The encoder's default stays plain scrolling: a turn moves the cursor, as it
+    # always did. `adjust` (which steps the value of a slider row instead, and
+    # scrolls on rows that are not sliders) is available in the key map for an
+    # operator who wants the encoder to drive levels - but imposing it as the
+    # default would change what the encoder does on every existing page, which is
+    # the operator's decision, not the tool's.
+    "enc_up": "scroll_up", "enc_down": "scroll_down",
 }
 
 

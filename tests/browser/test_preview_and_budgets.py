@@ -29,7 +29,7 @@ def test_panel_preview_draws_the_firmware_prim_model(page, app_url):
     assert "Home" in texts
     assert "Living room" in texts
     assert page.locator("#panel-preview svg polygon").count() == 1
-    expect(page.locator("#panel-preview .preview-status")).to_contain_text("firmware 1.2.0")
+    expect(page.locator("#panel-preview .preview-status")).to_contain_text("firmware 1.3.0")
 
 
 @pytest.mark.browser

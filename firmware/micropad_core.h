@@ -112,8 +112,9 @@ constexpr size_t CLIENT_ID_CAP = 49;
 // Firmware release reported in the retained device-info payload (micropad/device)
 // so the backend/UI can see which build is on the pad and refuse a config whose
 // fields this build would clip. Bump on behaviour changes that affect the wire
-// contract's limits.
-inline constexpr const char *FIRMWARE_VERSION = "1.2.0";
+// contract's limits. 1.3.0 is the slider/gesture slice: contract revision 3, the
+// row controls, the checkbox value column and the two gestures.
+inline constexpr const char *FIRMWARE_VERSION = "1.3.0";
 
 // Counters the pad keeps about itself: what the panel never shows, but a
 // dashboard can. Pure data plus one formatter, so the sketch only bumps counters
@@ -734,11 +735,19 @@ size_t clipTextEllipsis(char (&dst)[RENDER_TEXT_CAP], const char *src,
 void formatRowValue(char (&dst)[RENDER_TEXT_CAP], const RenderRow &row);
 
 // True for a two-valued state that the panel draws as a checkbox instead of the
-// literal word: "on"/"off" and "true"/"false", case-insensitively. Everything
-// else (a sensor reading, a media state, an empty state) keeps the text column,
-// so the checkbox never invents a boolean where the entity has none.
+// literal word, case-insensitively. The vocabulary is the checkbox's own, not one
+// entity type's: on/off, true/false, open/closed, locked/unlocked, home/away,
+// yes/no, active/inactive, enabled/disabled. The checkbox is a *symbol* - a box
+// with a tick or an empty box - so the panel shows what kind of value the row
+// carries instead of printing a word into a twelve-character column, and a cover
+// or a lock reads at a glance like a switch does.
+//
+// Everything else (a sensor reading, a media state, an empty state, a state whose
+// words only look binary) keeps the text column, so the checkbox never invents a
+// boolean where the entity has none.
 bool booleanState(const char *state);
-// True when the state is the "on" (or "true") side of that pair.
+// True when the state is the "on" side of its pair (on/true/open/locked/home/
+// yes/active/enabled).
 bool booleanStateOn(const char *state);
 // Pixel width of a slider row's bar fill, derived from the row's [min, max] and
 // value and clamped to the track's inner width. 0 for an empty range or a value

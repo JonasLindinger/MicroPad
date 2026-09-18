@@ -160,8 +160,11 @@ Each item carries a `control` that says how the pad treats the row:
   back to Home Assistant through the attribute that means "level" for that domain:
   `brightness_pct`, `percentage`, `position`, `volume_level` or
   `number.set_value`), and the panel draws a slider bar in the value column.
-  Stepping is clamped to the item's `min`/`max` by its `step`; at either bound the
-  encoder scrolls on instead of getting stuck.
+  Stepping is clamped to the item's `min`/`max` by its `step`. At that bound the
+  encoder does nothing — the value is at its limit and the limit holds — so the row
+  never scrolls the page out from under you; the way off such a row is any key bound
+  to `scroll_up`/`scroll_down` (or `back`/`home`), which is what the encoder's own
+  default does.
 
 The editor offers `slider` **only** for the item types that carry an adjustable
 value — light, fan, cover, media_player, number (`adjustable` in the contract;
@@ -175,8 +178,12 @@ of leaving a config the pad cannot use.
 
 Home Assistant states like `on`/`off` are shown as a checkbox next to the state
 field, and checking it writes `on`/`off`. It appears only for values it can
-represent (`on`, `off`, `true`, `false` or an empty state) so it can never turn a
-reading such as `23.4` into a boolean. For anything else — a sensor value, a media
+represent — the two-valued vocabulary the pad draws as a checkbox (on/off,
+true/false, open/closed, locked/unlocked, home/away, yes/no, active/inactive,
+enabled/disabled) or an empty state — so it can never turn a reading such as `23.4`
+into a boolean. It also writes *the row's own pair*: a cover in `open` state gets a
+ticked box that writes `closed`, not `off`, because a state written in the wrong
+vocabulary is one Home Assistant would immediately contradict. For anything else — a sensor value, a media
 state, `unavailable` — the text field stays the only input. On the pad itself the
 same two-valued states are drawn as a checkbox instead of the word, so what the
 editor suggests is what the panel shows.

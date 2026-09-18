@@ -43,14 +43,14 @@
   ],
   "default_keymap": {
     "enc_down": {
-      "action": "adjust",
+      "action": "scroll_down",
       "double": {"action":"none","entity":"","target_page":""},
       "entity": "",
       "hold": {"action":"none","entity":"","target_page":""},
       "target_page": ""
     },
     "enc_up": {
-      "action": "adjust",
+      "action": "scroll_up",
       "double": {"action":"none","entity":"","target_page":""},
       "entity": "",
       "hold": {"action":"none","entity":"","target_page":""},

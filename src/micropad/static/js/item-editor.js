@@ -59,15 +59,41 @@ function draftErrors(draft, meta) {
   return errors;
 }
 
-// Two-valued Home Assistant states render as a checkbox on the pad instead of
-// the word; the editor offers the matching switch for exactly those values (and
-// for an empty state), so toggling can never overwrite a real reading like 23.4.
-const BOOLEAN_STATES = new Set(['on', 'off', 'true', 'false']);
+// The two-valued states the pad draws as a checkbox (a box with a tick, never a
+// word). The editor offers the matching switch for exactly this vocabulary and for
+// an empty state, so toggling can never overwrite a real reading like 23.4 - and
+// because the vocabulary is pair-based, a cover or a lock gets a switch that writes
+// `closed`/`open` or `unlocked`/`locked` instead of forcing `on`/`off` onto it.
+const BOOLEAN_PAIRS = {
+  on: 'off', off: 'on',
+  true: 'false', false: 'true',
+  open: 'closed', closed: 'open',
+  locked: 'unlocked', unlocked: 'locked',
+  home: 'away', away: 'home',
+  yes: 'no', no: 'yes',
+  active: 'inactive', inactive: 'active',
+  enabled: 'disabled', disabled: 'enabled',
+};
+
+// The "on" side of every pair: the state whose checkbox is ticked.
+const BOOLEAN_ON_STATES = new Set([
+  'on', 'true', 'open', 'locked', 'home', 'yes', 'active', 'enabled',
+]);
+
+// The pair a state belongs to, as [onValue, offValue]. Looking either member up
+// gives the same pair (the map is symmetric), and an empty or unknown state gets
+// the default on/off pair.
+function booleanPairOf(state) {
+  const value = String(state == null ? '' : state).trim().toLowerCase();
+  const other = BOOLEAN_PAIRS[value];
+  if (other === undefined) return ['on', 'off'];
+  return BOOLEAN_ON_STATES.has(value) ? [value, other] : [other, value];
+}
 
 function booleanStateOf(state) {
   const value = String(state == null ? '' : state).trim().toLowerCase();
   if (!value) return null;  // empty: nothing to overwrite, the switch starts off
-  return BOOLEAN_STATES.has(value) ? value : undefined;
+  return value in BOOLEAN_PAIRS ? value : undefined;
 }
 
 // A string that could still grow into a finite number after more keystrokes — a
@@ -231,12 +257,17 @@ export function mountItemEditor(element, store) {
       const syncStateCheck = (value) => {
         const boolean = booleanStateOf(value);
         stateCheckLabel.hidden = boolean === undefined;
-        stateCheck.checked = boolean === 'on' || boolean === 'true';
+        stateCheck.checked = boolean !== null && boolean !== undefined &&
+          BOOLEAN_ON_STATES.has(boolean);
       };
       syncStateCheck(item.state);
       stateInput.addEventListener('input', () => syncStateCheck(stateInput.value));
       stateCheck.addEventListener('change', () => {
-        const next = stateCheck.checked ? 'on' : 'off';
+        // Write the member of the row's own pair, so a cover or a lock keeps its
+        // vocabulary (`open`/`closed`, `locked`/`unlocked`) instead of being
+        // rewritten to `on`/`off`, which Home Assistant would not report back.
+        const [onValue, offValue] = booleanPairOf(stateInput.value);
+        const next = stateCheck.checked ? onValue : offValue;
         // Keep the text field in step with the switch (and let it re-sync the
         // switch's own state, so the two controls can never disagree).
         stateInput.value = next;

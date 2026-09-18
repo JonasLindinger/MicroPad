@@ -20,20 +20,29 @@ released from there; the entries below are grouped by the release they shipped i
   Home Assistant writes the value back through the attribute that means "level"
   for the domain (`brightness_pct`, `percentage`, `position`, `volume_level`,
   `number.set_value`), gated by the row's own range so a malformed event cannot
-  write an out-of-range value. Three documented properties make the encoder
-  usable with one binding: a row that is *not* a slider scrolls, a slider already
-  at its bound scrolls as well (a slider row is never a dead end), and a matrix
-  key — which has no direction — is a defined no-op. The encoder's default
-  binding is now `adjust` (it degrades to scrolling everywhere else), so the
-  feature works without re-binding anything.
+  write an out-of-range value. Three documented properties decide what a turn does:
+  a row that is *not* a slider scrolls, a slider already at its bound in that
+  direction does **nothing at all** (no step, no event, no cursor move: the value is
+  at its limit and the limit holds), and a matrix key — which has no direction — is a
+  defined no-op. **The encoder's shipped default stays `scroll_up`/`scroll_down`**:
+  `adjust` is an option in the key map, not a new behaviour imposed on every existing
+  page. The way off a slider parked at its bound is therefore any key bound to
+  scrolling (or `back`/`home`) — including the encoder itself, which is what its
+  default does.
 - **The pad draws a checkbox instead of the word `on`/`off`.** Two-valued states
-  (`on`/`off`, `true`/`false`, case-insensitively) render as a box with a tick in
-  the value column; everything else (a sensor reading, a media state, an empty
-  state) keeps the text column. Composed from the existing rect/line primitives,
-  so the panel translator and the browser preview needed no new primitive kind.
-  The item editor offers the matching switch next to the state field — only for
-  the values it can represent, so it can never turn a reading like `23.4` into a
-  boolean.
+  render as a box with a tick in the value column, and the vocabulary is the
+  checkbox's own rather than one entity type's: `on`/`off`, `true`/`false`,
+  `open`/`closed`, `locked`/`unlocked`, `home`/`away`, `yes`/`no`,
+  `active`/`inactive`, `enabled`/`disabled`, case-insensitively — so a cover or a
+  lock reads at a glance like a switch does. The checkbox is a *symbol*, never text:
+  a word in the value column is what this replaces. States that only *look* binary (a
+  media player's `playing`/`paused`, a sensor reading, an empty state) keep their text,
+  because a tick would claim a semantics the entity does not have. Composed from the
+  existing rect/line primitives, so the panel translator and the browser preview needed
+  no new primitive kind. The item editor offers the matching switch next to the state
+  field — only for that vocabulary, so it can never turn a reading like `23.4` into a
+  boolean — and toggling it writes the row's **own pair** (`open` → `closed`), not
+  `on`/`off`, which would be a state Home Assistant contradicts on the next refresh.
 - **Hold and double press are configurable per key, in the keymap and in the
   firmware.** A binding carries an optional `hold` and an optional `double`
   target, each with its own action, entity and target page ("hold turns *this
@@ -65,6 +74,12 @@ released from there; the entries below are grouped by the release they shipped i
 
 ### Changed
 
+- **`FIRMWARE_VERSION` 1.2.0 → 1.3.0.** The wire contract moved to revision 3, so the
+  version the pad reports on `micropad/device` moves with it: a config that uses row
+  controls or gestures is only valid for this build, and the retained device payload is
+  how a backend or a dashboard can tell which build is on the panel. (`pyproject.toml`
+  still says `0.1.0` and the last release tag is `v1`; aligning those is the release
+  step, not this change.)
 - **A `Binding` grew from 131 B to 393 B**, because a gesture target is the same
   shape as a binding: the key's own `tap` target plus the optional `hold` and
   `double` ones. Measured with the same compiler on both revisions

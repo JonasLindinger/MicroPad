@@ -215,26 +215,33 @@ the 25 ms debounce, with no repeat while held.
 - **Action:** select the slider row, turn the encoder (both directions and past both
   ends), then select the ordinary row and turn again.
 - **Observable:** each detent publishes `adjust` with the **new** value and the real
-  light (or `brightness_pct`) follows; the value stops at 0 %/100 % and further
-  detents in that direction move the selection instead of getting stuck; on the
+  light (or `brightness_pct`) follows; at 0 %/100 % further detents in that direction
+  do **nothing at all** — no event, no cursor move (the value is at its limit and the
+  limit holds) — and the opposite direction still steps away from the bound; on the
   ordinary row the encoder scrolls as it always did. Pressing Enter on the slider row
-  does nothing new.
+  does nothing new. **Check the escape explicitly:** with the cursor parked on a
+  slider at its bound, a key bound to `scroll_down` (or `back`/`home`) must still
+  leave the row — that is the documented way off a page of sliders parked at the same
+  end, and it is why the encoder's shipped default stays plain scrolling.
 - **Evidence kind:** `video` + `log`.
 - **Pass gate:** value tracks the detents in both directions, clamps at both ends
-  without sticking, and the level in Home Assistant matches the panel within one
-  refresh.
+  without publishing an out-of-range value, a turn into the bound changes nothing,
+  the escape key still scrolls, and the level in Home Assistant matches the panel
+  within one refresh.
 - **Also check:** e-paper **ghosting** at the track/fill boundary — every detent
   redraws the bar, which is the fastest partial-refresh rate the panel will see.
 
 ### `checkbox-value-column`
 
-- **Setup:** a page with an `on`/`off` switch row, a `true`/`false` row, a `sensor`
-  row with a numeric state and a `media_player` row.
+- **Setup:** a page with an `on`/`off` switch row, a `true`/`false` row, a `cover`
+  reporting `open`, a `lock` reporting `locked`, a `sensor` row with a numeric state
+  and a `media_player` row reporting `playing`.
 - **Action:** look at the value column, then toggle the switch row (waiting for the
   refresh) and look again.
-- **Observable:** the two boolean rows show a box with a tick when *on*/*true* and an
-  empty box when *off*/*false* — the words `on`/`off` appear nowhere on the panel;
-  the sensor keeps its numeric text and the media row its state text.
+- **Observable:** every two-valued row shows a box — ticked for *on*/*true*/*open*/
+  *locked*, empty for the opposite member of its pair — and the words `on`/`off` (or
+  `open`/`closed`, `locked`/`unlocked`) appear nowhere on the panel; the sensor keeps
+  its numeric text and the media row its state text (`playing` is not a tick).
 - **Evidence kind:** `photo`.
 - **Pass gate:** boxes are unambiguous at arm's length, the tick is legible at the
   panel's 4-px line weight, and no boolean row shows text.
