@@ -1,6 +1,6 @@
 {
   "_ai_assisted_notice": "AI-assisted development — firmware, HA automation, config generator and docs were created with AI (LLM) help, reviewed and tested by the author. Provided as-is, without warranty; verify on your own hardware, don't use for safety-critical applications.",
-  "version": 2,
+  "version": 3,
   "topics": {
     "event": {"name": "micropad/event", "retain": false},
     "pages": {"name": "micropad/pages/all", "retain": true},
@@ -8,9 +8,14 @@
     "keymap": {"name": "micropad/keymap", "retain": true},
     "power": {"name": "micropad/power", "retain": true},
     "device": {"name": "micropad/device", "retain": true},
-    "diag": {"name": "micropad/diag", "retain": true}
+    "diag": {"name": "micropad/diag", "retain": true},
+    "frame": {"name": "micropad/display/frame", "retain": false},
+    "player_queue": {"name": "micropad/player/queue", "retain": true},
+    "player_state": {"name": "micropad/player/state", "retain": true},
+    "player_control": {"name": "micropad/player/control", "retain": false},
+    "player_ready": {"name": "micropad/player/ready", "retain": false}
   },
-  "actions": ["none", "enter", "back", "home", "settings", "scroll", "scroll_up", "scroll_down", "navigate", "keymap", "get_all_pages", "toggle", "on", "off", "press", "volume_up", "volume_down", "media_next", "media_prev", "edit", "confirm"],
+  "actions": ["none", "enter", "back", "home", "settings", "scroll", "scroll_up", "scroll_down", "navigate", "keymap", "get_all_pages", "toggle", "on", "off", "press", "volume_up", "volume_down", "media_next", "media_prev", "edit", "confirm", "player"],
   "action_meta": [
     {"id": "enter", "label": "Enter", "group": "Navigation", "argument": "none"},
     {"id": "back", "label": "Back", "group": "Navigation", "argument": "none"},
@@ -32,10 +37,11 @@
     {"id": "media_prev", "label": "Previous track", "group": "Media", "argument": "entity"},
     {"id": "none", "label": "No action", "group": "System", "argument": "none"},
     {"id": "settings", "label": "Settings", "group": "System", "argument": "none"},
+    {"id": "player", "label": "Player", "group": "System", "argument": "none"},
     {"id": "get_all_pages", "label": "Refresh all pages", "group": "System", "argument": "none"}
   ],
   "key_ids": ["r0c0", "r0c1", "r0c2", "r0c3", "r1c0", "r1c1", "r1c2", "r1c3", "r2c0", "r2c1", "r2c2", "r2c3", "enc_up", "enc_down"],
-  "item_types": ["category", "light", "switch", "script", "button", "scene", "sensor", "media_player", "number", "settings", "back", "cover", "fan", "input_boolean", "lock"],
+  "item_types": ["category", "light", "switch", "script", "button", "scene", "sensor", "media_player", "number", "settings", "back", "cover", "fan", "input_boolean", "lock", "player"],
   "item_type_meta": [
     {"id": "category", "label": "Category", "ha_domains": [], "default_action": "navigate", "alternate_action": "none", "editable": false, "has_value": false, "needs_target_page": true},
     {"id": "light", "label": "Light", "ha_domains": ["light"], "default_action": "toggle", "alternate_action": "off", "editable": false, "has_value": true, "needs_target_page": false},
@@ -51,13 +57,15 @@
     {"id": "cover", "label": "Cover", "ha_domains": ["cover"], "default_action": "toggle", "alternate_action": "none", "editable": false, "has_value": true, "needs_target_page": false},
     {"id": "fan", "label": "Fan", "ha_domains": ["fan"], "default_action": "toggle", "alternate_action": "off", "editable": false, "has_value": true, "needs_target_page": false},
     {"id": "input_boolean", "label": "Helper switch", "ha_domains": ["input_boolean"], "default_action": "toggle", "alternate_action": "off", "editable": false, "has_value": true, "needs_target_page": false},
-    {"id": "lock", "label": "Lock", "ha_domains": ["lock"], "default_action": "on", "alternate_action": "off", "editable": false, "has_value": true, "needs_target_page": false}
+    {"id": "lock", "label": "Lock", "ha_domains": ["lock"], "default_action": "on", "alternate_action": "off", "editable": false, "has_value": true, "needs_target_page": false},
+    {"id": "player", "label": "Video player", "ha_domains": [], "default_action": "player", "alternate_action": "none", "editable": false, "has_value": false, "needs_target_page": false}
   ],
   "limits": {
     "page_bytes": 8192,
     "catalog_bytes": 16000,
     "keymap_bytes": 16380,
-    "mqtt_buffer_bytes": 16384
+    "mqtt_buffer_bytes": 16384,
+    "frame_bytes": 4736
   },
   "caps": {
     "max_pages": 24,
@@ -69,6 +77,9 @@
     "loop_task_stack_bytes": 16384,
     "render_prim_cap": 32,
     "max_partial_refreshes": 0,
+    "max_player_videos": 32,
+    "player_frame_w": 296,
+    "player_frame_h": 128,
     "input_debounce_ms": 25,
     "field_caps": {
       "page_id": 32,
@@ -83,6 +94,8 @@
     "event": "event.schema.json",
     "page": "page.schema.json",
     "catalog": "catalog.schema.json",
-    "keymap": "keymap.schema.json"
+    "keymap": "keymap.schema.json",
+    "player_queue": "player_queue.schema.json",
+    "player_state": "player_state.schema.json"
   }
 }

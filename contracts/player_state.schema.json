@@ -1,0 +1,15 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Player state",
+  "description": "Retained playback status published by the host player service on micropad/player/state; the pad renders it while the player mode is active.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["title", "status"],
+  "properties": {
+    "title": {"type": "string", "maxLength": 64},
+    "status": {"type": "string", "enum": ["stopped", "playing", "paused"]},
+    "index": {"type": "integer", "minimum": 0},
+    "videos": {"type": "integer", "minimum": 0},
+    "fps": {"type": "number", "minimum": 0}
+  }
+}

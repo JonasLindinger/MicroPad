@@ -308,6 +308,7 @@ def create_app(
                     "max_pages": CAPS["max_pages"],
                     "max_items_per_page": CAPS["max_items_per_page"],
                     "key_count": CAPS["key_count"],
+                    "max_player_videos": CAPS["max_player_videos"],
                     "field_caps": dict(FIELD_CAPS),
                 },
                 "default_keymap": {
@@ -335,6 +336,7 @@ def create_app(
                     "micropad/pages/all": bundle.catalog_payload,
                     "micropad/page/current": bundle.home_payload,
                     "micropad/keymap": bundle.home_keymap_payload,
+                    "micropad/player/queue": bundle.player_queue_payload,
                 },
             }
         )

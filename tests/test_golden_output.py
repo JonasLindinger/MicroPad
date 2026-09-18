@@ -41,6 +41,7 @@ GOLDEN_FILES = {
     "catalog_payload": "catalog.json",
     "home_payload": "page_home.json",
     "home_keymap_payload": "keymap_home.json",
+    "player_queue_payload": "player_queue.json",
 }
 
 
@@ -56,6 +57,7 @@ def _current_bundle() -> dict[str, str]:
         "catalog_payload": bundle.catalog_payload,
         "home_payload": bundle.home_payload,
         "home_keymap_payload": bundle.home_keymap_payload,
+        "player_queue_payload": bundle.player_queue_payload,
     }
 
 

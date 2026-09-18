@@ -1,0 +1,23 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Player queue",
+  "description": "Retained list of stream-able videos (name + URL), published by the config generator on micropad/player/queue. The host player service consumes it; the pad only sees titles via player_state.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["videos"],
+  "properties": {
+    "videos": {
+      "type": "array",
+      "maxItems": 32,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "url"],
+        "properties": {
+          "name": {"type": "string", "minLength": 1, "maxLength": 64},
+          "url": {"type": "string", "minLength": 1, "maxLength": 512}
+        }
+      }
+    }
+  }
+}

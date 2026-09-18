@@ -104,6 +104,32 @@ PortalViewState portalView = {};
 DNSServer dnsServer;
 WebServer webServer(80);
 
+// ============================================================================
+// Streamed video player mode (the `player` action, sibling of `settings`).
+// While playerActive the pad draws raw 1-bit frames from micropad/display/frame
+// instead of the menu snapshot, and the buttons steer the host player service
+// through micropad/player/control. Frames only render while the mode is open
+// (the menu is never painted over); the PlaybackViewState holds the last
+// micropad/player/state payload so buildSnapshot can render a title/status
+// screen when no frame has arrived yet. playerFramePending is written by the
+// MQTT callback on Core 1 and consumed by the render task on Core 0.
+// ============================================================================
+struct PlaybackViewState {
+  char title[65];
+  char status[16];
+  char index[8];
+  char videos[8];
+};
+
+bool playerActive = false;
+std::atomic<bool> playerFramePending{false};
+uint8_t playerFrame[micropad::PLAYER_FRAME_BYTES] = {};
+PlaybackViewState playbackView = {};
+// Core 0 -> Core 1 ready handshake (same shape as recoveryDrawNeeded): the
+// render task must not call mqttClient (PubSubClient is not thread-safe), so it
+// only raises this flag and loop() publishes the frame-ack topic once.
+std::atomic<bool> playerReadyPending{false};
+
 // 6-bit password alphabet: the & 0x3f index below needs exactly 64 entries.
 constexpr char SETUP_ALPHABET[] =
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
@@ -184,9 +210,41 @@ void emitInput(const micropad::InputEvent &input) {
     if (action == micropad::Action::Back) cancelPortal();
     return;
   }
+  // While the video player is open the keys steer the host player service and
+  // the menu item logic (including the Enter resolution below) is bypassed.
+  // Enter toggles play/pause (long-press restarts the current video), the
+  // encoder switches videos, Back (or the `player` action again) exits.
+  if (playerActive) {
+    switch (action) {
+      case micropad::Action::Back:
+      case micropad::Action::Home:
+        stopPlayer();
+        break;
+      // The Enter key is keymapped to the `player` action (it opens the mode
+      // from the menu), so inside the player Action::Player *is* Enter:
+      // toggle play/pause, long-press restarts the current selection.
+      case micropad::Action::Player:
+        publishPlayerControl(input.longPress ? "restart" : "toggle");
+        break;
+      case micropad::Action::ScrollUp:
+        publishPlayerControl("prev");
+        break;
+      case micropad::Action::ScrollDown:
+        publishPlayerControl("next");
+        break;
+      default:
+        break;
+    }
+    return;
+  }
   // Settings entry through normal keymap resolution opens the setup portal.
   if (action == micropad::Action::Settings) {
     startPortal(input.atMs);
+    return;
+  }
+  // The `player` action opens the streamed-video mode.
+  if (action == micropad::Action::Player) {
+    startPlayer(input.atMs);
     return;
   }
   const micropad::ApplyResult result =
@@ -721,6 +779,50 @@ void stopPortal(bool saved) {
 void cancelPortal() { stopPortal(false); }
 
 // ============================================================================
+// Streamed video player mode (Task 12 integration).
+// ============================================================================
+
+// Publish a one-shot control command (open, close, toggle, restart, next,
+// prev) to the host player service. Called from the Core 1 input path only —
+// never from the render task, PubSubClient is not thread-safe.
+void publishPlayerControl(const char *command) {
+  if (!mqttClient.connected()) return;
+  mqttClient.publish(mp::TOPIC_PLAYER_CONTROL, command, false);
+}
+
+// Open the player mode: from now on incoming frames are drawn full-screen and
+// the keys steer playback. The host is told to open (it starts playing its
+// current video), and a snapshot renders the title/status screen until the
+// first frame arrives.
+void startPlayer(uint32_t nowMs) {
+  if (playerActive) return;
+  playerActive = true;
+  (void)nowMs;
+  playerFramePending.store(false, std::memory_order_release);
+  publishPlayerControl("open");
+  requestDraw(micropad::DrawReason::StateChange);
+}
+
+// Leave the player mode and return to the menu snapshot. The host is told to
+// close (it pauses playback); a fresh snapshot restores the normal UI.
+void stopPlayer() {
+  if (!playerActive) return;
+  playerActive = false;
+  publishPlayerControl("close");
+  requestDraw(micropad::DrawReason::StateChange);
+}
+
+// Core 1 half of the frame-ack handshake: loop() consumes the render task's
+// ready flag exactly once per rendered frame and publishes the ack on the
+// player/ready topic so the host player advances at the panel's real rate.
+void playerReadyTick() {
+  if (!playerReadyPending.exchange(false, std::memory_order_acquire)) return;
+  if (mqttClient.connected()) {
+    mqttClient.publish(mp::TOPIC_PLAYER_READY, "1", false);
+  }
+}
+
+// ============================================================================
 // Independent WiFi/MQTT state machines (Task 7). wifiTick() and mqttTick()
 // are nonblocking: each performs at most one network call per WIFI_RETRY_MS /
 // MQTT_RETRY_MS and never waits for connection state. All cache/keymap parse
@@ -1120,6 +1222,17 @@ void onMqttMessage(char *topic, uint8_t *payload, unsigned int length) {
       length > micropad::MQTT_BUFFER_BYTES) {
     return;
   }
+  // Raw 1-bit video frame: binary payload, never parsed as JSON. Only honored
+  // when the player mode is open; stray frames are dropped so the menu can
+  // never be painted over by a stream nobody asked for.
+  if (std::strcmp(topic, mp::TOPIC_FRAME) == 0) {
+    if (playerActive && length == micropad::PLAYER_FRAME_BYTES) {
+      memcpy(playerFrame, payload, micropad::PLAYER_FRAME_BYTES);
+      playerFramePending.store(true, std::memory_order_release);
+      xTaskNotifyGive(renderTaskHandle);
+    }
+    return;
+  }
   JsonDocument doc;
   if (deserializeJson(doc, payload, length) != DeserializationError::Ok) {
     return;
@@ -1175,6 +1288,19 @@ void onMqttMessage(char *topic, uint8_t *payload, unsigned int length) {
     } else {
       ++diagnostics.keymapRejects;
     }
+    return;
+  }
+  if (std::strcmp(topic, mp::TOPIC_PLAYER_STATE) == 0) {
+    // Playback status from the host player service ("playing"/"paused"/
+    // "stopped" plus the current video title). Retained, so a fresh connect
+    // always knows what is playing before the first frame arrives.
+    safeCopy(playbackView.title, root["title"] | "");
+    safeCopy(playbackView.status, root["status"] | "");
+    std::snprintf(playbackView.index, sizeof(playbackView.index), "%d",
+                  static_cast<int>(root["index"] | 0));
+    std::snprintf(playbackView.videos, sizeof(playbackView.videos), "%d",
+                  static_cast<int>(root["videos"] | 0));
+    if (playerActive) requestDraw(micropad::DrawReason::StateChange);
     return;
   }
 }
@@ -1250,7 +1376,11 @@ void mqttTick(uint32_t nowMs) {
   const bool pagesSubscribed = mqttClient.subscribe(mp::TOPIC_PAGES);
   const bool pageSubscribed = mqttClient.subscribe(mp::TOPIC_CURRENT_PAGE);
   const bool keymapSubscribed = mqttClient.subscribe(mp::TOPIC_KEYMAP);
-  if (!pagesSubscribed || !pageSubscribed || !keymapSubscribed) {
+  const bool frameSubscribed = mqttClient.subscribe(mp::TOPIC_FRAME);
+  const bool playerStateSubscribed =
+      mqttClient.subscribe(mp::TOPIC_PLAYER_STATE);
+  if (!pagesSubscribed || !pageSubscribed || !keymapSubscribed ||
+      !frameSubscribed || !playerStateSubscribed) {
     mqttConnectionLost(nowMs);
     return;
   }
@@ -1471,6 +1601,9 @@ bool sleepGateReady(uint32_t nowMs) {
   // pad and the session looks like a crash. The portal has its own
   // PORTAL_IDLE_MS restart instead.
   if (portalActive) return false;
+  // The video player must never sleep either: a sleeping pad cannot draw the
+  // next frame, and the stream would stall until the next key press.
+  if (playerActive) return false;
   // Sample the predicate instead of evaluating it on every loop pass: it can
   // only become true after IDLE_SLEEP_MS (60 s) of idleness, so 250 ms of added
   // latency is irrelevant, while the fresh anyMatrixKeyHeld() pass below
@@ -1530,6 +1663,9 @@ void enterLightSleep(uint32_t nowMs) {
   // Structural guard mirroring the gate: the setup portal never sleeps (issue
   // #6), whatever the future call graph looks like.
   if (portalActive) return;
+  // Same structural guard for the video player: a sleeping pad cannot draw
+  // the next streamed frame.
+  if (playerActive) return;
   // P1.2 atomic sleep/render handshake: the busy/pending check and the
   // interlock grant are one critical section. If the render task claimed a
   // frame or committed a snapshot in between, sleep is skipped for this round
@@ -1664,6 +1800,7 @@ void processWakeInput(uint32_t wakeMs) {
 void buildSnapshot(micropad::RenderSnapshot &out) {
   out.generation = snapshotMailbox.currentGeneration() + 1;
   out.portal = portalActive;
+  out.player = playerActive;
   out.usbHost = stableUsbHost;
   out.networkState = currentNetworkState();
   out.rowCount = 0;
@@ -1673,10 +1810,19 @@ void buildSnapshot(micropad::RenderSnapshot &out) {
   safeCopy(out.portalSsid, "");
   safeCopy(out.portalPassword, "");
   safeCopy(out.portalAddress, "");
+  safeCopy(out.playerTitle, "");
+  safeCopy(out.playerStatus, "");
   if (portalActive) {
     safeCopy(out.portalSsid, portalView.ssid);
     safeCopy(out.portalPassword, portalView.password);
     safeCopy(out.portalAddress, portalView.address);
+    return;
+  }
+  if (playerActive) {
+    safeCopy(out.playerTitle, playbackView.title);
+    safeCopy(out.playerStatus, playbackView.status);
+    safeCopy(out.playerIndex, playbackView.index);
+    safeCopy(out.playerVideos, playbackView.videos);
     return;
   }
   const micropad::Page *page = pad.currentPage();
@@ -1709,6 +1855,17 @@ void renderTask(void *) {
     }
     for (;;) {
       waitForRefreshSpacing();
+      // Player mode: draw the newest streamed frame directly, bypassing the
+      // snapshot mailbox — the frame owns the whole panel. The ack flag is
+      // raised for the Core 1 loop to publish (PubSubClient stays on Core 1).
+      // When no frame is pending the snapshot path below stays live so the
+      // title/status screen renders while the mode is open.
+      if (playerActive &&
+          playerFramePending.load(std::memory_order_acquire)) {
+        playerFramePending.store(false, std::memory_order_release);
+        drawPlayerFrame();
+        break;
+      }
       portENTER_CRITICAL(&snapshotMux);
       const bool mayDraw = sleepInterlock.tryBeginDraw();
       int8_t slot = -1;
@@ -1895,6 +2052,47 @@ void drawPortalUi(const micropad::RenderSnapshot &snap) {
   drawRenderModel(model);
 }
 
+void drawPlayerUi(const micropad::RenderSnapshot &snap) {
+  micropad::RenderModel model;
+  micropad::layoutPlayerUi(snap, model);
+  drawNetworkStatus(snap.networkState, model);
+  if (snap.usbHost) drawPowerSymbol(true, model);
+  drawRenderModel(model);
+}
+
+// Full-panel refresh that blits one raw 1-bit video frame. Player frames
+// deliberately skip the refresh policy's forced-full cycle and the per-frame
+// hibernate: a full refresh every MAX_PARTIAL_REFRESHES frames adds a ~2 s
+// blink and drags playback below 2 fps, and a hibernate/power-cycle per frame
+// costs another ~100 ms. The SSD1680 still accumulates residual charge, so
+// every PLAYER_CLEAR_EVERY_FRAMES frames one hibernate (panel power-down)
+// drains it — the accepted trade is a single brief settle frame instead of
+// grey drift after sustained playback. Runs on the Core 0 render task; the
+// ready ack is raised for the Core 1 loop to publish.
+constexpr unsigned PLAYER_CLEAR_EVERY_FRAMES = 40;
+unsigned playerFrameCounter = 0;
+void drawPlayerFrame() {
+  setFullPanelPartialRefresh();
+  display.firstPage();
+  do {
+    // The panel is drawn from black and the frame's 1 bits become white —
+    // the streamed format is bit=white (same convention as the Bad Apple
+    // player) so a black video frame costs no refresh time beyond the panel
+    // update itself.
+    display.fillScreen(GxEPD_BLACK);
+    display.drawBitmap(0, 0, playerFrame, display.width(), display.height(),
+                       GxEPD_WHITE);
+  } while (display.nextPage());
+  const bool panelReady = waitForPanelReady();
+  if (!panelReady) {
+    recoverDisplay();
+  } else if (++playerFrameCounter >= PLAYER_CLEAR_EVERY_FRAMES) {
+    playerFrameCounter = 0;
+    display.hibernate();
+  }
+  playerReadyPending.store(panelReady, std::memory_order_release);
+}
+
 // Sample the panel BUSY line after the refresh with a wrap-safe 15 s timeout.
 // No Serial, no input or network call: the render task only touches the
 // display and the refresh policy here. BUSY is HIGH while the SSD1680 is busy
@@ -1939,7 +2137,9 @@ void drawSnapshot(const micropad::RenderSnapshot &snap) {
   display.firstPage();
   do {
     display.fillScreen(GxEPD_WHITE);
-    if (snap.portal) {
+    if (snap.player) {
+      drawPlayerUi(snap);
+    } else if (snap.portal) {
       drawPortalUi(snap);
     } else {
       drawNormalUi(snap);
@@ -2072,6 +2272,7 @@ void loop() {
   diagnosticsTick(nowMs);
   if (mqttClient.connected()) mqttClient.loop();
   flushEventQueue();
+  playerReadyTick();
   resyncTick(nowMs);
   catalogRequestTick(nowMs);
   powerTick(nowMs);

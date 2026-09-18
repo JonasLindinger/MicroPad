@@ -19,12 +19,12 @@ constexpr const char *kActionNames[ACTION_COUNT] = {
     "navigate",      "keymap",     "get_all_pages", "toggle",
     "on",            "off",        "press",         "volume_up",
     "volume_down",   "media_next", "media_prev",    "edit",
-    "confirm"};
+    "confirm",       "player"};
 
 constexpr const char *kItemTypeNames[ITEM_TYPE_COUNT] = {
     "category", "light",   "switch", "script",       "button",
     "scene",    "sensor",  "media_player", "number", "settings",
-    "back",     "cover",   "fan",    "input_boolean", "lock"};
+    "back",     "cover",   "fan",    "input_boolean", "lock", "player"};
 
 // Generic scalar lookup helpers over a constexpr name table.
 template <size_t N>
@@ -86,6 +86,7 @@ const ItemTypeDescriptor ITEM_TYPE_DESCRIPTORS[ITEM_TYPE_COUNT] = {
     {ItemType::Fan, Action::Toggle, Action::Off, false},
     {ItemType::InputBoolean, Action::Toggle, Action::Off, false},
     {ItemType::Lock, Action::On, Action::Off, false},
+    {ItemType::Player, Action::Player, Action::None, false},
 };
 
 const ItemTypeDescriptor &itemTypeDescriptor(ItemType type) {
@@ -1168,6 +1169,44 @@ void layoutPortalUi(const RenderSnapshot &snap, RenderModel &model) {
   std::snprintf(label, sizeof(label), "Open %s", snap.portalAddress);
   clipText(span, label, rowChars);
   addText(model, span, ROW_TEXT_X, rowTops[3], ROW_HEIGHT, TextAlign::Left);
+}
+
+void layoutPlayerUi(const RenderSnapshot &snap, RenderModel &model) {
+  addText(model, "Player", TITLE_TEXT_X, TITLE_STRIP_Y, TITLE_STRIP_HEIGHT,
+          TextAlign::Left);
+
+  const size_t rowChars =
+      static_cast<size_t>((ROW_VALUE_RIGHT_X - ROW_TEXT_X) / MONO_CHAR_W);
+  char label[80];
+  char span[RENDER_TEXT_CAP];
+
+  if (snap.playerTitle[0] != '\0') {
+    std::snprintf(label, sizeof(label), "%s", snap.playerTitle);
+    clipText(span, label, rowChars);
+    addText(model, span, ROW_TEXT_X, ROW_AREA_Y, ROW_HEIGHT, TextAlign::Left);
+  } else {
+    addText(model, "No video", ROW_TEXT_X, ROW_AREA_Y, ROW_HEIGHT,
+            TextAlign::Left);
+  }
+
+  const char *statusText =
+      (snap.playerStatus[0] != '\0') ? snap.playerStatus : "stopped";
+  // Selection counter (1-based) when the queue is published; otherwise the
+  // plain status line keeps the title screen stable.
+  if (snap.playerVideos[0] != '\0' && snap.playerVideos[0] != '0') {
+    std::snprintf(label, sizeof(label), "Status: %s  (%s/%s)", statusText,
+                  snap.playerIndex, snap.playerVideos);
+  } else {
+    std::snprintf(label, sizeof(label), "Status: %s", statusText);
+  }
+  clipText(span, label, rowChars);
+  addText(model, span, ROW_TEXT_X, ROW_AREA_Y + ROW_HEIGHT, ROW_HEIGHT,
+          TextAlign::Left);
+
+  addText(model, "Play/Pause: Enter", ROW_TEXT_X, ROW_AREA_Y + 2 * ROW_HEIGHT,
+          ROW_HEIGHT, TextAlign::Left);
+  addText(model, "Skip: Enc, Exit: Back", ROW_TEXT_X,
+          ROW_AREA_Y + 3 * ROW_HEIGHT, ROW_HEIGHT, TextAlign::Left);
 }
 
 void networkStatusPrims(uint8_t networkState, RenderModel &model) {

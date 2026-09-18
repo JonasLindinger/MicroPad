@@ -43,6 +43,7 @@ ACTIONS = [
     "media_prev",
     "edit",
     "confirm",
+    "player",
 ]
 ITEM_TYPES = [
     "category",
@@ -60,6 +61,7 @@ ITEM_TYPES = [
     "fan",
     "input_boolean",
     "lock",
+    "player",
 ]
 EXPECTED_TOPICS = {
     "event": {"name": "micropad/event", "retain": False},
@@ -69,6 +71,11 @@ EXPECTED_TOPICS = {
     "diag": {"name": "micropad/diag", "retain": True},
     "keymap": {"name": "micropad/keymap", "retain": True},
     "power": {"name": "micropad/power", "retain": True},
+    "frame": {"name": "micropad/display/frame", "retain": False},
+    "player_queue": {"name": "micropad/player/queue", "retain": True},
+    "player_state": {"name": "micropad/player/state", "retain": True},
+    "player_control": {"name": "micropad/player/control", "retain": False},
+    "player_ready": {"name": "micropad/player/ready", "retain": False},
 }
 
 
@@ -83,7 +90,7 @@ def test_contract_has_exact_topics_actions_and_keys():
     contract = read_json("mqtt-contract.json")
     # Pinned deliberately: a revision bump is a conscious edit that also has to teach
     # scripts/generate_contract.py (see the guard test below).
-    assert contract["version"] == 2
+    assert contract["version"] == 3
     assert contract["topics"] == EXPECTED_TOPICS
     assert contract["actions"] == ACTIONS
     assert contract["key_ids"] == KEY_IDS
@@ -93,6 +100,8 @@ def test_contract_has_exact_topics_actions_and_keys():
         "page": "page.schema.json",
         "catalog": "catalog.schema.json",
         "keymap": "keymap.schema.json",
+        "player_queue": "player_queue.schema.json",
+        "player_state": "player_state.schema.json",
     }
 
 
@@ -335,7 +344,7 @@ def test_load_contract_returns_the_canonical_contract():
     contract = load_contract()
     # Pinned deliberately: a revision bump is a conscious edit that also has to teach
     # scripts/generate_contract.py (see the guard test below).
-    assert contract["version"] == 2
+    assert contract["version"] == 3
     assert contract["topics"] == EXPECTED_TOPICS
     assert contract["actions"] == ACTIONS
     assert contract["key_ids"] == KEY_IDS
@@ -534,5 +543,6 @@ def test_api_meta_exposes_caps_and_item_type_descriptors():
         "max_pages": contract["caps"]["max_pages"],
         "max_items_per_page": contract["caps"]["max_items_per_page"],
         "key_count": contract["caps"]["key_count"],
+        "max_player_videos": contract["caps"]["max_player_videos"],
         "field_caps": contract["caps"]["field_caps"],
     }

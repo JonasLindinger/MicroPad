@@ -38,6 +38,12 @@ actions:
         qos: 0
     - action: mqtt.publish
       data:
+        topic: micropad/player/queue
+        payload: '{"videos":[]}'
+        retain: true
+        qos: 0
+    - action: mqtt.publish
+      data:
         topic: micropad/page/current
         payload: '{"page_id":"home","title":"Home","parent":"","items":[{"name":"Living
           Lights","type":"light","entity":"light.living","state":{{ states(''light.living'')
@@ -601,6 +607,12 @@ actions:
               | float(default=21.0) }},"min":16.0,"max":30.0,"step":0.5,"unit":"°C","editable":true,"target_page":""},{"name":"Temp","type":"sensor","entity":"sensor.office_temp","state":{{
               states(''sensor.office_temp'') | to_json }},"value":0.0,"min":0.0,"max":100.0,"step":1.0,"unit":"°C","editable":false,"target_page":""},{"name":"Evening","type":"scene","entity":"scene.evening","state":{{
               states(''scene.evening'') | to_json }},"value":0.0,"min":0.0,"max":100.0,"step":1.0,"unit":"","editable":false,"target_page":""}]}]}'
+            retain: true
+            qos: 0
+        - action: mqtt.publish
+          data:
+            topic: micropad/player/queue
+            payload: '{"videos":[]}'
             retain: true
             qos: 0
         - action: mqtt.publish

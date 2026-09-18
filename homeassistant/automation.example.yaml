@@ -25,6 +25,12 @@ actions:
         qos: 0
     - action: mqtt.publish
       data:
+        topic: micropad/player/queue
+        payload: '{"videos":[]}'
+        retain: true
+        qos: 0
+    - action: mqtt.publish
+      data:
         topic: micropad/page/current
         payload: '{"page_id":"home","title":"Home","parent":"","items":[]}'
         retain: true
@@ -105,6 +111,12 @@ actions:
           data:
             topic: micropad/pages/all
             payload: '{"pages":[{"page_id":"home","title":"Home","parent":"","items":[]}]}'
+            retain: true
+            qos: 0
+        - action: mqtt.publish
+          data:
+            topic: micropad/player/queue
+            payload: '{"videos":[]}'
             retain: true
             qos: 0
         - action: mqtt.publish

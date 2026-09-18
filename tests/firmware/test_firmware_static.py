@@ -548,8 +548,12 @@ class FirmwareNetworkContractTest(FirmwareStaticContractTest):
         # receive buffer: the client keeps it valid for the whole callback and
         # the length is known, so no stack copy and no NUL terminator are
         # needed (they cost 16,385 bytes of permanent loop-task stack for
-        # nothing and shrank the heap by as much).
-        self.assertEqual(body.count("memcpy"), 0)
+        # nothing and shrank the heap by as much). The single exception is the
+        # raw video-frame topic: a frame MUST be copied into playerFrame before
+        # the next receive overwrites the buffer, and the copy is size-gated.
+        self.assertEqual(body.count("memcpy"), 1)
+        self.assertIn("memcpy(playerFrame, payload, micropad::PLAYER_FRAME_BYTES)",
+                      body)
         self.assertNotIn("mqttPayload", body)
         self.assertEqual(body.count("deserializeJson"), 1)
         self.assertIn("deserializeJson(doc, payload, length)", body)
@@ -1406,13 +1410,16 @@ class FirmwareReleaseAssertionTest(FirmwareStaticContractTest):
         self.assertIn("Event slots_[QUEUE_CAPACITY];", self.core_header())
 
     def test_mqtt_subscriptions_exact(self):
-        # Exactly the three required subscriptions, issued once each on every
+        # Exactly the five required subscriptions (pages, current page,
+        # keymap, display frames, player state), issued once each on every
         # connect, with no extra topic and no orphan subscribe call.
         text = self.ino()
-        self.assertEqual(text.count("mqttClient.subscribe("), 3)
+        self.assertEqual(text.count("mqttClient.subscribe("), 5)
         self.assertIn("mqttClient.subscribe(mp::TOPIC_PAGES);", text)
         self.assertIn("mqttClient.subscribe(mp::TOPIC_CURRENT_PAGE);", text)
         self.assertIn("mqttClient.subscribe(mp::TOPIC_KEYMAP);", text)
+        self.assertIn("mqttClient.subscribe(mp::TOPIC_FRAME);", text)
+        self.assertIn("mqttClient.subscribe(mp::TOPIC_PLAYER_STATE);", text)
         body = self.function_body(self.ino(), "void mqttTick(uint32_t nowMs)")
         for sig in ("mqttClient.subscribe(mp::TOPIC_PAGES);",
                     "mqttClient.subscribe(mp::TOPIC_CURRENT_PAGE);",

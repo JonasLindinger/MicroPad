@@ -56,7 +56,7 @@ def test_post_config_persists_valid_data_but_preserves_blank_secrets(
     assert store.load().settings.ha_token == "saved-token"  # noqa: S105
 
 
-def test_generate_returns_yaml_and_three_payload_previews(client) -> None:
+def test_generate_returns_yaml_and_four_payload_previews(client) -> None:
     response = client.get("/api/generate")
     assert response.status_code == 200
     assert "id: micropad_controller" in response.json["automation_yaml"]
@@ -65,6 +65,7 @@ def test_generate_returns_yaml_and_three_payload_previews(client) -> None:
         "micropad/pages/all",
         "micropad/page/current",
         "micropad/keymap",
+        "micropad/player/queue",
     }
 
 

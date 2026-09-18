@@ -30,12 +30,13 @@ def normalize_identifier(value: str) -> str:
 Action = Literal[
     "none", "enter", "back", "home", "settings", "scroll", "scroll_up",
     "scroll_down", "navigate", "keymap", "get_all_pages", "toggle", "on", "off",
-    "press", "volume_up", "volume_down", "media_next", "media_prev", "edit", "confirm",
+    "press", "volume_up", "volume_down", "media_next", "media_prev", "edit",
+    "confirm", "player",
 ]
 ItemType = Literal[
     "category", "light", "switch", "script", "button", "scene", "sensor",
     "media_player", "number", "settings", "back", "cover", "fan",
-    "input_boolean", "lock",
+    "input_boolean", "lock", "player",
 ]
 ReloadStrategy = Literal["none", "core_restart"]
 
@@ -63,6 +64,13 @@ class StrictModel(BaseModel):
     """Base model that rejects unknown fields and validates mutation."""
 
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
+
+
+class PlayerVideo(StrictModel):
+    """One entry of the streamed-video player queue (name + URL)."""
+
+    name: str = Field(min_length=1, max_length=64)
+    url: str = Field(min_length=1, max_length=512)
 
 
 class Binding(StrictModel):
@@ -237,6 +245,7 @@ class AppConfig(StrictModel):
     pages: list[Page] = Field(max_length=24)
     entity_cache: list[EntitySummary] = Field(default_factory=list)
     global_keymap: dict[str, Binding]
+    player_videos: list[PlayerVideo] = Field(default_factory=list, max_length=32)
 
     @field_validator("global_keymap")
     @classmethod

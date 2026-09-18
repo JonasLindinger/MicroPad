@@ -2309,8 +2309,8 @@ void testItemTypeDescriptorTable() {
   // The descriptor table is indexed by ItemType: every enum value needs a row, in
   // order. A missing or reordered row would silently give one item type another
   // type's action, which no other test would catch.
-  assert(ITEM_TYPE_COUNT == 15);
-  assert(ACTION_COUNT == 21);
+  assert(ITEM_TYPE_COUNT == 16);
+  assert(ACTION_COUNT == 22);
   for (size_t index = 0; index < ITEM_TYPE_COUNT; ++index) {
     assert(static_cast<size_t>(ITEM_TYPE_DESCRIPTORS[index].type) == index);
   }
@@ -2616,8 +2616,8 @@ int main() {
   testFormatDiagnostics();
   testLongPressGesture();
   testAllActionsReachDefinedOutcome();
-  static_assert(micropad::ACTION_COUNT == 21, "21 supported actions");
-  static_assert(micropad::ITEM_TYPE_COUNT == 15, "15 supported item types");
+  static_assert(micropad::ACTION_COUNT == 22, "22 supported actions");
+  static_assert(micropad::ITEM_TYPE_COUNT == 16, "16 supported item types");
   static_assert(micropad::USB_SAMPLE_MS == 500, "500 ms USB sample interval");
   static_assert(micropad::USB_STABLE_MS == 1500, "1500 ms USB stable window");
   static_assert(sizeof(RenderSnapshot) > 0, "snapshot type is defined");

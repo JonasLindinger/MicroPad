@@ -65,6 +65,11 @@ constexpr size_t EVENT_BUFFER_BYTES = 512;
 // MAX_PARTIAL_REFRESHES partial refreshes the next refresh is forced full;
 // the visible flash is the accepted trade for staying black.
 constexpr uint8_t MAX_PARTIAL_REFRESHES = 10;
+// One streamed 1-bit video frame on the panel (296x128, MSB-first, bit=white).
+// The player mode renders these raw frames instead of the menu snapshot; the
+// size matches the contract's frame_bytes limit so a frame fits one MQTT
+// message inside the 16 KiB PubSubClient buffer.
+constexpr size_t PLAYER_FRAME_BYTES = 4736;
 constexpr uint32_t MIN_REFRESH_SPACING_MS = 100;
 // Loop-task task-WDT deadline (v6-proven 20 s). The default ESP-IDF deadline
 // is 5 s with panic; the setup portal's WebServer can block the loop for its
@@ -154,14 +159,15 @@ enum class KeyId : uint8_t {
 enum class Action : uint8_t {
   None, Enter, Back, Home, Settings, Scroll, ScrollUp, ScrollDown,
   Navigate, Keymap, GetAllPages, Toggle, On, Off, Press, VolumeUp,
-  VolumeDown, MediaNext, MediaPrev, Edit, Confirm
+  VolumeDown, MediaNext, MediaPrev, Edit, Confirm, Player
 };
 enum class DrawReason : uint8_t {
   Boot, StateChange, PortalEnter, PortalExit, PowerEdge, Recovery, PartialLimit
 };
 enum class ItemType : uint8_t {
   Category, Light, Switch, Script, Button, Scene, Sensor,
-  MediaPlayer, Number, Settings, Back, Cover, Fan, InputBoolean, Lock
+  MediaPlayer, Number, Settings, Back, Cover, Fan, InputBoolean, Lock,
+  Player
 };
 // LongPress is emitted once per hold, LONG_PRESS_MS after the debounced press.
 enum class Edge : uint8_t { None, Pressed, Released, LongPress };
@@ -170,10 +176,10 @@ enum class PowerEdge : uint8_t { None, Connected, Disconnected };
 // Enum-bounded counts. Derived from the enum instead of typed as literals so a
 // new action/item type cannot leave a table short or a loop bound stale; the
 // static tests additionally assert these track contracts/mqtt-contract.json.
-constexpr size_t ACTION_COUNT = static_cast<size_t>(Action::Confirm) + 1;
+constexpr size_t ACTION_COUNT = static_cast<size_t>(Action::Player) + 1;
 // Off the *last* enumerator: appending an item type must update this line, and
 // tests/integration/test_mqtt_contract.py fails if it stops matching the contract.
-constexpr size_t ITEM_TYPE_COUNT = static_cast<size_t>(ItemType::Lock) + 1;
+constexpr size_t ITEM_TYPE_COUNT = static_cast<size_t>(ItemType::Player) + 1;
 
 // One row per item type: what a press does by default and whether the type
 // accepts the edit/confirm gesture. This is the single place in the firmware
@@ -362,6 +368,7 @@ struct RenderRow {
 struct RenderSnapshot {
   uint32_t generation;
   bool portal;
+  bool player;
   bool forceFull;
   bool usbHost;
   uint8_t networkState;
@@ -372,6 +379,10 @@ struct RenderSnapshot {
   char portalSsid[33];
   char portalPassword[SETUP_PASSWORD_LENGTH + 1];
   char portalAddress[16];
+  char playerTitle[65];
+  char playerStatus[16];
+  char playerIndex[8];
+  char playerVideos[8];
   RenderRow rows[VISIBLE_ROWS];
 };
 
@@ -668,6 +679,7 @@ void fillPageSnapshot(const Page &page, const AppState &state, RenderSnapshot &o
 
 // Portal view: title strip plus SSID / password / address rows.
 void layoutPortalUi(const RenderSnapshot &snap, RenderModel &model);
+void layoutPlayerUi(const RenderSnapshot &snap, RenderModel &model);
 
 // Network status cell geometry: solid square (MQTT), outline ring (Wi-Fi
 // only), two filled dots while connecting/disconnected. Geometry only.

@@ -24,7 +24,7 @@ AI_NOTICE = (
 )
 
 CONTRACT_PATH = Path(__file__).resolve().parents[2] / "contracts" / "mqtt-contract.json"
-SUPPORTED_CONTRACT_VERSION = 2
+SUPPORTED_CONTRACT_VERSION = 3
 
 
 def load_contract() -> dict[str, Any]:
@@ -49,6 +49,11 @@ CURRENT_PAGE_TOPIC = TOPICS["current_page"]
 KEYMAP_TOPIC = TOPICS["keymap"]
 POWER_TOPIC = TOPICS["power"]
 DEVICE_TOPIC = TOPICS["device"]
+FRAME_TOPIC = TOPICS["frame"]
+PLAYER_QUEUE_TOPIC = TOPICS["player_queue"]
+PLAYER_STATE_TOPIC = TOPICS["player_state"]
+PLAYER_CONTROL_TOPIC = TOPICS["player_control"]
+PLAYER_READY_TOPIC = TOPICS["player_ready"]
 
 # --- protocol vocabulary ----------------------------------------------------
 KEY_IDS = tuple(CONTRACT["key_ids"])

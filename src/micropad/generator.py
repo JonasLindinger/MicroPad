@@ -328,9 +328,21 @@ def _page_publications(config: AppConfig, page_id: str) -> list[dict[str, object
     ]
 
 
+def generate_player_queue_payload(config: AppConfig) -> str:
+    """Serialized retained payload for micropad/player/queue.
+
+    The host player service consumes it: the queue of videos the `player`
+    action on the pad can stream. An empty queue is a valid, explicit state.
+    """
+    return _compact(
+        {"videos": [{"name": v.name, "url": v.url} for v in config.player_videos]}
+    )
+
+
 def _all_publications(config: AppConfig) -> list[dict[str, object]]:
     return [
         _publish("pages", generate_catalog_template(config)),
+        _publish("player_queue", generate_player_queue_payload(config)),
         *_page_publications(config, "home"),
     ]
 
@@ -490,6 +502,7 @@ class GeneratedBundle:
     catalog_payload: str
     home_payload: str
     home_keymap_payload: str
+    player_queue_payload: str
 
 
 def canonical_automation(automation: dict[str, object]) -> dict[str, object]:
@@ -523,4 +536,5 @@ def generate_bundle(
         catalog_payload=generate_catalog_payload(config, states),
         home_payload=_compact(generate_page_payload(config, "home", states)),
         home_keymap_payload=generate_keymap_payload(config, "home"),
+        player_queue_payload=generate_player_queue_payload(config),
     )

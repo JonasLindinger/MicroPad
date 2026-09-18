@@ -1168,3 +1168,71 @@ dialog::backdrop {
     animation: none !important;
   }
 }
+
+/* Video player queue editor */
+.player-panel h2 {
+  font-family: var(--font-display);
+  font-size: 1.05rem;
+  margin: 0 0 0.35rem;
+  color: var(--text);
+}
+
+.player-hint {
+  font-size: 0.82rem;
+  color: var(--text-2);
+  line-height: 1.45;
+  margin: 0 0 0.6rem;
+}
+
+.player-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.8fr) auto auto auto;
+  gap: 0.35rem;
+  align-items: center;
+  margin-bottom: 0.4rem;
+}
+
+.player-row input {
+  font-family: var(--font-ui);
+  font-size: 0.85rem;
+  padding: 0.32rem 0.45rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--text);
+  min-width: 0;
+}
+
+.player-row button,
+.player-add {
+  font-family: var(--font-ui);
+  font-size: 0.8rem;
+  padding: 0.3rem 0.55rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  background: var(--surface-2);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.player-row button:hover:not(:disabled),
+.player-add:hover:not(:disabled) {
+  background: var(--surface-3);
+}
+
+.player-row button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.player-add {
+  margin-top: 0.3rem;
+  width: 100%;
+}
+
+.player-notice {
+  font-size: 0.8rem;
+  color: var(--text-3);
+  margin: 0 0 0.5rem;
+  line-height: 1.4;
+}

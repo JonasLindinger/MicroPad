@@ -13,6 +13,7 @@ from micropad.constants import (
     EVENT_TOPIC,
     KEY_IDS,
     KEYMAP_TOPIC,
+    PLAYER_QUEUE_TOPIC,
 )
 from micropad.generator import (
     GenerationError,
@@ -352,6 +353,7 @@ def test_navigation_home_keymap_and_catalog_publish_retained_complete_payloads()
     assert [step["data"]["topic"] for step in keymap["sequence"]] == [KEYMAP_TOPIC]
     assert [step["data"]["topic"] for step in catalog["sequence"]] == [
         CATALOG_TOPIC,
+        PLAYER_QUEUE_TOPIC,
         CURRENT_PAGE_TOPIC,
         KEYMAP_TOPIC,
     ]
@@ -383,6 +385,7 @@ def test_startup_and_one_page_state_changes_republish_authoritative_home() -> No
     choices = automation["actions"][0]["choose"]
     assert [step["data"]["topic"] for step in choices[0]["sequence"]] == [
         CATALOG_TOPIC,
+        PLAYER_QUEUE_TOPIC,
         CURRENT_PAGE_TOPIC,
         KEYMAP_TOPIC,
     ]
